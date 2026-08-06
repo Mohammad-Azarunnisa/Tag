@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent;
+
+    /* Brand accent as RGB channels — used by the `brand-*` Tailwind colors.
+       The ramp is anchored on the ACTUAL t@g logo orange #f15d27 (warmer and
+       slightly redder than Tailwind's stock orange). Light mode keeps these
+       defaults; dark mode may override them per organization at runtime
+       (src/lib/brand.js). */
+    --brand-50: 255 246 241;
+    --brand-100: 255 233 222;
+    --brand-200: 255 207 184;
+    --brand-300: 253 170 133;
+    --brand-400: 247 129 84;
+    --brand-500: 241 93 39;   /* #f15d27 — the logo orange */
+    --brand-600: 222 72 19;
+    --brand-700: 184 58 15;
+    --brand-800: 147 49 18;
+    --brand-900: 119 43 19;
+  }
+  .dark { color-scheme: dark; scrollbar-color: rgb(51 65 85) transparent; }
+
+  * { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply bg-slate-50 text-slate-800 font-sans dark:bg-slate-950 dark:text-slate-200;
+    /* Faint warm wash at the top so pages feel branded, not flat gray. */
+    background-image: radial-gradient(1100px 420px at 50% -120px, rgb(var(--brand-500) / 0.06), transparent 70%);
+    background-attachment: fixed;
+  }
+  .dark body {
+    background-image: radial-gradient(1100px 420px at 50% -120px, rgb(var(--brand-500) / 0.09), transparent 70%);
+  }
+
+  /* Tighter tracking + balanced wrapping on headings for a refined, professional feel */
+  h1, h2, h3 { @apply tracking-tight; text-wrap: balance; }
+
+  /* Brand-tinted text selection */
+  ::selection { @apply bg-brand-500/25 text-brand-900 dark:text-brand-50; }
+
+  /* Pointer affordance on interactive elements */
+  button:not(:disabled), [role="button"], summary { cursor: pointer; }
+
+  /* Visible keyboard-focus ring for links & bare buttons. The component <Button>
+     and form fields define their own focus styles, which take precedence. */
+  a:focus-visible, button:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible {
+    @apply outline-none ring-2 ring-brand-500/70 ring-offset-1 ring-offset-white dark:ring-offset-slate-950;
+  }
+}
+
+/* Custom scrollbar (WebKit) */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-slate-300 dark:bg-slate-700 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-slate-400 dark:bg-slate-600; }
+
+@layer components {
+  /* Glassmorphism surface used across cards & modals */
+  .glass {
+    @apply bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/40 dark:border-slate-700/50;
+  }
+  .card {
+    @apply bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-card transition-shadow duration-200;
+  }
+  .input-base {
+    @apply w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900
+      px-3.5 py-2.5 text-sm outline-none transition-all duration-200
+      hover:border-slate-300 dark:hover:border-slate-600
+      focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 placeholder:text-slate-400;
+  }
+  /* Sidebar is navy in both themes — links are light, active is orange. */
+  .sidebar-link {
+    @apply flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-300
+      transition-all duration-200 hover:bg-white/10 hover:text-white;
+  }
+  /* Active item: brand gradient + soft glow + hairline top highlight. */
+  .sidebar-link-active {
+    @apply text-white hover:text-white;
+    background-image: linear-gradient(135deg, rgb(var(--brand-500)), rgb(var(--brand-600)));
+    box-shadow: 0 6px 16px -6px rgb(var(--brand-600) / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.15);
+  }
+  .sidebar-link-active:hover {
+    background-image: linear-gradient(135deg, rgb(var(--brand-500)), rgb(var(--brand-600)));
+  }
+}
+
+/* ============ t@g login — Aurora Precision ============ */
+/* Animatable angle for the rotating card border. Browsers without @property
+   fall back to the static composed gradient (see --tag-angle: 0deg below). */
+@property --tag-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes tag-aurora-a {
+  from { transform: translate3d(-4%, -2%, 0) rotate(0deg); }
+  to   { transform: translate3d(-4%, -2%, 0) rotate(360deg); }
+}
+@keyframes tag-aurora-b {
+  0%   { transform: translate3d(3%, 2%, 0) rotate(360deg) scale(1.08); }
+  50%  { transform: translate3d(-2%, -3%, 0) rotate(180deg) scale(1); }
+  100% { transform: translate3d(3%, 2%, 0) rotate(0deg) scale(1.08); }
+}
+@keyframes tag-border-spin { to { --tag-angle: 360deg; } }
+@keyframes tag-sheen {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(220%); }
+}
+@keyframes tag-float {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-6px); }
+}
+@keyframes tag-progress-shine {
+  0%        { transform: translateX(-130%); }
+  45%, 100% { transform: translateX(330%); }
+}
+
+@layer components {
+  /* -- Left panel: breathing aurora (2 counter-rotating conic meshes).
+        Brand colors carry fallback channels so this exact block also works
+        in the admin app, which has no --brand-* variables. -- */
+  .login-aurora {
+    pointer-events: none;
+    position: absolute;
+    inset: -35%;
+    filter: blur(72px) saturate(1.25);
+    will-change: transform;
+  }
+  .login-aurora-a {
+    background: conic-gradient(from 210deg at 55% 45%,
+      transparent 0deg,
+      rgb(var(--brand-500, 241 93 39) / 0.32) 55deg,
+      rgb(67 96 219 / 0.22) 130deg,
+      transparent 200deg,
+      rgb(var(--brand-400, 247 129 84) / 0.20) 290deg,
+      transparent 360deg);
+    animation: tag-aurora-a 36s linear infinite;
+  }
+  .login-aurora-b {
+    background: conic-gradient(from 30deg at 40% 60%,
+      transparent 0deg,
+      rgb(var(--brand-600, 222 72 19) / 0.25) 80deg,
+      transparent 160deg,
+      rgb(37 66 154 / 0.30) 240deg,
+      transparent 330deg);
+    animation: tag-aurora-b 28s ease-in-out infinite;
+  }
+
+  /* -- Left panel: hairline grid, legible only near the content -- */
+  .login-grid {
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(120% 90% at 30% 20%, black 30%, transparent 75%);
+    mask-image: radial-gradient(120% 90% at 30% 20%, black 30%, transparent 75%);
+  }
+
+  /* -- Left panel: film grain (inline SVG, kills gradient banding) -- */
+  .login-noise {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/></svg>");
+    background-size: 160px 160px;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+  }
+
+  /* -- Form side, mobile only: brand dot-grid strip under the header -- */
+  .login-dots {
+    background-image: radial-gradient(rgb(var(--brand-500, 241 93 39) / 0.10) 1px, transparent 1.5px);
+    background-size: 26px 26px;
+    -webkit-mask-image: linear-gradient(to bottom, black, transparent);
+    mask-image: linear-gradient(to bottom, black, transparent);
+  }
+
+  /* -- Login preview scene: gentle levitation + periodic shine on progress -- */
+  .login-float { animation: tag-float 5s ease-in-out infinite alternate; }
+  .login-progress-shine { animation: tag-progress-shine 3.6s ease-in-out 2.8s infinite; }
+
+  /* -- Login fields: soft tinted fill that turns crisp white on focus -- */
+  .login-input {
+    @apply border-slate-200/70 bg-slate-50/80 focus:bg-white
+      dark:border-slate-700/60 dark:bg-slate-800/50 dark:focus:bg-slate-900;
+  }
+
+  /* -- Signature: 1px rotating conic-gradient border on the glass card.
+        --tag-angle: 0deg on the pseudo-element guarantees the static
+        composed fallback (flare top-left) when @property is unsupported. -- */
+  .login-card::before {
+    content: '';
+    --tag-angle: 0deg;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(from calc(var(--tag-angle) + 135deg),
+      rgb(148 163 184 / 0.28) 0deg,
+      rgb(148 163 184 / 0.14) 120deg,
+      rgb(var(--brand-500, 241 93 39) / 0.55) 165deg,
+      rgb(var(--brand-400, 247 129 84) / 0.35) 195deg,
+      rgb(148 163 184 / 0.14) 240deg,
+      rgb(148 163 184 / 0.28) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  @media (min-width: 1024px) {
+    .login-card::before { animation: tag-border-spin 8s linear infinite; }
+  }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

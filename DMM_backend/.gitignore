@@ -1,0 +1,9 @@
+node_modules/
+.env
+uploads/**/*
+!uploads/**/.gitkeep
+*.log
+.DS_Store
+
+src/config/credentials/google_drive_api.json
+src/config/credentials/google_drive_token.json

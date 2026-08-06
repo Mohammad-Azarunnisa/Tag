@@ -1,0 +1,50 @@
+import express from 'express';
+import {
+  getApprovals,
+  getApproval,
+  createApproval,
+  submitDesign,
+  approveRequest,
+  rejectRequest,
+  resubmitRequest,
+  markPosted,
+  scheduleRequest,
+  claimDesignRequest,
+  assignRequest,
+  deliverToCoordinator,
+  forwardRequest,
+  addComment,
+  deleteApproval,
+} from '../controllers/approvalController.js';
+import { protect, authorize } from '../middleware/auth.js';
+import upload from '../middleware/upload.js';
+import { ROLES } from '../config/constants.js';
+
+const router = express.Router();
+router.use(protect);
+
+router.route('/').get(getApprovals).post(upload.array('images', 10), createApproval);
+router.route('/:id').get(getApproval).delete(deleteApproval);
+
+// The designer submits the finished design for their assigned brief.
+router.put('/:id/submit-design', upload.array('images', 10), submitDesign);
+router.put('/:id/claim', claimDesignRequest);
+// The super admin approves for every college; an Admin (CEO) approves inside the
+// institutions the super admin put under them. Which of the two is deciding is
+// checked against the request's own college in the controller.
+router.put('/:id/approve', authorize(ROLES.ADMIN, ROLES.CEO), approveRequest);
+router.put('/:id/reject', authorize(ROLES.ADMIN, ROLES.CEO), rejectRequest);
+// After approval, the super admin routes the design: allocate it to a social
+// handler to post, or deliver it back to the coordinator.
+router.put('/:id/assign', authorize(ROLES.ADMIN), assignRequest);
+router.put('/:id/deliver', authorize(ROLES.ADMIN), deliverToCoordinator);
+router.put('/:id/forward', authorize(ROLES.ADMIN), forwardRequest);
+router.put('/:id/resubmit', upload.array('images', 10), resubmitRequest);
+router.put('/:id/schedule', scheduleRequest);
+router.put('/:id/posted', markPosted);
+
+// Conversation thread on a request (owner / ADMIN / org CEO — enforced in the
+// controller). Messages may carry up to 6 image/video attachments.
+router.post('/:id/comments', upload.array('files', 6), addComment);
+
+export default router;
