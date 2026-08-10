@@ -25,7 +25,9 @@ function useFitStep(ref, cols) {
     const measure = () => {
       const avail = el.clientWidth - LABEL_W;
       if (avail <= 0) return;
-      setStep(Math.max(MIN_STEP, Math.min(MAX_STEP, Math.floor(avail / cols))));
+      // Include inter-column gaps so the year grid can stretch to the card edge.
+      const fitted = Math.floor((avail + GAP) / cols);
+      setStep(Math.max(MIN_STEP, fitted));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -104,39 +106,34 @@ export default function ActivityHeatmapCard({ organizationId }) {
       ? 'Your activity'
       : 'Your organization activity';
 
-  const { data: activityData, isLoading, isError, refetch } = useQuery({
-    queryKey: ['activity-logs', organizationId, user?.id || user?._id],
-    queryFn: () => activityApi.list({ limit: 5000, organizationId: organizationId || undefined }),
+  // The year of counts comes from the purpose-built heatmap endpoint rather than
+  // the raw audit log. Two reasons: the log is deliberately closed to a
+  // coordinator (middleware/auth.js), so reading it here made the card 403 for
+  // them; and the server already groups by day, so the browser no longer pulls
+  // thousands of rows just to count them. A day's detail is fetched only when a
+  // square is actually clicked.
+  const { data: heatmapData, isLoading, isError, refetch } = useQuery({
+    queryKey: ['activity-heatmap', organizationId, user?.id || user?._id],
+    queryFn: () => activityApi.heatmap({ days: 365, organizationId: organizationId || undefined }),
     enabled: !!user && (user?.isSuperAdmin || user?.role !== 'ADMIN' || !!organizationId),
     staleTime: 10 * 60 * 1000,
   });
 
-  const logs = activityData?.logs || [];
-  const cells = useMemo(() => {
-    const start = new Date();
-    start.setUTCDate(start.getUTCDate() - 364);
-    start.setUTCHours(0, 0, 0, 0);
-    const counts = new Map();
-    logs.forEach((log) => {
-      const key = new Date(log.createdAt).toISOString().slice(0, 10);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
-    const out = [];
-    const cursor = new Date(start);
-    for (let i = 0; i < 365; i += 1) {
-      const key = cursor.toISOString().slice(0, 10);
-      out.push({ date: key, value: counts.get(key) || 0 });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return out;
-  }, [logs]);
+  const { data: dayData, isLoading: dayLoading } = useQuery({
+    queryKey: ['activity-day', selectedDate, organizationId],
+    queryFn: () => activityApi.day({ date: selectedDate, organizationId: organizationId || undefined }),
+    enabled: !!selectedDate,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const cells = heatmapData?.cells || [];
 
   const weeks = useMemo(() => buildWeeks(cells), [cells]);
   const levelOf = useMemo(() => makeLevelFn(cells), [cells]);
   const scrollRef = useRef(null);
   const STEP = useFitStep(scrollRef, weeks.length);
   const CELL = STEP - GAP;
-  const gridWidth = weeks.length * STEP;
+  const gridWidth = Math.max(0, weeks.length * CELL + Math.max(0, weeks.length - 1) * GAP);
   const rgb = '#0A66C2';
   const [r, g, b] = hexToRgb(rgb);
   const fill = (lvl) => (lvl === 0 ? undefined : `rgba(${r},${g},${b},${LEVEL_ALPHA[lvl]})`);
@@ -155,24 +152,8 @@ export default function ActivityHeatmapCard({ organizationId }) {
     return out;
   }, [weeks]);
 
-  const stats = useMemo(() => {
-    const total = logs.length;
-    const activeDays = cells.filter((cell) => cell.value > 0).length;
-    const bestDay = cells.reduce((best, cell) => (cell.value > (best?.value || 0) ? cell : best), null);
-    return {
-      total,
-      activeDays,
-      average: Number((total / 365).toFixed(1)),
-      bestDay,
-    };
-  }, [cells, logs.length]);
-
-  const selectedDay = useMemo(() => {
-    if (!selectedDate) return [];
-    return logs
-      .filter((log) => new Date(log.createdAt).toISOString().slice(0, 10) === selectedDate)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }, [logs, selectedDate]);
+  const stats = heatmapData?.stats || null;
+  const selectedDay = dayData?.logs || [];
 
   return (
     <Card className="overflow-hidden border border-slate-200/80 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950/80">
@@ -309,6 +290,8 @@ export default function ActivityHeatmapCard({ organizationId }) {
 
                 {!selectedDate ? (
                   <EmptyState icon={Activity} title="No day selected" description="Click any heatmap square to load the actions from that date." />
+                ) : dayLoading ? (
+                  <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-2xl" />)}</div>
                 ) : selectedDay.length === 0 ? (
                   <EmptyState icon={CalendarDays} title="Empty day" description="Nothing was recorded on this date." />
                 ) : (
@@ -361,10 +344,12 @@ export default function ActivityHeatmapCard({ organizationId }) {
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryTile label="Date" value={selectedDate ? prettyDate(selectedDate) : '-'} />
-            <SummaryTile label="Activities" value={formatNumber(selectedDay.length)} />
-            <SummaryTile label="Status" value={selectedDay.length === 0 ? 'Empty day' : 'Has activity'} />
+            <SummaryTile label="Activities" value={dayLoading ? '…' : formatNumber(selectedDay.length)} />
+            <SummaryTile label="Status" value={dayLoading ? 'Loading' : selectedDay.length === 0 ? 'Empty day' : 'Has activity'} />
           </div>
-          {selectedDay.length === 0 ? (
+          {dayLoading ? (
+            <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-2xl" />)}</div>
+          ) : selectedDay.length === 0 ? (
             <EmptyState icon={CalendarDays} title="No actions on this day" description="This is the exact empty state you asked for: the square exists, but the audit trail is empty." />
           ) : (
             <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">

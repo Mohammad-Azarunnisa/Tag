@@ -1,25 +1,19 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Building2, Users as UsersIcon, ShieldCheck, Crown, User as UserIcon, Send,
-  Activity, ArrowRight, BarChart3, CalendarDays, Linkedin,
+  Activity, ArrowRight, BarChart3, CalendarDays, Linkedin, Instagram, Facebook, Youtube,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { organizationApi, userApi, activityApi, analyticsApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import { Card, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import CountUp from '../components/CountUp.jsx';
+import AiInsights from '../components/AiInsights.jsx';
 import ActivityHeatmapCard from '../components/ActivityHeatmapCard.jsx';
-import { timeAgo, formatNumber } from '../lib/utils.js';
-
-const ACTIVITY_LABEL = {
-  TEMPLATE_UPLOAD: 'uploaded a template', ASSET_UPLOAD: 'uploaded an asset',
-  APPROVAL_SUBMISSION: 'submitted a request', APPROVAL_APPROVED: 'approved content',
-  APPROVAL_REJECTED: 'rejected content', APPROVAL_RESUBMITTED: 'resubmitted content',
-  POST_COMPLETION: 'marked content posted', USER_CREATED: 'created a user',
-  USER_UPDATED: 'updated a user', USER_DEACTIVATED: 'removed a user',
-  ANALYTICS_UPDATED: 'updated analytics',
-};
+import { timeAgo, formatNumber, cn } from '../lib/utils.js';
+import { activityText } from '../lib/activity.js';
 
 export default function Overview() {
   const navigate = useNavigate();
@@ -34,6 +28,22 @@ export default function Overview() {
   const totalPosts = orgs.reduce((a, o) => a + (o.postCount || 0), 0);
   const activity = activityData?.logs || [];
   const showHeatmap = !!user?.isSuperAdmin;
+
+  // Organization switch for Tago's read-out, mirroring the product app's
+  // dashboard (DMM_frontend/src/pages/Dashboard.jsx): local to this page with
+  // its own remembered choice, so it never writes the global org selection that
+  // scopes Analytics/Calendar/Purchases — the cards and the activity feed below
+  // stay platform-wide, which is what this page is for.
+  const { data: orgOptions } = useQuery({ queryKey: ['org-options'], queryFn: organizationApi.options });
+  const pickable = orgOptions?.organizations || [];
+  const [insightsOrgId, setInsightsOrgId] = useState(() => localStorage.getItem('tag-admin-dashboard-org') || '');
+  useEffect(() => {
+    if (!pickable.length) return;
+    if (!insightsOrgId || !pickable.some((o) => o._id === insightsOrgId)) setInsightsOrgId(pickable[0]._id);
+  }, [insightsOrgId, pickable]);
+  useEffect(() => {
+    if (insightsOrgId) localStorage.setItem('tag-admin-dashboard-org', insightsOrgId);
+  }, [insightsOrgId]);
 
   const superAdmins = users.filter((u) => u.isSuperAdmin).length;
   const cards = [
@@ -55,16 +65,28 @@ export default function Overview() {
         <div aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-brand-500/25 blur-3xl" />
         <div aria-hidden className="pointer-events-none absolute -bottom-28 -left-16 h-80 w-80 rounded-full bg-brand-400/15 blur-3xl" />
         <div aria-hidden className="login-noise absolute inset-0" />
-        <div className="relative z-10">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-300/90">
-            {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
-          </p>
-          <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">
-            {(() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })()}, {user?.name?.split(' ')[0]} 👋
-          </h1>
-          <p className="mt-1.5 text-sm text-white/65">Platform-wide administration overview.</p>
+        <div className="relative z-10 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-300/90">
+              {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </p>
+            <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">
+              {(() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })()}, {user?.name?.split(' ')[0]} 👋
+            </h1>
+            <p className="mt-1.5 text-sm text-white/65">Platform-wide administration overview.</p>
+          </div>
+          {pickable.length > 0 && (
+            <select aria-label="Organization"
+              className="h-10 w-auto cursor-pointer rounded-xl border border-white/15 bg-white/10 px-3 text-sm font-semibold text-white outline-none backdrop-blur transition hover:bg-white/15 focus:ring-4 focus:ring-brand-500/30 [&>option]:text-slate-800"
+              value={insightsOrgId} onChange={(e) => setInsightsOrgId(e.target.value)}>
+              {pickable.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
+            </select>
+          )}
         </div>
       </motion.div>
+
+      {/* Tago's AI read-out of the selected organization's live numbers */}
+      <AiInsights orgId={insightsOrgId} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
         {lo ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)
@@ -77,7 +99,7 @@ export default function Overview() {
           ))}
       </div>
 
-      <LinkedInPulse onOpen={() => navigate('/analytics')} />
+      <SocialPulse onOpen={() => navigate('/analytics')} />
 
       {showHeatmap && <ActivityHeatmapCard organizations={orgs} />}
 
@@ -127,8 +149,10 @@ export default function Overview() {
             {activity.map((log) => (
               <div key={log._id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/40">
                 <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
-                <p className="flex-1 text-sm text-slate-600 dark:text-slate-300"><span className="font-semibold text-slate-700 dark:text-slate-200">{log.user?.name}</span> {ACTIVITY_LABEL[log.action] || 'did something'}</p>
-                <span className="text-[11px] text-slate-400">{timeAgo(log.createdAt)}</span>
+                <p className="flex-1 text-sm text-slate-600 dark:text-slate-300">
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">{log.user?.name}</span> {activityText(log)}
+                </p>
+                <span className="whitespace-nowrap text-[11px] text-slate-400">{timeAgo(log.createdAt)}</span>
               </div>
             ))}
           </div>
@@ -138,34 +162,77 @@ export default function Overview() {
   );
 }
 
-// The three headline LinkedIn numbers per organization over the last 15 days —
-// the same essentials the LinkedIn view opens with. Click a row for the full view.
-function LinkedInPulse({ onOpen }) {
-  const { data, isLoading } = useQuery({ queryKey: ['analytics-pulse'], queryFn: analyticsApi.pulse });
+// The four channels the platform tracks, with their own colours so the card
+// reads as the platform being looked at.
+const PULSE_PLATFORMS = [
+  { key: 'LinkedIn', icon: Linkedin, color: '#0A66C2' },
+  { key: 'Instagram', icon: Instagram, color: '#E1306C' },
+  { key: 'Facebook', icon: Facebook, color: '#1877F2' },
+  { key: 'YouTube', icon: Youtube, color: '#FF0000' },
+];
+
+// The three headline numbers per organization over the last 15 days for one
+// channel — the same essentials that channel's full view opens with. The filter
+// says which channel is being read; the column headings follow it, because each
+// platform measures reach and audience differently (views/subscribers on
+// YouTube, reach/followers on Meta). Click a row for the full view.
+function SocialPulse({ onOpen }) {
+  const [platform, setPlatform] = useState('LinkedIn');
+  const { data, isLoading } = useQuery({
+    queryKey: ['analytics-pulse', platform],
+    queryFn: () => analyticsApi.pulse(platform),
+    placeholderData: (prev) => prev,
+  });
+  const active = PULSE_PLATFORMS.find((p) => p.key === platform) || PULSE_PLATFORMS[0];
+  const Icon = active.icon;
+  const labels = data?.labels || { reach: 'Impressions', gained: 'New followers', audience: 'Total followers' };
   const rows = (data?.organizations || []).filter((o) => o.hasData);
-  if (!isLoading && rows.length === 0) return null;
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
         <h3 className="flex items-center gap-2 font-bold text-slate-800 dark:text-white">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0A66C2] text-white"><Linkedin className="h-4 w-4" /></span>
-          LinkedIn pulse <span className="text-sm font-normal text-slate-400">· last {data?.days || 15} days</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg text-white" style={{ background: active.color }}>
+            <Icon className="h-4 w-4" />
+          </span>
+          {active.key} pulse <span className="text-sm font-normal text-slate-400">· last {data?.days || 15} days</span>
         </h3>
-        <button onClick={onOpen} className="text-sm font-medium text-brand-600 hover:text-brand-700">Full analytics →</button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Which channel these numbers are for */}
+          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+            {PULSE_PLATFORMS.map((p) => (
+              <button
+                key={p.key} type="button" aria-pressed={p.key === platform} title={p.key}
+                onClick={() => setPlatform(p.key)}
+                className={cn('flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                  p.key === platform
+                    ? 'bg-white text-slate-800 shadow-soft dark:bg-slate-900 dark:text-white'
+                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200')}
+              >
+                <p.icon className="h-3.5 w-3.5" style={p.key === platform ? { color: p.color } : undefined} />
+                <span className="hidden sm:inline">{p.key}</span>
+              </button>
+            ))}
+          </div>
+          <button onClick={onOpen} className="text-sm font-medium text-brand-600 hover:text-brand-700">Full analytics →</button>
+        </div>
       </div>
       {isLoading ? (
         <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-11" />)}</div>
+      ) : rows.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-slate-400">
+          No {active.key} analytics recorded yet. Import or sync {active.key} data to see it here.
+        </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
                 <th className="px-5 py-2.5 font-bold">Organization</th>
-                <th className="px-4 py-2.5 text-right font-bold">Impressions</th>
-                <th className="px-4 py-2.5 text-right font-bold">New followers</th>
+                <th className="px-4 py-2.5 text-right font-bold">{labels.reach}</th>
+                <th className="px-4 py-2.5 text-right font-bold">{labels.gained}</th>
                 <th className="px-4 py-2.5 text-right font-bold">Engagement rate</th>
-                <th className="px-4 py-2.5 text-right font-bold">Total followers</th>
+                <th className="px-4 py-2.5 text-right font-bold">{labels.audience}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800/60">

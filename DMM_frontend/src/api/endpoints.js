@@ -4,7 +4,9 @@ import api from './client.js';
 export const authApi = {
   setupStatus: () => api.get('/auth/setup-status').then((r) => r.data),
   emailStatus: () => api.get('/auth/email-status').then((r) => r.data),
-  login: (data) => api.post('/auth/login', data).then((r) => r.data),
+  // `portal` tells the API which product this sign-in is for, so an Admin
+  // account is refused here and pointed at the admin console instead.
+  login: (data) => api.post('/auth/login', { ...data, portal: 'user' }).then((r) => r.data),
   me: () => api.get('/auth/me').then((r) => r.data),
   forgot: (email) => api.post('/auth/forgot-password', { email }).then((r) => r.data),
   reset: (token, password) => api.post(`/auth/reset-password/${token}`, { password }).then((r) => r.data),
@@ -20,6 +22,9 @@ export const userApi = {
   requestUpdate: (data) => api.post('/users/profile/update-request', data).then((r) => r.data),
   changePassword: (data) => api.put('/users/password', data).then((r) => r.data),
   updateSettings: (data) => api.put('/users/settings', data).then((r) => r.data),
+  // Who you work with and how to reach them. Scoped server-side to the people
+  // the caller actually works alongside.
+  directory: (params) => api.get('/users/directory', { params }).then((r) => r.data),
   // admin
   list: (params) => api.get('/users', { params }).then((r) => r.data),
   get: (id) => api.get(`/users/${id}`).then((r) => r.data),
@@ -185,7 +190,9 @@ export const linkApi = {
 export const eventApi = {
   list: (params) => api.get('/events', { params }).then((r) => r.data),
   create: (formData) => api.post('/events', formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
-  update: (id, payload) => api.put(`/events/${id}`, payload).then((r) => r.data),
+  // FormData when a cover image is attached, plain JSON when it isn't.
+  update: (id, payload) => api.put(`/events/${id}`, payload, payload instanceof FormData
+    ? { headers: { 'Content-Type': 'multipart/form-data' } } : undefined).then((r) => r.data),
   addFiles: (id, formData) => api.post(`/events/${id}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
   remove: (id) => api.delete(`/events/${id}`).then((r) => r.data),
 };
@@ -216,7 +223,21 @@ export const workAssignmentApi = {
   list: (params) => api.get('/work-assignments', { params }).then((r) => r.data),
   // Assignee moves their own work along: accept it, then ask for sign-off.
   acknowledge: (id) => api.put(`/work-assignments/${id}/acknowledge`).then((r) => r.data),
-  submit: (id, note) => api.put(`/work-assignments/${id}/submit`, { note }).then((r) => r.data),
+  // Publishing work closes itself: no note, no second sign-off. Pass a time and
+  // it closes at that moment instead of now.
+  markPosted: (id, scheduledAt) =>
+    api.put(`/work-assignments/${id}/posted`, scheduledAt ? { scheduledAt } : {}).then((r) => r.data),
+  // The finished files go up with the note — whoever signs it off and whoever
+  // publishes it both need the actual work, not a description of it.
+  submit: (id, note, files = []) => {
+    if (!files.length) return api.put(`/work-assignments/${id}/submit`, { note }).then((r) => r.data);
+    const fd = new FormData();
+    fd.append('note', note);
+    files.forEach((f) => fd.append('files', f));
+    return api.put(`/work-assignments/${id}/submit`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
   // An Admin hands work out inside their own institutions and signs it off.
   create: (data) => api.post('/work-assignments', data).then((r) => r.data),
   review: (id, action, note) => api.put(`/work-assignments/${id}/review`, { action, note }).then((r) => r.data),
@@ -230,7 +251,6 @@ export const institutionRequestApi = {
       ? api.post('/requests', data, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data)
       : api.post('/requests', data).then((r) => r.data)
   ),
-  respond: (id, action, response) => api.put(`/requests/${id}/respond`, { action, response }).then((r) => r.data),
   remove: (id) => api.delete(`/requests/${id}`).then((r) => r.data),
 };
 
@@ -245,4 +265,30 @@ export const activityApi = {
 export const reportApi = {
   analytics: () => api.get('/reports/summary/approval-analytics').then((r) => r.data),
   downloadUrl: (type, format) => `/api/reports/${type}?format=${format}`,
+};
+
+// ---- Workflow: the design → post pipeline a college request travels through.
+// One record all the way (the request itself); the artwork and the post written
+// around it are approvals hanging off it, which the detail response inlines.
+export const workflowApi = {
+  list: (params) => api.get('/workflow', { params }).then((r) => r.data),
+  get: (id) => api.get(`/workflow/${id}`).then((r) => r.data),
+  acknowledge: (id) => api.put(`/workflow/${id}/acknowledge`).then((r) => r.data),
+  // Files are the finished design on the design half, extra media on the post half.
+  submit: (id, { files = [], caption, description, hashtags, note } = {}) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f));
+    if (caption !== undefined) fd.append('caption', caption);
+    if (description !== undefined) fd.append('description', description);
+    if (hashtags !== undefined) fd.append('hashtags', hashtags);
+    if (note !== undefined) fd.append('note', note);
+    return api.put(`/workflow/${id}/submit`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data);
+  },
+  review: (id, action, feedbackPoints) => api.put(`/workflow/${id}/review`, { action, feedbackPoints }).then((r) => r.data),
+  // `platforms` is the coordinator's page choice on a design Done — dropping it
+  // here made the server refuse the very selection they had just made.
+  confirm: (id, action, feedbackPoints, platforms) =>
+    api.put(`/workflow/${id}/confirm`, { action, feedbackPoints, platforms }).then((r) => r.data),
+  markPosted: (id, { postedAt, scheduledFor } = {}) =>
+    api.put(`/workflow/${id}/posted`, { postedAt, scheduledFor }).then((r) => r.data),
 };

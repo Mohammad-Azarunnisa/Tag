@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { BriefcaseBusiness, Palette, Send } from 'lucide-react';
+import { BriefcaseBusiness, ClipboardList, Palette, Send } from 'lucide-react';
 import { organizationApi, userApi, workAssignmentApi, institutionRequestApi } from '../../api/endpoints.js';
+import { useAuthStore } from '../../store/authStore.js';
 import { Modal } from '../ui/Modal.jsx';
 import { Button } from '../ui/Button.jsx';
 import { Input, Select } from '../ui/primitives.jsx';
@@ -24,24 +25,60 @@ const URGENCIES = [
 ];
 
 export default function WorkAssignmentModal({ onClose, onSaved }) {
+  const me = useAuthStore((s) => s.user);
+  const isPrivileged = ['ADMIN', 'CEO'].includes(me?.role);
   const [form, setForm] = useState({ organization: '', assigneeType: 'DESIGNER', assigneeIds: [], platform: '', urgency: 'NORMAL', title: '', description: '', sourceRequest: '' });
   const [loading, setLoading] = useState(false);
 
   const { data: orgData } = useQuery({ queryKey: ['work-assign-orgs'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];
 
-  // IN_REVIEW requests for the chosen org — available as an optional link.
+  // Every request the Admin or super admin approved parks in GETTING_ALLOCATED
+  // until someone hands the work out. This queue is what the page is for, so it
+  // is fetched unscoped — the server already limits it to colleges the viewer
+  // holds — and picking one fills the rest of the form in.
   const { data: reqData } = useQuery({
-    queryKey: ['work-assign-inreview', form.organization],
-    queryFn: () => institutionRequestApi.list({ organizationId: form.organization, status: 'IN_REVIEW' }),
-    enabled: !!form.organization,
+    queryKey: ['work-allocation-queue'],
+    queryFn: () => institutionRequestApi.list({ status: 'GETTING_ALLOCATED' }),
   });
-  const inReviewRequests = reqData?.requests || [];
+  const approvedRequests = reqData?.requests || [];
+  const picked = approvedRequests.find((r) => r._id === form.sourceRequest) || null;
 
+  // A picked request already names the college the work is for, so the org
+  // question is answered and the picker is not asked again.
+  const showOrgPicker = !picked && (form.assigneeType === 'SOCIAL_HANDLER' || !isPrivileged);
+  // Designers are one pool across every college; only a social handler has to be
+  // mapped to the college, so only they need an org before names can be listed.
+  const needsOrgFirst = !form.organization && (form.assigneeType === 'SOCIAL_HANDLER' || !isPrivileged);
+
+  // Taking a request off the queue carries its college, its urgency and its
+  // brief across, so the allocation describes what the college actually asked
+  // for rather than whatever the allocator retypes.
+  const pickRequest = (id) => {
+    const r = approvedRequests.find((x) => x._id === id);
+    if (!r) {
+      setForm((f) => ({ ...f, sourceRequest: '', organization: '', assigneeIds: [], title: '', description: '' }));
+      return;
+    }
+    setForm((f) => ({
+      ...f,
+      sourceRequest: r._id,
+      organization: String(r.organization?._id || r.organization || ''),
+      assigneeIds: [],
+      urgency: ['LOW', 'NORMAL', 'HIGH', 'URGENT'].includes(r.priority) ? r.priority : 'NORMAL',
+      title: r.title || '',
+      description: r.details || '',
+    }));
+  };
+
+  // Designers come back unscoped for an Admin — the pool is shared, so narrowing
+  // by the request's college here would hide most of it. Everyone else is fetched
+  // against the college the work is for.
+  const designerPool = form.assigneeType === 'DESIGNER' && isPrivileged;
   const { data: usersData } = useQuery({
-    queryKey: ['work-assign-users', form.organization, form.assigneeType],
+    queryKey: ['work-assign-users', designerPool ? 'all' : form.organization, form.assigneeType],
     queryFn: () => userApi.list(
-      form.assigneeType === 'SOCIAL_HANDLER' || !form.organization
+      designerPool || form.assigneeType === 'SOCIAL_HANDLER' || !form.organization
         ? { role: 'USER' }
         : { role: 'USER', organization: form.organization }
     ),
@@ -50,6 +87,9 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
 
   const candidates = useMemo(() => {
     let list = users.filter((u) => u.role === 'USER' && u.userType === form.assigneeType);
+    if (form.assigneeType === 'DESIGNER' && isPrivileged) {
+      return list;
+    }
     if (form.assigneeType !== 'SOCIAL_HANDLER' && form.organization) {
       list = list.filter((u) => String(u.organization?._id || u.organization || '') === String(form.organization));
     }
@@ -58,10 +98,10 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
         && (!form.platform || (h.platforms || []).includes(form.platform))));
     }
     return list;
-  }, [users, form.organization, form.assigneeType, form.platform]);
+  }, [users, form.organization, form.assigneeType, form.platform, isPrivileged]);
 
   const submit = async () => {
-    if (!form.organization) { toast.error('Please choose an organization'); return; }
+    if (needsOrgFirst) { toast.error('Please choose an organization'); return; }
     if (!form.assigneeIds.length) { toast.error('Please choose at least one assignee'); return; }
     if (!form.title.trim()) { toast.error('Please add a title'); return; }
     if (form.assigneeType === 'SOCIAL_HANDLER' && !form.platform) { toast.error('Choose a platform for social-handler work'); return; }
@@ -69,7 +109,7 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
     setLoading(true);
     try {
       await workAssignmentApi.create({
-        organization: form.organization,
+        ...(form.organization ? { organization: form.organization } : {}),
         assigneeIds: form.assigneeIds,
         urgency: form.urgency,
         platform: form.platform,
@@ -87,12 +127,67 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
   };
 
   return (
-    <Modal open onClose={onClose} title="Assign Work" size="lg">
+    <Modal open onClose={onClose} title="Work Allocation" size="lg">
       <div className="space-y-4">
-        <Select label="Organization" value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value, assigneeIds: [], sourceRequest: '' })}>
-          <option value="">— Select organization —</option>
-          {orgs.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
-        </Select>
+        {/* The queue this screen exists for: everything the Admin or super admin
+            approved, waiting to be handed to someone. */}
+        <div>
+          <div className="mb-1.5 flex items-end justify-between gap-3">
+            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+              Approved requests waiting for allocation
+              {approvedRequests.length > 0 && <span className="font-normal text-slate-400"> · {approvedRequests.length}</span>}
+            </span>
+            {picked && (
+              <button type="button" onClick={() => pickRequest('')}
+                className="text-xs font-semibold text-slate-400 hover:underline">
+                Clear
+              </button>
+            )}
+          </div>
+
+          {approvedRequests.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-700">
+              Nothing is waiting. A request appears here once it is approved on the College Requests page.
+            </p>
+          ) : (
+            <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-slate-200 p-1.5 dark:border-slate-700">
+              {approvedRequests.map((r) => {
+                const active = form.sourceRequest === r._id;
+                return (
+                  <button key={r._id} type="button" onClick={() => pickRequest(active ? '' : r._id)}
+                    className={cn('flex w-full items-start gap-3 rounded-lg px-2.5 py-2 text-left transition-colors',
+                      active ? 'bg-brand-50 dark:bg-brand-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800')}>
+                    <ClipboardList className={cn('mt-0.5 h-4 w-4 shrink-0', active ? 'text-brand-600 dark:text-brand-400' : 'text-slate-400')} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-slate-700 dark:text-slate-200">{r.title}</span>
+                      <span className="block truncate text-xs text-slate-400">
+                        {r.organization?.name || 'Unknown college'}
+                        {r.raisedBy?.name ? ` · ${r.raisedBy.name}` : ''}
+                        {r.priority && r.priority !== 'NORMAL' ? ` · ${r.priority.charAt(0)}${r.priority.slice(1).toLowerCase()}` : ''}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <p className="mt-1.5 text-xs text-slate-400">
+            Picking one carries its college, urgency and brief into the allocation. Leave it unpicked to hand out standalone work.
+          </p>
+        </div>
+
+        {showOrgPicker ? (
+          <Select label="Organization" value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value, assigneeIds: [], sourceRequest: '' })}>
+            <option value="">— Select organization —</option>
+            {orgs.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
+          </Select>
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+            {picked
+              ? <>This work is for <span className="font-semibold">{picked.organization?.name || 'the requesting college'}</span>.{form.assigneeType === 'DESIGNER' ? ' Designers are shown from all organizations.' : ''}</>
+              : 'Designers are shown from all organizations.'}
+          </div>
+        )}
 
         <div>
           <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Assign to</span>
@@ -154,7 +249,7 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
             )}
           </div>
 
-          {!form.organization ? (
+          {needsOrgFirst ? (
             <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-700">
               Choose an organization first to see who you can assign.
             </p>
@@ -162,7 +257,7 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
             <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-700">
               {form.assigneeType === 'SOCIAL_HANDLER'
                 ? 'No social handlers matched this organization/platform yet.'
-                : 'No designers belong to this organization yet.'}
+                : isPrivileged ? 'No designers found.' : 'No designers belong to this organization yet.'}
             </p>
           ) : (
             <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-slate-200 p-1.5 dark:border-slate-700">
@@ -218,23 +313,9 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
 
         <Input label="Work title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Create placement story carousel" />
 
-        {/* Optional: link to an IN_REVIEW college request. When the assignee
-            acknowledges this work, that request is auto-moved to APPROVED. */}
-        {inReviewRequests.length > 0 && (
-          <Select
-            label="Linked college request (optional)"
-            value={form.sourceRequest}
-            onChange={(e) => setForm({ ...form, sourceRequest: e.target.value })}
-          >
-            <option value="">— None —</option>
-            {inReviewRequests.map((r) => (
-              <option key={r._id} value={r._id}>{r.title}</option>
-            ))}
-          </Select>
-        )}
-        {form.sourceRequest && (
+        {picked && (
           <p className="-mt-2 text-xs text-slate-400">
-            When the assignee accepts this work the linked request will automatically be marked approved.
+            Linked to “{picked.title}” — the request closes once the work is picked up.
           </p>
         )}
 
@@ -247,7 +328,7 @@ export default function WorkAssignmentModal({ onClose, onSaved }) {
 
         <div className="mt-6 flex items-center justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button loading={loading} onClick={submit}><BriefcaseBusiness className="h-4 w-4" /> Assign Work</Button>
+          <Button loading={loading} onClick={submit}><BriefcaseBusiness className="h-4 w-4" /> Allocate Work</Button>
         </div>
       </div>
     </Modal>

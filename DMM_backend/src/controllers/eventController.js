@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import { logActivity } from '../utils/logActivity.js';
 import { ACTIVITY_ACTIONS, ROLES } from '../config/constants.js';
 import { canAccessOrg, resolveViewOrgId } from '../utils/org.js';
+import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { createEventDriveFolder, uploadEventPhoto, deleteDriveFile, isDriveConfigured } from '../services/googleDrive.js';
 
 // May this user edit/delete the event? The creator, any Admin (CEO) or the
@@ -20,6 +21,17 @@ const requireDrive = (res) => {
 };
 
 const toPhoto = (file) => ({ driveFileId: file.id, name: file.name, url: file.webViewLink, thumbnailUrl: file.thumbnailLink || '' });
+
+// The cover image is a single file under `coverImage`; everything else is album
+// material bound for Drive. Multer hands back an array from .array() and an
+// object keyed by field from .fields(), so both shapes are flattened here.
+const splitFiles = (files) => {
+  const all = Array.isArray(files) ? files : Object.values(files || {}).flat();
+  return {
+    cover: all.find((f) => f.fieldname === 'coverImage') || null,
+    albumFiles: all.filter((f) => f.fieldname !== 'coverImage'),
+  };
+};
 
 // @route GET /api/events — every event (shared workspace). Optional ?search, ?organizationId.
 export const listEvents = asyncHandler(async (req, res) => {
@@ -52,12 +64,23 @@ export const listEvents = asyncHandler(async (req, res) => {
   res.json({ success: true, count: items.length, events: items });
 });
 
-// @route POST /api/events — create an event (any authenticated user) and its
-// Drive folder. Any photos attached go straight into that folder.
+// @route POST /api/events — create an event (any authenticated user).
+//
+// Two ways an event holds its photos:
+//   LINK — the organiser pastes a folder/album link they already have. Nothing
+//     touches the Drive API, so this works whether or not Drive is connected.
+//   DRIVE FOLDER — no link given, so a folder is created for the event and any
+//     attached photos are pushed into it. This is the original behaviour and
+//     still needs Drive connected.
+// A cover image (optional, single file, field `coverImage`) is stored through
+// the app's own storage driver either way — it is the tile picture, not an album.
 export const createEvent = asyncHandler(async (req, res) => {
   const { name, description, eventDate, location, organization } = req.body;
   if (!name?.trim()) { res.status(400); throw new Error('Event name is required'); }
-  requireDrive(res);
+  const link = String(req.body.link || '').trim();
+  if (link && !/^https?:\/\//i.test(link)) { res.status(400); throw new Error('The photos link must start with http:// or https://'); }
+  const useDriveFolder = !link;
+  if (useDriveFolder) requireDrive(res);
 
   let orgId = null;
   if (organization) {
@@ -66,19 +89,28 @@ export const createEvent = asyncHandler(async (req, res) => {
     if (org) orgId = org._id;
   }
 
-  const folder = await createEventDriveFolder(name.trim());
+  const { cover, albumFiles } = splitFiles(req.files);
+  const folder = useDriveFolder ? await createEventDriveFolder(name.trim()) : null;
 
   const photos = [];
-  for (const file of req.files || []) {
-    const uploaded = await uploadEventPhoto(folder.id, file.buffer, file.originalname, file.mimetype);
-    photos.push(toPhoto(uploaded));
+  if (folder) {
+    for (const file of albumFiles) {
+      const uploaded = await uploadEventPhoto(folder.id, file.buffer, file.originalname, file.mimetype);
+      photos.push(toPhoto(uploaded));
+    }
   }
+  const coverUpload = cover
+    ? await uploadBuffer(cover.buffer, { folder: 'events', originalName: cover.originalname })
+    : null;
 
   const event = await Event.create({
     name: name.trim(),
     description: description || '',
-    driveFolderId: folder.id,
-    folderLink: folder.webViewLink,
+    driveFolderId: folder?.id || '',
+    folderLink: folder?.webViewLink || '',
+    link,
+    coverImage: coverUpload?.url || '',
+    coverImagePublicId: coverUpload?.publicId || '',
     photos,
     eventDate: eventDate ? new Date(eventDate) : undefined,
     location: location || '',
@@ -98,6 +130,11 @@ export const addEventFiles = asyncHandler(async (req, res) => {
   if (!event) { res.status(404); throw new Error('Event not found'); }
   requireDrive(res);
   if (!req.files?.length) { res.status(400); throw new Error('No files were uploaded'); }
+  // Events that point at a pasted link have no folder of ours to add to.
+  if (!event.driveFolderId) {
+    res.status(400);
+    throw new Error('This event keeps its photos at a link, so add them there instead.');
+  }
 
   for (const file of req.files) {
     const uploaded = await uploadEventPhoto(event.driveFolderId, file.buffer, file.originalname, file.mimetype);
@@ -120,6 +157,26 @@ export const updateEvent = asyncHandler(async (req, res) => {
   if (description !== undefined) event.description = description;
   if (location !== undefined) event.location = location;
   if (eventDate !== undefined) event.eventDate = eventDate ? new Date(eventDate) : undefined;
+  if (req.body.link !== undefined) {
+    const link = String(req.body.link).trim();
+    if (link && !/^https?:\/\//i.test(link)) { res.status(400); throw new Error('The photos link must start with http:// or https://'); }
+    // An event has to keep somewhere to open. Clearing the link is fine when a
+    // Drive folder was created for it, and refused when it wasn't — otherwise
+    // "Open in Drive" would lead nowhere.
+    if (!link && !event.driveFolderId) {
+      res.status(400);
+      throw new Error('This event has no Drive folder, so it needs a photos link.');
+    }
+    event.link = link;
+  }
+  // A newly attached cover replaces the old one, which is then cleaned up.
+  const { cover } = splitFiles(req.files);
+  if (cover) {
+    const up = await uploadBuffer(cover.buffer, { folder: 'events', originalName: cover.originalname });
+    if (event.coverImagePublicId) await deleteFile(event.coverImagePublicId);
+    event.coverImage = up.url;
+    event.coverImagePublicId = up.publicId;
+  }
   if (organization !== undefined) {
     if (organization && !canAccessOrg(req.user, organization)) { res.status(403); throw new Error('Not allowed'); }
     if (!organization) event.organization = null;
@@ -138,6 +195,7 @@ export const deleteEvent = asyncHandler(async (req, res) => {
   if (!event) { res.status(404); throw new Error('Event not found'); }
   if (!canManage(req.user, event)) { res.status(403); throw new Error('Not allowed to delete this event'); }
   if (event.driveFolderId) await deleteDriveFile(event.driveFolderId);
+  if (event.coverImagePublicId) await deleteFile(event.coverImagePublicId);
   await event.deleteOne();
   res.json({ success: true, id: req.params.id });
 });

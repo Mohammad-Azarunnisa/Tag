@@ -1,4 +1,6 @@
 import ApprovalRequest from '../models/ApprovalRequest.js';
+import WorkAssignment from '../models/WorkAssignment.js';
+import { completePostingWork, closePostingWorkForApproval } from '../controllers/workAssignmentController.js';
 import ApprovalComment from '../models/ApprovalComment.js';
 import User from '../models/User.js';
 import { createNotification } from '../utils/notify.js';
@@ -43,6 +45,9 @@ export const publishDueScheduledPosts = async (now = new Date()) => {
         text: `went live as scheduled${channels(request)}`,
       });
 
+      // It is out, so the job raised to get it out is finished too.
+      await closePostingWorkForApproval(request._id, null, now);
+
       const recipients = new Set([String(request.createdBy)]);
       if (request.scheduledBy) recipients.add(String(request.scheduledBy));
       if (request.assignedTo) recipients.add(String(request.assignedTo));
@@ -65,6 +70,34 @@ export const publishDueScheduledPosts = async (now = new Date()) => {
       console.error(`scheduled post ${request._id} failed:`, err.message);
     }
   }
+
+  // A handler can book the same time on the posting job in their assigned work.
+  // Closing those here keeps the two views in step: the board says posted and so
+  // does their list, without either of them waiting on a click.
+  const dueJobs = await WorkAssignment.find({
+    status: { $ne: 'DONE' },
+    scheduledAt: { $ne: null, $lte: now },
+  }).limit(200);
+
+  for (const job of dueJobs) {
+    try {
+      const owner = await User.findById(job.assignee).select('name');
+      await completePostingWork(job, owner || { _id: job.assignee, name: 'the assignee' }, now);
+      await createNotification({
+        recipient: job.assignee,
+        organization: job.organization,
+        type: NOTIFICATION_TYPES.CONTENT_POSTED,
+        title: 'Scheduled post is live',
+        message: `"${job.title}" went out as scheduled and is marked posted.`,
+        link: '/my-assigned-work',
+        relatedRequest: job._id,
+      });
+      published.push(job._id);
+    } catch (err) {
+      console.error(`scheduled posting job ${job._id} failed:`, err.message);
+    }
+  }
+
   return published;
 };
 

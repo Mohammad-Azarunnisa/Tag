@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, FileImage, Images, CheckSquare, BarChart3, CalendarDays,
   FileText, Bell, Settings, X, TrendingUp, Palette, Share2, ShoppingBag, Camera, ClipboardList, Sparkles, Flag, CircleUser, BriefcaseBusiness,
-  UsersRound, MessageSquarePlus,
+  UsersRound, MessageSquarePlus, Send,
 } from 'lucide-react';
 import { cn, roleLabel } from '../../lib/utils.js';
 import { useAuthStore } from '../../store/authStore.js';
@@ -31,15 +31,24 @@ const NAV_SECTIONS = [
     title: 'Workflow',
     items: [
       { to: '/approvals', label: 'Approvals', icon: CheckSquare },
+      // The design → post pipeline a college request travels through. Designers
+      // and handlers each see their own board; a coordinator sees their own asks
+      // coming back to them for review; admins monitor both.
+      { to: '/workflow/designs', label: 'Designs to be Done', icon: Palette, roles: ['CEO'], userTypes: ['DESIGNER', 'COORDINATOR'] },
+      { to: '/workflow/to-be-posted', label: 'To Be Posted', icon: Send, roles: ['CEO'], userTypes: ['SOCIAL_HANDLER', 'COORDINATOR'] },
       { to: '/my-assigned-work', label: 'My Assigned Work', icon: BriefcaseBusiness },
-      // An Admin hands work out and signs it off; a user only has their own.
-      // An Admin hands work out across their institutions; a coordinator inside
-      // their own college. A designer or handler only has their own list.
-      { to: '/team-work', label: 'Team Work', icon: UsersRound, roles: ['CEO'], userTypes: ['COORDINATOR'] },
-      // What the college has asked the admin for.
-      { to: '/requests', label: 'Requests to Admin', icon: MessageSquarePlus, userTypes: ['COORDINATOR'] },
+      // Handing work out and signing it off belongs to the Admin, across the
+      // institutions they hold. A coordinator raises a request instead and the
+      // Admin allocates it; a designer or handler only has their own list.
+      { to: '/team-work', label: 'Team Work', icon: UsersRound, roles: ['CEO'] },
+      // What the college has asked for. It goes straight to Designs to be Done,
+      // so this is no longer a request "to the admin".
+      { to: '/requests', label: 'Raise a Request', icon: MessageSquarePlus, userTypes: ['COORDINATOR'] },
       { to: '/planner', label: 'Post Planner', icon: ClipboardList },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+      // Who you work with and how to reach them. Everyone gets this; the server
+      // decides whose details each role may see.
+      { to: '/people', label: 'People', icon: UsersRound },
     ],
   },
   {
@@ -68,13 +77,18 @@ const NAV_SECTIONS = [
   },
 ];
 
-// What a coordinator actually has: their college's content and numbers, the work
-// they hand out, and the requests they raise. The backend enforces the college
-// boundary (middleware/auth.js); this keeps the UI honest about the rest.
+// What a coordinator actually has: their college's content and numbers, and the
+// requests they raise. The backend enforces the college boundary
+// (middleware/auth.js); this keeps the UI honest about the rest.
+// The Workflow boards are here so they can find what came back from their own
+// requests and confirm it or ask for changes. The approvals pages are not theirs.
+// Team Work is absent by design: a coordinator does not assign work to anyone
+// directly — they raise a request and the Admin allocates it.
 const COORDINATOR_PATHS = [
-  '/dashboard', '/approvals', '/notifications', '/profile', '/settings',
+  '/dashboard', '/notifications', '/profile', '/settings',
   '/templates', '/assets', '/brand-library', '/events', '/signage',
-  '/social-analytics', '/calendar', '/planner', '/team-work', '/requests',
+  '/social-analytics', '/calendar', '/planner', '/requests',
+  '/people', '/workflow/designs', '/workflow/to-be-posted',
 ];
 
 export default function Sidebar({ open, onClose }) {

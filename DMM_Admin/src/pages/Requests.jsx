@@ -1,27 +1,41 @@
 import { useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
 import {
-  MessageSquarePlus, Search, Clock3, Eye, CheckCircle2, XCircle, Flame, X,
+  MessageSquarePlus, Search, Clock3, Eye, CheckCircle2, XCircle, Flame, X, BriefcaseBusiness,
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
+  Paperclip, ExternalLink, Send,
 } from 'lucide-react';
 import { institutionRequestApi, organizationApi } from '../api/endpoints.js';
-import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo } from '../lib/utils.js';
 
+// The tiles read left to right as the journey: raised → with the handler → done.
+// IN_REVIEW and GETTING_ALLOCATED can no longer be reached (nothing approves a
+// request now — it goes straight to the designers), so they are kept only so
+// older requests still render a correct chip, and are left off the tiles.
 const STATUS_META = {
-  OPEN: { label: 'Waiting on you', icon: Clock3, cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' },
-  IN_REVIEW: { label: 'Being looked at', icon: Eye, cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
-  APPROVED: { label: 'Approved', icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' },
+  OPEN: { label: 'With the designers', icon: Clock3, cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' },
+  WITH_SOCIAL_HANDLER: { label: 'With the social handler', icon: Send, cls: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
+  APPROVED: { label: 'Done', icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' },
   DECLINED: { label: 'Declined', icon: XCircle, cls: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400' },
 };
+// Still moving: raised, or handed to a handler to publish. Used for "sort the
+// live ones by urgency" and for flagging a missed `neededBy` date — work sitting
+// with a handler is still late if it has not gone out.
+const IN_FLIGHT = ['OPEN', 'IN_REVIEW', 'GETTING_ALLOCATED', 'WITH_SOCIAL_HANDLER'];
+const inFlight = (status) => IN_FLIGHT.includes(status);
+
+// Chips only — statuses the old flow could set, which no new request reaches.
+const LEGACY_STATUS_META = {
+  IN_REVIEW: { label: 'Being looked at', icon: Eye, cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
+  GETTING_ALLOCATED: { label: 'Getting allocated', icon: BriefcaseBusiness, cls: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
+};
 const StatusChip = ({ status }) => {
-  const m = STATUS_META[status] || STATUS_META.OPEN;
+  const m = STATUS_META[status] || LEGACY_STATUS_META[status] || STATUS_META.OPEN;
   const Icon = m.icon;
   return (
     <span className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold', m.cls)}>
@@ -34,7 +48,6 @@ const CATEGORY_ICON = {
   Budget: IndianRupee, People: Users, Content: FileImage,
   Permission: ShieldCheck, Access: KeyRound, Other: CircleHelp,
 };
-const CATEGORIES = ['Budget', 'People', 'Content', 'Permission', 'Access', 'Other'];
 
 const PRIORITY_CLS = {
   LOW: 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-300',
@@ -46,34 +59,42 @@ const PRIORITY_CLS = {
 const PRIORITY_RANK = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 };
 
 /**
- * What the colleges have asked for, and what still needs an answer. A super admin
- * sees every college; an Admin only the institutions they hold — the server
- * decides which, so this page just renders what it is given.
+ * What the colleges have asked for. Read-only for everyone who can reach it: a
+ * request goes straight to the designers when it is raised, so neither an Admin
+ * nor the super admin approves, declines or replies to one — the server has no
+ * endpoint for it. A super admin sees every college; an Admin only the
+ * institutions they hold, decided server-side, so this page renders what it is
+ * given.
  */
 export default function Requests() {
-  const qc = useQueryClient();
-  const me = useAuthStore((s) => s.user);
-  const canDecide = !me?.viewOnly;
   const [params, setParams] = useSearchParams();
   // A notification links here with ?request=<id> so the row it refers to stands out.
   const highlightId = params.get('request') || '';
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
-  const [category, setCategory] = useState('');
   const [orgFilter, setOrgFilter] = useState('');
-  const [deciding, setDeciding] = useState(null);
+  // When the request was raised. Either end works on its own.
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [viewing, setViewing] = useState(null);
 
-  const { data: orgData } = useQuery({ queryKey: ['org-options'], queryFn: organizationApi.options });
+  // Only the colleges this admin actually holds — offering the rest would filter
+  // to an empty list and imply access they do not have.
+  const { data: orgData } = useQuery({
+    queryKey: ['org-options', 'mine'],
+    queryFn: () => organizationApi.options({ scope: 'mine' }),
+  });
   const orgs = orgData?.organizations || [];
 
   const { data, isLoading } = useQuery({
-    queryKey: ['institution-requests', { search, status, category, orgFilter }],
+    queryKey: ['institution-requests', { search, status, orgFilter, from, to }],
     queryFn: () => institutionRequestApi.list({
       search: search || undefined,
       status: status === 'All' ? undefined : status,
-      category: category || undefined,
       organizationId: orgFilter || undefined,
+      from: from || undefined,
+      to: to || undefined,
     }),
   });
   const counts = data?.counts || {};
@@ -82,8 +103,8 @@ export default function Requests() {
     const rows = [...(data?.requests || [])];
     // Anything still open is sorted by urgency; decided items keep date order.
     return rows.sort((a, b) => {
-      const aOpen = ['OPEN', 'IN_REVIEW'].includes(a.status);
-      const bOpen = ['OPEN', 'IN_REVIEW'].includes(b.status);
+      const aOpen = inFlight(a.status);
+      const bOpen = inFlight(b.status);
       if (aOpen !== bOpen) return aOpen ? -1 : 1;
       if (aOpen) {
         const r = (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2);
@@ -93,17 +114,13 @@ export default function Requests() {
     });
   }, [data]);
 
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['institution-requests'] });
-    qc.invalidateQueries({ queryKey: ['notifications'] });
-  };
-  const filtering = !!search.trim() || !!category || !!orgFilter || status !== 'All';
+  const filtering = !!search.trim() || !!orgFilter || status !== 'All' || !!from || !!to;
 
   return (
     <div>
       <PageHeader
         title="College Requests"
-        subtitle="What the colleges have asked for — budget, people, permission, access. Approve or decline with a reply they can act on."
+        subtitle="What the colleges have asked for. Each one goes straight to the designers on Designs to be Done — this is the record of what was asked, not something to approve."
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -127,10 +144,17 @@ export default function Requests() {
           <option value="">All colleges</option>
           {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
         </Select>
-        <Select className="lg:w-44" value={category} onChange={(e) => setCategory(e.target.value)} title="Filter by kind">
-          <option value="">All kinds</option>
-          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-        </Select>
+        {/* Raised between — same From/To pair the approvals list uses. */}
+        <Input type="date" className="lg:w-40" title="Raised from" aria-label="Raised from"
+          value={from} onChange={(e) => setFrom(e.target.value)} />
+        <Input type="date" className="lg:w-40" title="Raised up to" aria-label="Raised up to"
+          value={to} onChange={(e) => setTo(e.target.value)} />
+        {(from || to) && (
+          <button type="button" onClick={() => { setFrom(''); setTo(''); }} title="Clear dates" aria-label="Clear dates"
+            className="self-start rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {highlightId && (
@@ -148,13 +172,13 @@ export default function Requests() {
         <EmptyState icon={MessageSquarePlus}
           title={filtering ? 'Nothing matches these filters' : 'No requests yet'}
           description={filtering
-            ? 'Try another college or kind — or clear the search.'
-            : 'When a college needs something from you, it will appear here.'} />
+            ? 'Try another college or a wider date range — or clear the search.'
+            : 'When a college raises a request, it will appear here.'} />
       ) : (
         <div className="space-y-3">
           {requests.map((r) => {
             const Icon = CATEGORY_ICON[r.category] || CircleHelp;
-            const open = ['OPEN', 'IN_REVIEW'].includes(r.status);
+            const open = inFlight(r.status);
             const overdue = r.neededBy && new Date(r.neededBy) < new Date() && open;
             const brief = [r.workType === 'DIGITAL_MEDIA' ? 'Digital media' : 'Print media', r.workCategory, r.workItem].filter(Boolean).join(' · ');
             return (
@@ -178,8 +202,17 @@ export default function Requests() {
                         </p>
                       )}
                       {r.department && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Department: {r.department}</p>}
-                      {Array.isArray(r.attachments) && r.attachments.length > 0 && (
-                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{r.attachments.length} attached reference file{r.attachments.length === 1 ? '' : 's'}</p>
+                      {assignedUsersOf(r).length > 0 && (
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          Assigned to: {assignedUsersOf(r).map((u) => u.name).join(', ')}
+                        </p>
+                      )}
+                      {attachmentsOf(r).length > 0 && (
+                        <button type="button" onClick={() => setViewing(r)}
+                          className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400">
+                          <Paperclip className="h-3 w-3" />
+                          {attachmentsOf(r).length} attached reference file{attachmentsOf(r).length === 1 ? '' : 's'} — view
+                        </button>
                       )}
                     </div>
                   </div>
@@ -212,89 +245,154 @@ export default function Requests() {
                   </div>
                 )}
 
-                {canDecide && open && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => setDeciding({ request: r, mode: 'approve' })}>
-                      <CheckCircle2 className="h-4 w-4" /> Approve
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setDeciding({ request: r, mode: 'decline' })}>
-                      <XCircle className="h-4 w-4 text-rose-500" /> Decline
-                    </Button>
-                    {r.status === 'OPEN' && (
-                      <Button size="sm" variant="ghost" onClick={() => setDeciding({ request: r, mode: 'review' })}>
-                        <Eye className="h-4 w-4" /> Mark as looking at it
-                      </Button>
-                    )}
-                  </div>
-                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {/* Always available, decided or not — the full ask, the event
+                      details and everything the college attached. */}
+                  <Button size="sm" variant="outline" onClick={() => setViewing(r)}>
+                    <Eye className="h-4 w-4" /> Open request
+                  </Button>
+                </div>
+
               </Card>
             );
           })}
         </div>
       )}
 
-      {deciding && (
-        <DecideModal {...deciding} onClose={() => setDeciding(null)} onSaved={() => { setDeciding(null); refresh(); }} />
-      )}
+      {viewing && <RequestDetailModal request={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
 
-// The reply matters more than the verdict: it is what the college acts on, which
-// is why declining without one is refused.
-function DecideModal({ request, mode, onClose, onSaved }) {
-  const [response, setResponse] = useState('');
-  const mutation = useMutation({
-    mutationFn: () => institutionRequestApi.respond(request._id, mode, response),
-    onSuccess: () => {
-      toast.success(mode === 'approve' ? 'Approved — they have been told'
-        : mode === 'decline' ? 'Declined — they have your reason'
-          : 'Marked as being looked at');
-      onSaved();
-    },
-    onError: (e) => toast.error(e.response?.data?.message || 'Could not save that'),
-  });
+// Whatever the college attached. Kept as a helper because the field is left
+// undefined rather than empty when nothing was uploaded.
+const attachmentsOf = (r) => (Array.isArray(r?.attachments) ? r.attachments : []);
+const assignedUsersOf = (r) => (Array.isArray(r?.assignedUsers) ? r.assignedUsers : []);
 
-  const TITLES = { approve: 'Approve this request', decline: 'Decline this request', review: 'Mark as being looked at' };
-  const required = mode === 'decline';
+// An attachment is previewable when it is an image; anything else (a PDF, a
+// brief, a spreadsheet) gets a labelled tile that opens in a new tab.
+const isImageAttachment = (a) =>
+  a?.mediaType === 'image' || /\.(png|jpe?g|webp|gif|svg|avif)$/i.test(a?.url || a?.name || '');
+
+const Detail = ({ label, children }) => (
+  <div>
+    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+    <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-200">{children}</p>
+  </div>
+);
+
+/**
+ * The whole request, opened. The list is a triage view — it deliberately shows
+ * only enough to sort by — so this is where everything the college actually sent
+ * lives, the reference photos above all. Read-only, and that is the whole page:
+ * a request goes straight to the designers, so there is nothing here to decide.
+ */
+function RequestDetailModal({ request: r, onClose }) {
+  const files = attachmentsOf(r);
+  const images = files.filter(isImageAttachment);
+  const others = files.filter((a) => !isImageAttachment(a));
+  const brief = [r.workType === 'DIGITAL_MEDIA' ? 'Digital media' : 'Print media', r.workCategory, r.workItem].filter(Boolean).join(' · ');
 
   return (
-    <Modal open onClose={onClose} title={TITLES[mode]} size="md">
-      <form onSubmit={(e) => {
-        e.preventDefault();
-        if (required && !response.trim()) { toast.error('Tell them why, so they know what to do next'); return; }
-        mutation.mutate();
-      }} className="space-y-4">
-        <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
-          <p className="font-semibold text-slate-800 dark:text-white">{request.title}</p>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {request.organization?.name}
-            {request.raisedBy?.name ? ` · ${request.raisedBy.name}` : ''}
-            {` · ${request.category}`}
-          </p>
+    <Modal open onClose={onClose} title={r.title} size="lg">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip status={r.status} />
+          {PRIORITY_CLS[r.priority] && (
+            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold', PRIORITY_CLS[r.priority])}>
+              {r.priority === 'URGENT' && <Flame className="h-3 w-3" />} {r.priority.charAt(0) + r.priority.slice(1).toLowerCase()}
+            </span>
+          )}
+          {/* The exact moment, not only how long ago — this is the figure people
+              quote when they ask why something took as long as it did. */}
+          <span className="text-xs text-slate-400">Raised {formatDateTime(r.createdAt)} · {timeAgo(r.createdAt)}</span>
         </div>
 
+        <div className="grid gap-4 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/50 sm:grid-cols-2">
+          <Detail label="College">{r.organization?.name || '—'}</Detail>
+          <Detail label="Raised on">{formatDateTime(r.createdAt)}</Detail>
+          <Detail label="Raised by">
+            <span className="inline-flex items-center gap-1.5">
+              {r.raisedBy?.name ? <Avatar src={r.raisedBy.avatar} name={r.raisedBy.name} size="sm" className="h-5 w-5 ring-0" /> : null}
+              {r.raisedBy?.name || '—'}
+            </span>
+          </Detail>
+          <Detail label="Kind">{r.category}</Detail>
+          {brief && <Detail label="Work">{brief}</Detail>}
+          {r.department && <Detail label="Department">{r.department}</Detail>}
+          {r.neededBy && <Detail label="Needed by">{formatDate(r.neededBy)}</Detail>}
+          {assignedUsersOf(r).length > 0 && <Detail label="Assigned to">{assignedUsersOf(r).map((u) => u.name).join(', ')}</Detail>}
+        </div>
+
+        {r.event && (
+          <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+              <CalendarClock className="h-3.5 w-3.5" /> Event
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Detail label="Name">{r.eventName || 'Unnamed event'}</Detail>
+              {r.eventDate && <Detail label="Date">{formatDate(r.eventDate)}</Detail>}
+              {r.place && <Detail label="Place">{r.place}</Detail>}
+              {r.eventCoordinatorName && <Detail label="Coordinator">{r.eventCoordinatorName}</Detail>}
+            </div>
+          </div>
+        )}
+
+        {r.details && (
+          <div>
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">What they asked for</p>
+            <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{r.details}</p>
+          </div>
+        )}
+
+        {/* The reference material — the reason this view exists. */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
-            Your reply {required ? '' : <span className="font-normal text-slate-400">· optional</span>}
-          </label>
-          <textarea className="input-base min-h-[110px]" value={response} onChange={(e) => setResponse(e.target.value)}
-            placeholder={mode === 'approve'
-              ? 'e.g. Approved up to ₹15,000 — raise the bill through accounts.'
-              : mode === 'decline'
-                ? 'Say why, and what they could do instead.'
-                : 'e.g. Checking with the chairman this week.'} />
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <Paperclip className="h-3.5 w-3.5" /> Reference files{files.length > 0 ? ` · ${files.length}` : ''}
+          </p>
+          {files.length === 0 ? (
+            <p className="text-sm text-slate-400">Nothing was attached to this request.</p>
+          ) : (
+            <div className="space-y-3">
+              {images.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {images.map((a, i) => (
+                    <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                      title={a.name || 'Open full size'}
+                      className="group relative block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+                      <img src={a.url} alt={a.name || `Reference ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-slate-900/70 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                        {a.name || 'Open full size'}
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              )}
+              {others.map((a, i) => (
+                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-brand-500/5">
+                  <FileImage className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                </a>
+              ))}
+            </div>
+          )}
         </div>
 
-        <p className="text-xs text-slate-400">The person who raised it gets a notification with your reply.</p>
+        {r.response && (
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {r.reviewedBy?.name || 'Reply'}{r.reviewedAt ? ` · ${timeAgo(r.reviewedAt)}` : ''}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{r.response}</p>
+          </div>
+        )}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant={mode === 'decline' ? 'danger' : 'default'} loading={mutation.isPending}>
-            {mode === 'approve' ? 'Approve' : mode === 'decline' ? 'Decline' : 'Save'}
-          </Button>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+          <Button type="button" variant="outline" onClick={onClose}>Close</Button>
         </div>
-      </form>
+      </div>
     </Modal>
   );
 }

@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart } from 'lucide-react';
+import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart, Palette, Send } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
+import { useAuthStore } from '../../store/authStore.js';
 
 // Navigation grouped by admin duty: running the platform, overseeing content,
 // the approval workflow, results, and org-level management data.
@@ -15,6 +16,9 @@ const NAV_SECTIONS = [
   {
     title: 'Administration',
     items: [
+      // An Admin sees the institutions they hold here, read-only — the page
+      // drops its create/edit/delete actions for them, and the server refuses
+      // those anyway (requireSuperAdmin). Creating a college stays platform work.
       { to: '/organizations', label: 'Organizations', icon: Building2 },
       { to: '/users', label: 'User Management', icon: Users },
       { to: '/activity', label: 'Activity Logs', icon: Activity },
@@ -34,6 +38,11 @@ const NAV_SECTIONS = [
     title: 'Workflow',
     items: [
       { to: '/approvals', label: 'Approvals', icon: CheckSquare },
+      // The design -> post pipeline a college request travels through. Both
+      // boards are read-only oversight here, except at the two approval gates,
+      // which are the admin's own decisions.
+      { to: '/workflow/designs', label: 'Designs to be Done', icon: Palette },
+      { to: '/workflow/to-be-posted', label: 'To Be Posted', icon: Send },
       { to: '/assigned-work', label: 'Assigned Work', icon: BriefcaseBusiness },
       // What the colleges have asked for and still need an answer on.
       { to: '/requests', label: 'College Requests', icon: MessageSquarePlus },
@@ -53,7 +62,8 @@ const NAV_SECTIONS = [
   {
     title: 'Management',
     items: [
-      { to: '/branding-register', label: 'Branding Register', icon: HardHat },
+      // The whole branding-register API is requireSuperAdmin.
+      { to: '/branding-register', label: 'Branding Register', icon: HardHat, superAdminOnly: true },
       { to: '/social-accounts', label: 'Social Handlers', icon: Share2 },
       { to: '/websites', label: 'Websites', icon: Globe },
       { to: '/purchases', label: 'Premium Packs', icon: ShoppingBag },
@@ -69,7 +79,11 @@ const NAV_SECTIONS = [
 ];
 
 export default function Sidebar({ open, onClose }) {
+  const user = useAuthStore((s) => s.user);
   const linkClass = ({ isActive }) => cn('sidebar-link', isActive && 'sidebar-link-active');
+  // An institution Admin runs the colleges they hold; a handful of screens are
+  // the super admin's alone and are hidden rather than shown and refused.
+  const visible = (items) => items.filter((i) => !i.superAdminOnly || user?.isSuperAdmin);
 
   return (
     <>
@@ -86,7 +100,7 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-4 py-4">
-          {NAV_SECTIONS.map((section, si) => (
+          {NAV_SECTIONS.map((section, si) => visible(section.items).length === 0 ? null : (
             <div key={section.title || si}>
               {section.title && (
                 <p className={cn('px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500', si > 0 && 'pt-4')}>
@@ -94,7 +108,7 @@ export default function Sidebar({ open, onClose }) {
                 </p>
               )}
               <div className="space-y-1">
-                {section.items.map(({ to, label, icon: Icon }) => (
+                {visible(section.items).map(({ to, label, icon: Icon }) => (
                   <NavLink key={to} to={to} onClick={onClose} className={linkClass}>
                     <Icon className="h-[18px] w-[18px] shrink-0" />
                     {label}

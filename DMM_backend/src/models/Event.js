@@ -10,6 +10,15 @@ const eventSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     driveFolderId: { type: String, default: '' },
     folderLink: { type: String, default: '' },
+    // A photo location the organiser pastes in themselves — a Drive folder,
+    // shared album, anything. When set it is what "Open in Drive" opens, and the
+    // event does not need the Drive API at all (see controllers/eventController).
+    link: { type: String, default: '' },
+    // Optional single image used as the event's tile picture. Stored through the
+    // app's own storage driver, not Drive, so it shows even when Drive is not
+    // connected. Falls back to the first Drive photo, then to a placeholder.
+    coverImage: { type: String, default: '' },
+    coverImagePublicId: { type: String, default: '' },
     photos: [
       {
         driveFileId: { type: String, required: true },

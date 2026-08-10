@@ -5,6 +5,38 @@ import { generateToken } from '../utils/token.js';
 import { sendEmail, isEmailConfigured } from '../utils/email.js';
 import { ROLES } from '../config/constants.js';
 
+// The two front-ends are separate products for separate audiences: the console
+// (DMM_Admin) belongs to the platform's ADMIN accounts, the product app
+// (DMM_frontend) to the colleges' own people. An account may only sign in
+// through its own portal. Enforcing it here rather than only in the browser
+// means admin credentials typed into the product app are refused by the API,
+// so no token is ever issued for the wrong portal.
+//
+// A request that names no portal is treated as the product app: that is the
+// default consumer of this endpoint, and it is the side that must stay closed.
+export const PORTALS = { ADMIN: 'admin', USER: 'user' };
+
+// Who administers institutions, and therefore belongs in the console: the super
+// admin across all of them, and an Admin (role CEO) inside the ones they hold.
+// They do the same job — see the users, assign work, approve content, answer
+// requests — and every endpoint they reach is scoped to their institutions
+// server-side. The console is their ONLY door: an administrator signing into the
+// product app would find none of that there, which is exactly the confusion this
+// rule exists to prevent.
+export const CONSOLE_ROLES = [ROLES.ADMIN, ROLES.CEO];
+
+const assertPortal = (user, rawPortal, res) => {
+  const portal = String(rawPortal || PORTALS.USER).toLowerCase();
+  if (portal === PORTALS.USER && CONSOLE_ROLES.includes(user.role)) {
+    res.status(403);
+    throw new Error('You are trying to log in with an Admin account. Please use the Admin Portal.');
+  }
+  if (portal === PORTALS.ADMIN && !CONSOLE_ROLES.includes(user.role)) {
+    res.status(403);
+    throw new Error('You are trying to log in with a User account. Please use the User Portal.');
+  }
+};
+
 const sanitize = (user) => ({
   _id: user._id,
   name: user.name,
@@ -12,6 +44,12 @@ const sanitize = (user) => ({
   role: user.role,
   userType: user.userType || null,
   isSuperAdmin: !!user.isSuperAdmin,
+  // The console hides every action behind this; without it in the payload a
+  // view-only account was shown buttons the server then refused.
+  viewOnly: !!user.viewOnly,
+  // The extra institutions an Admin holds, so the console can scope its pickers
+  // to what they can actually act in.
+  managedOrganizations: user.managedOrganizations || [],
   avatar: user.avatar,
   jobTitle: user.jobTitle,
   phone: user.phone || '',
@@ -76,8 +114,19 @@ export const login = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('Your account has been deactivated. Contact your administrator.');
   }
-  // CEO/USER must belong to an active organization to use the product app.
-  if (user.role !== 'ADMIN') {
+  // Right credentials, wrong door — see PORTALS above.
+  assertPortal(user, req.body.portal, res);
+  // An Admin's working set is their own institution PLUS the ones granted to
+  // them, so holding nothing but grants is perfectly normal — checking only
+  // `organization` would lock out an admin who heads no single college.
+  if (user.role === ROLES.CEO) {
+    const holds = [user.organization?._id || user.organization, ...(user.managedOrganizations || [])].filter(Boolean);
+    if (!holds.length) {
+      res.status(403);
+      throw new Error('Your account is not assigned to any institution. Contact your administrator.');
+    }
+  } else if (user.role !== ROLES.ADMIN) {
+    // A college account belongs to exactly one organization, and it must be live.
     if (!user.organization) {
       res.status(403);
       throw new Error('Your account is not assigned to an organization. Contact your administrator.');

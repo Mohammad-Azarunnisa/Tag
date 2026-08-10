@@ -64,11 +64,10 @@ export default function TeamWork() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const canWrite = !user?.viewOnly;
-  // A coordinator hands work to their own college's people, but signing off a
-  // completion request stays with the admin — so the Review action is theirs
-  // only, matching what the server allows.
+  // Handing work out and signing off a completion request both belong to the
+  // admin, matching what the server allows. A coordinator never reaches this
+  // page — they raise a request and the admin allocates it.
   const canReview = canWrite && user?.role === 'CEO';
-  const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
 
   const [search, setSearch] = useState('');
   const [orgFilter, setOrgFilter] = useState('');
@@ -81,16 +80,18 @@ export default function TeamWork() {
   // Only the institutions this Admin holds — offering any other college would
   // just produce a save the server refuses.
   const { data: orgData } = useQuery({
-    queryKey: ['my-org-options'], queryFn: organizationApi.myOptions, enabled: !isCoordinator,
+    queryKey: ['my-org-options'], queryFn: organizationApi.myOptions,
   });
   const orgs = orgData?.organizations || [];
 
+  // The status tile is deliberately NOT sent to the server: the tiles count out
+  // of this response, so asking the server for one status would leave the other
+  // three tiles reading zero. Status is applied below, after the counts.
   const { data, isLoading } = useQuery({
-    queryKey: ['team-work', { search, orgFilter, status, urgencyFilter }],
+    queryKey: ['team-work', { search, orgFilter, urgencyFilter }],
     queryFn: () => workAssignmentApi.list({
       search: search || undefined,
       organization: orgFilter || undefined,
-      status: status === 'All' ? undefined : status,
       urgency: urgencyFilter || undefined,
     }),
   });
@@ -104,16 +105,23 @@ export default function TeamWork() {
     return [...seen.values()].sort((x, y) => String(x.name || '').localeCompare(String(y.name || '')));
   }, [all]);
 
-  const assignments = useMemo(
+  // Everything in view before the status tile is applied — the tiles count out
+  // of this, so picking one never zeroes the other three.
+  const scoped = useMemo(
     () => (userFilter ? all.filter((a) => String(a.assignee?._id) === String(userFilter)) : all),
     [all, userFilter]
   );
 
   const counts = useMemo(() => {
     const c = { OPEN: 0, ACKNOWLEDGED: 0, SUBMITTED: 0, DONE: 0 };
-    assignments.forEach((a) => { if (c[a.status] !== undefined) c[a.status] += 1; });
+    scoped.forEach((a) => { if (c[a.status] !== undefined) c[a.status] += 1; });
     return c;
-  }, [assignments]);
+  }, [scoped]);
+
+  const assignments = useMemo(
+    () => (status === 'All' ? scoped : scoped.filter((a) => a.status === status)),
+    [scoped, status]
+  );
 
   // Grouped by the day the work was assigned, newest day first.
   const byDate = useMemo(() => {
@@ -136,9 +144,7 @@ export default function TeamWork() {
     <div>
       <PageHeader
         title="Team Work"
-        subtitle={isCoordinator
-          ? `Work handed out in ${user?.organization?.name || 'your college'}. The admin signs off completion requests.`
-          : "Work you've handed out across your institutions, and the completion requests waiting on your approval."}
+        subtitle="Work you've handed out across your institutions, and the completion requests waiting on your approval."
         actions={canWrite && <Button onClick={() => setAssigning(true)}><Plus className="h-4 w-4" /> Assign work</Button>}
       />
 
@@ -160,13 +166,10 @@ export default function TeamWork() {
           <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input placeholder="Search work title, brief or request note…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        {/* A coordinator has exactly one college, so there is nothing to filter by. */}
-        {!isCoordinator && (
-          <Select className="lg:w-52" value={orgFilter} onChange={(e) => { setOrgFilter(e.target.value); setUserFilter(''); }} title="Filter by college">
-            <option value="">All my colleges</option>
-            {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
-          </Select>
-        )}
+        <Select className="lg:w-52" value={orgFilter} onChange={(e) => { setOrgFilter(e.target.value); setUserFilter(''); }} title="Filter by college">
+          <option value="">All my colleges</option>
+          {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
+        </Select>
         <Select className="lg:w-48" value={userFilter} onChange={(e) => setUserFilter(e.target.value)} title="Filter by user">
           <option value="">All users</option>
           {people.map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}

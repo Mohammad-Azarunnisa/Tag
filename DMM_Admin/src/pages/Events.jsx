@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen } from 'lucide-react';
+import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen, ImagePlus } from 'lucide-react';
 import { eventApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -10,6 +10,12 @@ import { Button } from '../components/ui/Button.jsx';
 import { Input, Select, Card, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
 import { formatDate } from '../lib/utils.js';
+
+// Where "Open in Drive" goes: the link the organiser pasted, falling back to the
+// Drive folder created for the event when there isn't one.
+const photosHref = (ev) => ev.link || ev.folderLink || '';
+// The event's tile picture: its cover image, else the first Drive photo.
+const coverOf = (ev) => ev.coverImage || ev.photos?.[0]?.thumbnailUrl || '';
 
 export default function Events() {
   const qc = useQueryClient();
@@ -41,7 +47,7 @@ export default function Events() {
     <div>
       <PageHeader
         title="Events"
-        subtitle="Event photos captured by the Zolo team, stored in a Google Drive folder per event."
+        subtitle="Event photos captured by the Zolo team — kept at a linked Drive folder or album."
         actions={<Button onClick={() => setEditing({})}><Plus className="h-4 w-4" /> Add Event</Button>}
       />
 
@@ -68,7 +74,7 @@ export default function Events() {
         filtered ? (
           <EmptyState icon={Camera} title="No events match these filters" description="Try a different organization, or clear the search." />
         ) : (
-          <EmptyState icon={Camera} title="No events yet" description="Add an event and upload its photos — they're stored in a Drive folder created just for it." action={<Button onClick={() => setEditing({})}><Plus className="h-4 w-4" /> Add Event</Button>} />
+          <EmptyState icon={Camera} title="No events yet" description="Add an event and link the folder or album holding its photos." action={<Button onClick={() => setEditing({})}><Plus className="h-4 w-4" /> Add Event</Button>} />
         )
       ) : view === 'list' ? (
         /* List view — one row per event, easier to scan a long season */
@@ -87,9 +93,9 @@ export default function Events() {
               {events.map((ev) => (
                 <tr key={ev._id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
                   <td className="px-4 py-2.5">
-                    <a href={ev.folderLink} target="_blank" rel="noreferrer" className="flex items-center gap-3">
+                    <a href={photosHref(ev)} target="_blank" rel="noreferrer" className="flex items-center gap-3">
                       <span className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
-                        {ev.photos?.[0]?.thumbnailUrl ? <img src={ev.photos[0].thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <Camera className="h-4 w-4 text-brand-400" />}
+                        {coverOf(ev) ? <img src={coverOf(ev)} alt="" className="h-full w-full object-cover" /> : <Camera className="h-4 w-4 text-brand-400" />}
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate font-semibold text-slate-800 dark:text-white">{ev.name}</span>
@@ -102,7 +108,7 @@ export default function Events() {
                   <td className="px-3 py-2.5 text-xs text-slate-500 dark:text-slate-400">{ev.location || '—'}</td>
                   <td className="px-3 py-2.5">
                     <span className="flex items-center justify-end gap-1">
-                      <a href={ev.folderLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700">
+                      <a href={photosHref(ev)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700">
                         <FolderOpen className="h-3.5 w-3.5" /> Photos
                       </a>
                       {canManage(ev) && (
@@ -123,8 +129,8 @@ export default function Events() {
           {events.map((ev) => (
             <Card key={ev._id} className="group overflow-hidden">
               <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-brand-500/10 to-slate-100 dark:from-brand-500/10 dark:to-slate-800">
-                {ev.photos?.[0]?.thumbnailUrl ? (
-                  <img src={ev.photos[0].thumbnailUrl} alt={ev.name} className="h-full w-full object-cover" />
+                {coverOf(ev) ? (
+                  <img src={coverOf(ev)} alt={ev.name} className="h-full w-full object-cover" />
                 ) : (
                   <Camera className="h-10 w-10 text-brand-400" />
                 )}
@@ -146,7 +152,7 @@ export default function Events() {
                 </div>
                 {ev.description && <p className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ev.description}</p>}
                 <div className="mt-3 flex items-center gap-2">
-                  <a href={ev.folderLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-700">
+                  <a href={photosHref(ev)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-700">
                     <FolderOpen className="h-4 w-4" /> Open in Drive <ExternalLink className="h-3.5 w-3.5 opacity-80" />
                   </a>
                   {ev.photos?.length > 0 && <span className="text-xs text-slate-400">{ev.photos.length} photo{ev.photos.length > 1 ? 's' : ''}</span>}
@@ -170,9 +176,17 @@ function EventModal({ event, onClose, onSaved }) {
     location: event.location || '',
     description: event.description || '',
     organization: event.organization?._id || '',
+    link: event.link || '',
   });
-  const [photos, setPhotos] = useState([]);
+  // One optional picture for the event's tile. The album itself lives at `link`.
+  const [cover, setCover] = useState(null);
+  const [coverPreview, setCoverPreview] = useState(event.coverImage || '');
   const [loading, setLoading] = useState(false);
+
+  const onCover = (e) => {
+    const f = e.target.files?.[0];
+    if (f) { setCover(f); setCoverPreview(URL.createObjectURL(f)); }
+  };
 
   const { data: orgData } = useQuery({ queryKey: ['orgs-list'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];
@@ -182,23 +196,16 @@ function EventModal({ event, onClose, onSaved }) {
     if (!form.name.trim()) { toast.error('Event name is required'); return; }
     setLoading(true);
     try {
-      if (isEdit) {
-        await eventApi.update(event._id, form);
-        if (photos.length) {
-          const fd = new FormData();
-          photos.forEach((f) => fd.append('photos', f));
-          await eventApi.addFiles(event._id, fd);
-        }
-      } else {
+      // Only send multipart when there is actually a file to carry.
+      const body = () => {
+        if (!cover) return { ...form };
         const fd = new FormData();
-        fd.append('name', form.name);
-        fd.append('eventDate', form.eventDate);
-        fd.append('location', form.location);
-        fd.append('description', form.description);
-        fd.append('organization', form.organization);
-        photos.forEach((f) => fd.append('photos', f));
-        await eventApi.create(fd);
-      }
+        Object.entries(form).forEach(([k, v]) => fd.append(k, v));
+        fd.append('coverImage', cover);
+        return fd;
+      };
+      if (isEdit) await eventApi.update(event._id, body());
+      else await eventApi.create(body());
       toast.success(isEdit ? 'Event updated' : 'Event added');
       onSaved();
     } catch (err) {
@@ -221,12 +228,45 @@ function EventModal({ event, onClose, onSaved }) {
           {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
         </Select>
 
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">{isEdit ? 'Add more photos (optional)' : 'Photos'}</span>
-          <input type="file" accept="image/*" multiple onChange={(e) => setPhotos(Array.from(e.target.files || []))}
-            className="block w-full text-sm text-slate-500 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-brand-700 hover:file:bg-brand-100 dark:file:bg-brand-500/10 dark:file:text-brand-300" />
-          <span className="mt-1 block text-xs text-slate-400">{photos.length > 0 ? `${photos.length} photo${photos.length > 1 ? 's' : ''} selected` : 'Uploaded straight into this event’s Google Drive folder.'}</span>
-        </label>
+        {/* Where the event's photos live. Paste the folder or album link and
+            "Open in Drive" goes straight there. */}
+        <Input
+          label="Photos link"
+          type="url"
+          value={form.link}
+          onChange={(e) => setForm({ ...form, link: e.target.value })}
+          placeholder="https://drive.google.com/drive/folders/..."
+        />
+        <p className="-mt-2 text-xs text-slate-400">
+          The Drive folder or shared album holding this event’s photos — “Open in Drive” opens it.
+          {isEdit ? '' : ' Leave it blank to have a Drive folder created for the event instead.'}
+        </p>
+
+        {/* Cover image — one picture for the event tile, entirely optional. */}
+        <div>
+          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
+            Cover image <span className="font-normal text-slate-400">· optional</span>
+          </span>
+          <div className="flex items-center gap-4">
+            {coverPreview ? (
+              <img src={coverPreview} alt="" className="h-16 w-24 shrink-0 rounded-xl object-cover" />
+            ) : (
+              <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
+                <Camera className="h-5 w-5 text-slate-300 dark:text-slate-600" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-brand-500/5">
+                <ImagePlus className="h-4 w-4 text-brand-600" />
+                {coverPreview ? 'Change cover image' : 'Upload cover image'}
+                <input type="file" accept="image/*" className="hidden" onChange={onCover} />
+              </label>
+              <p className="mt-1.5 truncate text-xs text-slate-400">
+                {cover ? cover.name : 'Shown on the event card. Leave blank for a placeholder.'}
+              </p>
+            </div>
+          </div>
+        </div>
 
         <textarea className="input-base min-h-[80px]" placeholder="Details about the event…" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 

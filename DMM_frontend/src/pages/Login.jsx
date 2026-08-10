@@ -6,7 +6,7 @@ import {
   Mail, Lock, ArrowRight, Sparkles, ChartColumn, Check, Clock3, Image as ImageIcon,
   Megaphone, Clapperboard, Linkedin, Instagram, Facebook, Youtube,
 } from 'lucide-react';
-import { useAuthStore } from '../store/authStore.js';
+import { useAuthStore, AdminAccountError } from '../store/authStore.js';
 import { Button } from '../components/ui/Button.jsx';
 import { Input } from '../components/ui/primitives.jsx';
 import { cn } from '../lib/utils.js';
@@ -147,7 +147,8 @@ export default function Login() {
       toast.success(`Welcome back, ${user.name.split(' ')[0]}!`);
       navigate('/dashboard');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Login failed');
+      if (err instanceof AdminAccountError) toast.error(err.message);
+      else toast.error(err.response?.data?.message || 'Login failed');
     } finally {
       setLoading(false);
     }

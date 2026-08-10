@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   Plus, Search, Inbox, Images as ImagesIcon, Play, Layers, Clock, RefreshCw,
-  CheckCircle2, Send, ChevronLeft, ChevronRight, Palette, UserCheck, FileText,
+  CheckCircle2, Send, ChevronLeft, ChevronRight, Palette, UserCheck, FileText, MessageSquarePlus,
 } from 'lucide-react';
 import { approvalApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -18,6 +18,11 @@ import { cn, formatDate, isVideo, isDoc, platformsOf } from '../lib/utils.js';
 // standalone posts don't, so each pipeline shows its own status tabs.
 const STATUSES_POST = ['All', 'PENDING', 'RESUBMITTED', 'APPROVED', 'REJECTED', 'POSTED'];
 const STATUSES_DESIGN = ['All', 'IN_DESIGN', 'PENDING', 'RESUBMITTED', 'APPROVED', 'REJECTED', 'POSTED', 'DELIVERED'];
+// Neither of these is a designer's business. IN_DESIGN is a brief nobody has
+// submitted yet, and DELIVERED is what happens to finished artwork after it
+// leaves them — both are stages they can never move a request into or out of, so
+// the tabs only ever came up empty for them.
+const STATUSES_DESIGN_FOR_DESIGNER = STATUSES_DESIGN.filter((s) => !['IN_DESIGN', 'DELIVERED'].includes(s));
 const ALL_STATUSES = [...new Set([...STATUSES_POST, ...STATUSES_DESIGN])];
 const PLATFORMS = ['All', 'LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
 
@@ -53,28 +58,53 @@ export default function Approvals() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isSuperAdmin = !!user?.isSuperAdmin;
-  // Coordinators and principals (CEO) raise design briefs.
-  const canRaiseBrief = (user?.role === 'USER' && user?.userType === 'COORDINATOR') || user?.role === 'CEO';
+  // A coordinator asks for work by raising a REQUEST to the admin, never by
+  // creating an approval — approvals hold the finished work that comes back, so
+  // this page is theirs to follow rather than to add to.
+  const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
+  const isDesigner = user?.role === 'USER' && user?.userType === 'DESIGNER';
+  const canRaiseBrief = user?.role === 'CEO';
   const isViewer = !!user?.viewOnly;
+  const canCreate = !isViewer && !isCoordinator;
   const [searchParams] = useSearchParams();
   // Allow the dashboard cards to deep-link into a pre-filtered view (?status=PENDING),
   // and design detail pages to open the composer prefilled (?compose=post&design=<id>).
   const initialStatus = ALL_STATUSES.includes(searchParams.get('status')) ? searchParams.get('status') : 'All';
   const initialType = searchParams.get('type') === 'DESIGN' ? 'DESIGN' : 'POST';
   const composeDesign = searchParams.get('design') || '';
+  // "Send for approval" on a workflow item lands here (?workflow=<id>): the
+  // composer opens with that request's title already in, and the submission is
+  // tied back to it so the pipeline moves on.
+  const composeWorkflow = searchParams.get('workflow') || '';
+  const composeTitle = searchParams.get('title') || '';
   const [filters, setFilters] = useState({ search: '', status: initialStatus, type: initialType, platform: 'All', from: '', to: '' });
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState(10);
-  const [showCreate, setShowCreate] = useState(!!composeDesign || searchParams.get('compose') === 'post');
+  // A deep link must not open a composer for someone who cannot submit it.
+  const [showCreate, setShowCreate] = useState(
+    canCreate && (!!composeDesign || !!composeWorkflow || searchParams.get('compose') === 'post')
+  );
   const hasDateFilter = filters.from || filters.to;
 
   const closeCreate = () => {
     setShowCreate(false);
-    if (composeDesign) navigate('/approvals', { replace: true });
+    if (composeDesign || composeWorkflow) navigate('/approvals', { replace: true });
   };
 
   // Any filter/tab change restarts pagination from the first page.
   const applyFilters = (patch) => { setFilters((f) => ({ ...f, ...patch })); setPage(1); };
+
+  // The status tabs this viewer actually gets.
+  const statusTabs = filters.type === 'DESIGN'
+    ? (isDesigner ? STATUSES_DESIGN_FOR_DESIGNER : STATUSES_DESIGN)
+    : STATUSES_POST;
+  // A tab that is not on offer must not stay selected behind the scenes — a
+  // dashboard link or a switch between pipelines can land on one, and the list
+  // would then be filtered by a status with no tab to show it or clear it.
+  useEffect(() => {
+    if (!statusTabs.includes(filters.status)) applyFilters({ status: 'All' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.type, filters.status, isDesigner]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['approvals', filters, page, rows],
@@ -95,9 +125,13 @@ export default function Approvals() {
   return (
     <div>
       <PageHeader
-        title={isSuperAdmin ? 'Approval Panel' : 'My Approval Requests'}
-        subtitle={isSuperAdmin ? 'Review, approve or request changes to content.' : 'Create and track your content approvals.'}
-        actions={!isViewer && <Button onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> {canRaiseBrief ? 'Raise design brief' : 'New Request'}</Button>}
+        title={isSuperAdmin ? 'Approval Panel' : isCoordinator ? 'Approvals for your college' : 'My Approval Requests'}
+        subtitle={isSuperAdmin ? 'Review, approve or request changes to content.'
+          : isCoordinator ? 'The work your college has in progress. To ask for something new, raise a request to the admin.'
+            : 'Create and track your content approvals.'}
+        actions={isCoordinator
+          ? <Button variant="outline" onClick={() => navigate('/requests')}><MessageSquarePlus className="h-4 w-4" /> Raise a request</Button>
+          : canCreate && <Button onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> {canRaiseBrief ? 'Raise design brief' : 'New Request'}</Button>}
       />
 
       {/* Pipeline switch: post approvals vs design approvals */}
@@ -141,7 +175,7 @@ export default function Approvals() {
       {/* Status tabs + compact filters on one wrapping row */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
-          {(filters.type === 'DESIGN' ? STATUSES_DESIGN : STATUSES_POST).map((s) => (
+          {statusTabs.map((s) => (
             <button
               key={s} type="button" onClick={() => applyFilters({ status: s })}
               className={cn(
@@ -251,7 +285,9 @@ export default function Approvals() {
               icon={Inbox}
               title={filters.status === 'All' ? 'No requests found' : `No ${STATUS_LABELS[filters.status].toLowerCase()} requests`}
               description={EMPTY_COPY[filters.status] || EMPTY_COPY.All}
-              action={<Button onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> New Request</Button>}
+              action={isCoordinator
+                ? <Button variant="outline" onClick={() => navigate('/requests')}><MessageSquarePlus className="h-4 w-4" /> Raise a request to the admin</Button>
+                : canCreate && <Button onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> New Request</Button>}
             />
           </div>
         )}
@@ -281,8 +317,16 @@ export default function Approvals() {
         <CreateApprovalModal
           defaultType={composeDesign ? 'POST' : filters.type}
           sourceDesignId={composeDesign}
+          workflowItemId={composeWorkflow}
+          defaultTitle={composeTitle}
           onClose={closeCreate}
-          onSaved={() => { closeCreate(); applyFilters({ type: composeDesign ? 'POST' : filters.type, status: 'All' }); refetch(); }}
+          onSaved={(submittedType) => {
+            closeCreate();
+            // Show the pipeline the request actually went to — a designer's
+            // submission is a DESIGN approval even though the list opens on POST.
+            applyFilters({ type: submittedType || filters.type, status: 'All' });
+            refetch();
+          }}
         />
       )}
     </div>

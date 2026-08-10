@@ -21,7 +21,11 @@ export default function AppLayout() {
             <span>View-only access — you can see everything but can't make changes.</span>
           </div>
         )}
-        <main className="mx-auto max-w-7xl p-4 lg:p-6">
+        {/* The page fills whatever screen it is opened on. The ceiling is there
+            only so a very wide monitor doesn't stretch tables to the point of
+            being hard to scan; every ordinary laptop and desktop is under it
+            and gets the full width. */}
+        <main className="mx-auto w-full max-w-[120rem] p-4 lg:p-6 2xl:px-8">
           <Outlet />
         </main>
       </div>

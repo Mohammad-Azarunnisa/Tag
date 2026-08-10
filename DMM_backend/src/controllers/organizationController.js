@@ -7,7 +7,8 @@ import ApprovalRequest from '../models/ApprovalRequest.js';
 import Analytics from '../models/Analytics.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { APPROVAL_STATUS, PLATFORMS, ROLES } from '../config/constants.js';
-import { accessibleOrgIds } from '../utils/org.js';
+import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { platformsByOrganization } from '../utils/platforms.js';
 
 // @route GET /api/organizations/options — minimal active-org list for pickers
 // (approval target, analytics view). Available to ANY authenticated user so the
@@ -23,7 +24,13 @@ export const listOrgOptions = asyncHandler(async (req, res) => {
     if (allowed !== null) query._id = { $in: allowed };
   }
   const orgs = await Organization.find(query).select('name color logo').sort({ name: 1 }).lean();
-  res.json({ success: true, organizations: orgs });
+  // Each college's own channels ride along, so a form asking "which platforms?"
+  // can offer only the ones that college actually runs instead of the full list.
+  const byOrg = await platformsByOrganization(orgs.map((o) => o._id));
+  res.json({
+    success: true,
+    organizations: orgs.map((o) => ({ ...o, platforms: byOrg[String(o._id)] || [] })),
+  });
 });
 
 // @route GET /api/organizations  — list all (ADMIN). Includes quick member/post counts.
@@ -31,6 +38,11 @@ export const getOrganizations = asyncHandler(async (req, res) => {
   const { search } = req.query;
   const query = {};
   if (search) query.name = { $regex: search, $options: 'i' };
+  // The super admin sees every college; an Admin sees the ones they hold, and
+  // reads them only — creating and changing a college stays super-admin-only,
+  // enforced by requireSuperAdmin on those routes.
+  const allowed = accessibleOrgIds(req.user);
+  if (allowed !== null) query._id = { $in: allowed };
   const orgs = await Organization.find(query).sort({ createdAt: -1 }).lean();
 
   // Attach lightweight stats per org
@@ -50,6 +62,10 @@ export const getOrganizations = asyncHandler(async (req, res) => {
 export const getOrganization = asyncHandler(async (req, res) => {
   const org = await Organization.findById(req.params.id).lean();
   if (!org) { res.status(404); throw new Error('Organization not found'); }
+  // Opening one by id must respect the same scope as listing them, or the list
+  // filter would be the only thing standing between an Admin and another
+  // college's figures.
+  if (!canAccessOrg(req.user, org._id)) { res.status(404); throw new Error('Organization not found'); }
   const [members, templates, assets, posts] = await Promise.all([
     User.countDocuments({ organization: org._id }),
     Template.countDocuments({ organization: org._id }),

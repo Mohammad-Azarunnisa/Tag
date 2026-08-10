@@ -11,6 +11,8 @@ import Overview from './pages/Overview.jsx';
 import Organizations from './pages/Organizations.jsx';
 import Users from './pages/Users.jsx';
 import Approvals from './pages/Approvals.jsx';
+import Workflow from './pages/Workflow.jsx';
+import WorkflowDetail from './pages/WorkflowDetail.jsx';
 import ApprovalDetail from './pages/ApprovalDetail.jsx';
 import Analytics from './pages/Analytics.jsx';
 import BrandLibrary from './pages/BrandLibrary.jsx';
@@ -68,6 +70,9 @@ export default function App() {
         <Route path="/dashboard" element={<Overview />} />
         <Route path="/organizations" element={<Organizations />} />
         <Route path="/users" element={<Users />} />
+        <Route path="/workflow/designs" element={<Workflow board="DESIGN" />} />
+        <Route path="/workflow/to-be-posted" element={<Workflow board="POST" />} />
+        <Route path="/workflow/:id" element={<WorkflowDetail />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/approvals/:id" element={<ApprovalDetail />} />
         <Route path="/analytics" element={<Analytics />} />

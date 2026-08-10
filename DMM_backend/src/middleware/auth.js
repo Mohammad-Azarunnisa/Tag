@@ -16,11 +16,14 @@ const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === 
 const COORDINATOR_ALLOWED = [
   /^\/api\/auth\//, // sign in, /me, password reset
   /^\/api\/dashboard\//, // their college's statistics
-  /^\/api\/approvals(\/|$)/, // raise content requests and follow them
+  // NOTE: /api/approvals is deliberately NOT here. A coordinator's part in the
+  // pipeline is the workflow module (routes/workflowRoutes.js), where they review
+  // the work that answers their own request; the approvals pages are not theirs.
+  /^\/api\/workflow(\/|$)/, // the design/post pipeline for their own requests
   /^\/api\/requests(\/|$)/, // ask the admin for something on the college's behalf
   /^\/api\/notifications(\/|$)/,
   /^\/api\/ai\//, // help drafting the content on a request
-  /^\/api\/users\/(profile|password|settings|designers|handlers)/, // own account; who can do the work
+  /^\/api\/users\/(profile|password|settings|designers|handlers|directory)/, // own account; who can do the work; who to contact
   /^\/api\/users$/, // who is in their college, to assign work to
   /^\/api\/organizations\/options$/, // naming the college a request is for
   /^\/api\/link-preview(\/|$)/, // link cards inside a request thread
@@ -50,8 +53,12 @@ const COORDINATOR_READABLE = [
   /^\/api\/plans(\/|$)/,
   /^\/api\/calendar(\/|$)/,
   // The dashboard's activity heatmap is a per-day count of their own college's
-  // activity - part of its statistics. The full activity LOG stays closed.
+  // activity - part of its statistics - and /day is the same figure opened up
+  // for one square. Both are scoped to the caller's own actions for a USER
+  // (activityController#getActivityScope), so this shows a coordinator their own
+  // trail and nobody else's. The unfiltered activity LOG stays closed.
   /^\/api\/activity\/heatmap$/,
+  /^\/api\/activity\/day$/,
 ];
 
 const coordinatorMayCall = (req) => {

@@ -21,6 +21,7 @@ const PLATFORMS = [
 export default function SocialAnalytics() {
   const { user } = useAuthStore();
   const ownOrgId = user?.organization?._id || user?.organization || '';
+  const isUserLogin = user?.role === 'USER';
   const [platform, setPlatform] = useState('LinkedIn');
   const [orgId, setOrgId] = useState(ownOrgId);
 
@@ -65,6 +66,13 @@ export default function SocialAnalytics() {
           </select>
         )}
       </div>
+      {/* USER logins: show activity heatmap before platform detail sections. */}
+      {isUserLogin && orgId && (
+        <div className="mt-5">
+          <ActivityHeatmap orgId={orgId} platform={platform} />
+        </div>
+      )}
+
       {isLinkedIn ? (
         <LinkedInView orgId={orgId} canUpload={canUpload} />
       ) : (
@@ -79,7 +87,7 @@ export default function SocialAnalytics() {
       )}
 
       {/* 365-day activity heatmap for the selected org + platform */}
-      {orgId && (
+      {!isUserLogin && orgId && (
         <div className="mt-5">
           <ActivityHeatmap orgId={orgId} platform={platform} />
         </div>

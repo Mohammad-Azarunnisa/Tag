@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Linkedin, Instagram, Youtube, Facebook, Target, Users, Send } from 'lucide-react';
+import { Linkedin, Instagram, Youtube, Facebook, Target, Users } from 'lucide-react';
 import { goalApi } from '../../api/endpoints.js';
 import { Card } from '../ui/primitives.jsx';
 import { formatNumber, cn } from '../../lib/utils.js';
@@ -12,11 +12,12 @@ const PLATFORM_META = {
 };
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
-// Shows the org's growth goals — one block per platform that has a goal set.
-// Renders nothing until the admin sets at least one goal.
+// Shows the org's audience growth goals — one block per platform that has a
+// follower/subscriber target set. Post-count targets are not shown here.
+// Renders nothing until the admin sets at least one such goal.
 export default function GoalCard({ orgId }) {
   const { data } = useQuery({ queryKey: ['org-goals', orgId], queryFn: () => goalApi.list(orgId), enabled: !!orgId });
-  const goals = (data?.goals || []).filter((g) => g.targetFollowers > 0 || g.targetPosts > 0);
+  const goals = (data?.goals || []).filter((g) => g.targetFollowers > 0);
   if (!goals.length) return null;
 
   return (
@@ -75,20 +76,6 @@ function PlatformGoal({ goal }) {
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
               <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.color || '#7c3aed' }} />
-            </div>
-          </div>
-        )}
-        {goal.targetPosts > 0 && (
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="inline-flex items-center gap-1 font-medium text-slate-500 dark:text-slate-400"><Send className="h-3.5 w-3.5" /> posts</span>
-              <span className="font-semibold text-slate-600 dark:text-slate-300">
-                {formatNumber(p.postsPublished || 0)} / {formatNumber(goal.targetPosts)}
-                <span className="text-slate-400"> ({Math.min(100, Math.round(((p.postsPublished || 0) / goal.targetPosts) * 100))}%)</span>
-              </span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-              <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${Math.min(100, Math.round(((p.postsPublished || 0) / goal.targetPosts) * 100))}%` }} />
             </div>
           </div>
         )}

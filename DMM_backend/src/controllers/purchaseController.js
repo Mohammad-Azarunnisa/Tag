@@ -1,6 +1,9 @@
 import asyncHandler from 'express-async-handler';
 import Purchase from '../models/Purchase.js';
-import { requireOrgId } from '../utils/org.js';
+import { accessibleOrgIds, requireOrgId } from '../utils/org.js';
+
+// ?organizationId=all rolls every college the caller can see into one list.
+const ALL_ORGS = 'all';
 
 const FIELDS = ['name', 'vendor', 'category', 'seats', 'cost', 'currency', 'purchaseDate', 'expiryDate', 'notes'];
 
@@ -13,8 +16,23 @@ const apply = (doc, body) => {
   }
 };
 
-// @route GET /api/purchases — purchases for the active org (newest expiry first)
+// @route GET /api/purchases — purchases for the active org (soonest expiry first),
+// or every organization the caller can see with ?organizationId=all.
+//
+// The roll-up is scoped the same way everything else is: a super admin sees every
+// college, an Admin only the institutions they hold. It carries the organization
+// on each row so the table can say which college a purchase belongs to.
 export const listPurchases = asyncHandler(async (req, res) => {
+  if (String(req.query.organizationId || '').toLowerCase() === ALL_ORGS) {
+    const allowed = accessibleOrgIds(req.user);
+    const query = allowed === null ? {} : { organization: { $in: allowed } };
+    const purchases = await Purchase.find(query)
+      .populate('organization', 'name color')
+      .sort({ expiryDate: 1, createdAt: -1 })
+      .lean();
+    return res.json({ success: true, scope: ALL_ORGS, purchases });
+  }
+
   const orgId = requireOrgId(req, res);
   const purchases = await Purchase.find({ organization: orgId }).sort({ expiryDate: 1, createdAt: -1 }).lean();
   res.json({ success: true, purchases });

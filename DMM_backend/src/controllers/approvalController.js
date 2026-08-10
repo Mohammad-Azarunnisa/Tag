@@ -9,6 +9,16 @@ import { createNotification } from '../utils/notify.js';
 import User from '../models/User.js';
 import Organization from '../models/Organization.js';
 import WorkAssignment from '../models/WorkAssignment.js';
+import InstitutionRequest from '../models/InstitutionRequest.js';
+// Submitting finished work against a brief claims it, so the two paths share one
+// implementation and the shared-brief lock cannot drift between them.
+import { claimAssignmentForDesigner, closePostingWorkForApproval } from './workAssignmentController.js';
+// A designer hands their artwork in through this composer, so once the approval
+// exists the workflow item it answers has to move to admin review.
+import {
+  advanceWorkflowForApproval, workflowHandInRole,
+  advanceWorkflowOnDecision, workflowHalfForApproval,
+} from './workflowController.js';
 import { requireOrgId, resolveOrgId, canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import {
   APPROVAL_STATUS,
@@ -22,8 +32,44 @@ import {
 } from '../config/constants.js';
 
 // Legacy requests predate the type field — anything without one is a POST.
-const typeFilter = (type) =>
-  type === APPROVAL_TYPES.DESIGN ? APPROVAL_TYPES.DESIGN : { $in: [APPROVAL_TYPES.POST, null] };
+// Legacy rows (type = null) are classified by shape:
+// - design-like when a designer is attached, or when status uses design-only
+//   states (IN_DESIGN / DELIVERED)
+// - otherwise post-like.
+const typeFilter = (type) => {
+  if (type === APPROVAL_TYPES.DESIGN) {
+    return {
+      $or: [
+        { type: APPROVAL_TYPES.DESIGN },
+        {
+          type: null,
+          $or: [
+            { designer: { $ne: null } },
+            { status: { $in: [APPROVAL_STATUS.IN_DESIGN, APPROVAL_STATUS.DELIVERED] } },
+          ],
+        },
+      ],
+    };
+  }
+  return {
+    $or: [
+      { type: APPROVAL_TYPES.POST },
+      {
+        type: null,
+        designer: null,
+        status: { $nin: [APPROVAL_STATUS.IN_DESIGN, APPROVAL_STATUS.DELIVERED] },
+      },
+    ],
+  };
+};
+
+const withClause = (baseQuery, clause) => {
+  if (!clause) return baseQuery;
+  if (Array.isArray(baseQuery.$and) && baseQuery.$and.length) {
+    return { ...baseQuery, $and: [...baseQuery.$and, clause] };
+  }
+  return { ...baseQuery, $and: [clause] };
+};
 
 const parseHashtags = (raw) => {
   if (!raw) return [];
@@ -61,6 +107,99 @@ const notifyApprovers = async (type, title, message, request) => {
   );
 };
 
+/**
+ * Raise the actual posting work when an approved design is routed to handlers.
+ *
+ * Routing a design to a handler IS "somebody now has to post this", and posting
+ * is work — so it belongs in their assigned work, where they track everything
+ * else they owe, rather than only as a flag on an approval. Each handler gets
+ * their own row to complete, carrying the design and the college request that
+ * started the whole thing.
+ *
+ * `targets` is [{ organization, platform, handlers: [userId] }].
+ */
+const raisePostingWork = async ({ request, targets, actor }) => {
+  // The college's original ask reaches here down the chain the work took:
+  // approval → the designer's assignment → the request the coordinator raised.
+  let sourceRequest = null;
+  if (request.workAssignment) {
+    const linked = await WorkAssignment.findById(request.workAssignment).select('sourceRequest');
+    sourceRequest = linked?.sourceRequest || null;
+  }
+
+  const created = [];
+  for (const t of targets || []) {
+    for (const handlerId of t.handlers || []) {
+      // Routing can happen more than once — approved-and-routed, then forwarded
+      // again, or a target edited. One live posting job per handler per design.
+      const existing = await WorkAssignment.findOne({
+        sourceApproval: request._id, assignee: handlerId, status: { $ne: 'DONE' },
+      }).select('_id');
+      if (existing) continue;
+
+      const posting = await WorkAssignment.create({
+        organization: t.organization || request.organization,
+        title: `Post: ${request.title}`,
+        description: request.caption || request.description || '',
+        platform: PLATFORMS.includes(t.platform) ? t.platform : '',
+        assignee: handlerId,
+        assigneeType: USER_TYPES.SOCIAL_HANDLER,
+        createdBy: actor._id,
+        sourceApproval: request._id,
+        postingFor: request.workAssignment || null,
+        sourceRequest,
+      });
+      created.push(posting._id);
+
+      await createNotification({
+        recipient: handlerId,
+        organization: posting.organization,
+        type: NOTIFICATION_TYPES.WORK_ASSIGNED,
+        title: 'Approved work to post',
+        message: `${actor.name} sent you "${request.title}" to publish${t.platform ? ` on ${t.platform}` : ''}`,
+        // Their assigned work, not the approval — that is where they act on it.
+        link: '/my-assigned-work',
+        relatedRequest: posting._id,
+      });
+    }
+  }
+  return created;
+};
+
+/**
+ * Per-channel copy for a post going to more than one place.
+ *
+ * A LinkedIn write-up is not an Instagram caption, so a submitter picking
+ * several channels writes a pair for each. Arrives as JSON on the multipart
+ * form. Only the channels actually chosen are kept, in the order they were
+ * chosen, and a set with nothing written in it is dropped entirely so a
+ * single-channel post is not left carrying an empty shell.
+ */
+const parsePlatformContent = (raw, platforms) => {
+  if (!raw || platforms.length < 2) return undefined;
+  let parsed;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+
+  const byPlatform = new Map(
+    parsed
+      .filter((row) => PLATFORMS.includes(row?.platform))
+      .map((row) => [row.platform, {
+        platform: row.platform,
+        caption: String(row.caption || '').trim(),
+        description: String(row.description || '').trim(),
+      }])
+  );
+  const rows = platforms
+    .map((p) => byPlatform.get(p))
+    .filter((row) => row && (row.caption || row.description));
+  return rows.length ? rows : undefined;
+};
+
 const isSuperApprover = (user) => user?.role === ROLES.ADMIN && !!user?.isSuperAdmin;
 
 // Who may sign a request off: the super admin anywhere, or an Admin (role CEO)
@@ -90,20 +229,37 @@ const normalizePlatforms = (raw, res, { required = true } = {}) => {
 // An optional link to one of the submitter's own assigned tasks. Only work they
 // have accepted (ACKNOWLEDGED) or already asked to be signed off (SUBMITTED) can
 // be attached — never someone else's, and never a finished task.
+/**
+ * Link a submission to the assigned task it is the output of.
+ *
+ * Handing in the work IS taking it, so OPEN work is claimed here rather than
+ * refused. Being told to "acknowledge first" was a dead end for a social
+ * handler, who has no acknowledge step at all and so could never satisfy it —
+ * and busywork for a designer, who had to leave the form, press one button and
+ * come back. The designer path still goes through the real claim, so the shared
+ * -brief lock and the notice to the other designers both stand.
+ */
 const resolveWorkAssignment = async (raw, req, res) => {
   if (!raw) return null;
   if (!mongoose.isValidObjectId(raw)) { res.status(400); throw new Error('Invalid assigned work'); }
-  const assignment = await WorkAssignment.findById(raw).select('assignee status title');
+  const assignment = await WorkAssignment.findById(raw);
   if (!assignment) { res.status(400); throw new Error('That assigned work no longer exists'); }
   if (String(assignment.assignee) !== String(req.user._id)) {
     res.status(403); throw new Error('That work is not assigned to you');
   }
-  if (!['ACKNOWLEDGED', 'SUBMITTED'].includes(assignment.status)) {
-    res.status(400);
-    throw new Error(assignment.status === 'OPEN'
-      ? 'Acknowledge that assigned work before linking it to a request'
-      : 'That assigned work is already complete');
+  if (assignment.status === 'DONE') {
+    res.status(400); throw new Error('That assigned work is already complete');
   }
+  if (assignment.status === 'OPEN' && assignment.assigneeType === USER_TYPES.DESIGNER) {
+    try {
+      await claimAssignmentForDesigner(assignment, req.user);
+    } catch (err) {
+      // Someone else already holds the shared brief — that refusal must stand.
+      res.status(err.statusCode || 400);
+      throw err;
+    }
+  }
+  // A social handler never acknowledges: OPEN is simply their work in hand.
   return assignment._id;
 };
 
@@ -139,11 +295,27 @@ const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === 
 const isForwardedHandler = (request, userId) =>
   Array.isArray(request.forwardedHandlers) && request.forwardedHandlers.some((id) => String(id) === String(userId));
 
+// Work put out to the designer pool belongs to no single college: any designer
+// may claim it, which is why routing it notifies every designer everywhere. So
+// any designer must be able to OPEN it too — scoping the read to the request's
+// own college would send most of the people who were just told about it to a
+// "not found". Once somebody claims it, `designer` is set and this stops
+// applying to everyone else. The test mirrors what claimDesignRequest allows.
+const isOpenToDesignerPool = (request) => {
+  if (request.designer) return false;
+  if (request.type === APPROVAL_TYPES.DESIGN) return request.status === APPROVAL_STATUS.PENDING;
+  return !!request.openForDesigners && request.status === APPROVAL_STATUS.APPROVED;
+};
+
+const isPoolDesigner = (user, request) =>
+  user?.role === ROLES.USER && user?.userType === USER_TYPES.DESIGNER && isOpenToDesignerPool(request);
+
 // Access guard for a single request:
 //  - ADMIN / Super Admin: any organization (global).
 //  - The request's creator (the coordinator, for a design brief): their own
 //    request, in ANY organization (users work across the shared workspace).
 //  - The designer assigned to a design brief.
+//  - Any designer, while the work is still open for the pool to claim.
 //  - The social handler allocated/forwarded an approved design (may sit in another org).
 //  - CEO ("Admin" of an org): requests targeting their own organization.
 const assertOrgAccess = (req, res, request) => {
@@ -156,6 +328,7 @@ const assertOrgAccess = (req, res, request) => {
   if (request.designer && idOf(request.designer) === me) return;
   if (request.assignedTo && idOf(request.assignedTo) === me) return;
   if (isForwardedHandler(request, req.user._id)) return;
+  if (isPoolDesigner(req.user, request)) return;
   // An Admin may hold several institutions, so membership is checked against all
   // of them - resolveOrgId would only ever name one. A request with no college
   // can't match this way; the checks above are what grant access to it.
@@ -220,6 +393,19 @@ export const getApprovals = asyncHandler(async (req, res) => {
   } else {
     and.push({ $or: [{ createdBy: req.user._id }, { designer: req.user._id }, { assignedTo: req.user._id }, { forwardedHandlers: req.user._id }] });
     if (req.query.organizationId) query.organization = req.query.organizationId;
+
+    // Routing an approved design to a handler raises the posting job in their
+    // assigned work — that is where they act on it. Listing the approval here as
+    // well would put the same task in two places and leave them guessing which
+    // one is theirs to finish, so it drops out of here once the job exists. They
+    // can still OPEN it (the assigned-work row links to it) for the artwork.
+    //
+    // Keyed off the assignment actually existing, so anything routed before that
+    // was the case stays visible rather than silently vanishing.
+    const posting = await WorkAssignment.find({
+      assignee: req.user._id, sourceApproval: { $ne: null },
+    }).select('sourceApproval').lean();
+    if (posting.length) and.push({ _id: { $nin: posting.map((p) => p.sourceApproval) } });
   }
 
   // Match multi-platform requests as well as legacy single-platform ones.
@@ -247,25 +433,48 @@ export const getApprovals = asyncHandler(async (req, res) => {
   // "REVIEW" is a convenience filter for everything awaiting a decision.
   if (status === 'REVIEW') query.status = { $in: [APPROVAL_STATUS.PENDING, APPROVAL_STATUS.RESUBMITTED] };
   else if (status && status !== 'All') query.status = status;
-  if (type) query.type = typeFilter(type);
+  const listQuery = type ? withClause(query, typeFilter(type)) : query;
 
   const skip = (Number(page) - 1) * Number(limit);
   const [items, total, statusCounts, typeCountsAgg] = await Promise.all([
-    ApprovalRequest.find(query)
+    ApprovalRequest.find(listQuery)
       .populate('createdBy', 'name avatar email')
       .populate('assignedTo', 'name avatar')
       .populate('organization', 'name color')
       .sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean(),
-    ApprovalRequest.countDocuments(query),
+    ApprovalRequest.countDocuments(listQuery),
     // Status tab counts, scoped to the current type view when one is selected.
     ApprovalRequest.aggregate([
-      { $match: type ? { ...countsQuery, type: typeFilter(type) } : countsQuery },
+      { $match: type ? withClause(countsQuery, typeFilter(type)) : countsQuery },
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]),
     // Post/Design sub-tab badges: same scope, ignoring both status and type.
+    // Legacy rows are classified the same way as `typeFilter` above.
     ApprovalRequest.aggregate([
       { $match: countsQuery },
-      { $group: { _id: { $ifNull: ['$type', APPROVAL_TYPES.POST] }, count: { $sum: 1 } } },
+      {
+        $project: {
+          effectiveType: {
+            $switch: {
+              branches: [
+                { case: { $eq: ['$type', APPROVAL_TYPES.DESIGN] }, then: APPROVAL_TYPES.DESIGN },
+                { case: { $eq: ['$type', APPROVAL_TYPES.POST] }, then: APPROVAL_TYPES.POST },
+                {
+                  case: {
+                    $or: [
+                      { $ne: ['$designer', null] },
+                      { $in: ['$status', [APPROVAL_STATUS.IN_DESIGN, APPROVAL_STATUS.DELIVERED]] },
+                    ],
+                  },
+                  then: APPROVAL_TYPES.DESIGN,
+                },
+              ],
+              default: APPROVAL_TYPES.POST,
+            },
+          },
+        },
+      },
+      { $group: { _id: '$effectiveType', count: { $sum: 1 } } },
     ]),
   ]);
   const counts = { ALL: 0 };
@@ -310,7 +519,11 @@ export const getApproval = asyncHandler(async (req, res) => {
   const isAssignee = reqDoc.assignedTo && String(reqDoc.assignedTo._id || reqDoc.assignedTo) === String(req.user._id);
   const isDesigner = reqDoc.designer && String(reqDoc.designer._id || reqDoc.designer) === String(req.user._id);
   const isFwd = isForwardedHandler({ forwardedHandlers: reqDoc.forwardedHandlers }, req.user._id);
-  if (!privileged && !isAssignee && !isDesigner && !isFwd && String(reqDoc.createdBy._id) !== String(req.user._id)) {
+  // Unclaimed pool work is readable by any designer — they were all invited to
+  // claim it, so they all have to be able to read it first.
+  const canClaim = isPoolDesigner(req.user, reqDoc);
+  if (!privileged && !isAssignee && !isDesigner && !isFwd && !canClaim
+      && String(reqDoc.createdBy._id) !== String(req.user._id)) {
     res.status(403); throw new Error('Not allowed to view this request');
   }
   const [images, comments] = await Promise.all([
@@ -318,7 +531,24 @@ export const getApproval = asyncHandler(async (req, res) => {
     // _id tiebreaker keeps same-millisecond rows (reject event + its feedback batch) in insert order.
     ApprovalComment.find({ request: reqDoc._id }).populate('author', 'name avatar').sort({ createdAt: 1, _id: 1 }).lean(),
   ]);
-  res.json({ success: true, request: { ...reqDoc, images, comments } });
+  // Whether this viewer may decide, answered by the server rather than guessed
+  // from the role on the client.
+  const canDecide = !req.user.viewOnly
+    && canDecideOn(req.user, { ...reqDoc, organization: reqDoc.organization?._id || reqDoc.organization });
+
+  // Workflow submissions are decided differently — approving hands them to the
+  // coordinator rather than raising the routing question — so the page needs to
+  // know which kind it is looking at.
+  const wf = await workflowHalfForApproval(reqDoc._id);
+  const workflow = wf ? {
+    item: String(wf.item._id),
+    half: wf.half,
+    stage: wf.item.workflowStage,
+    coordinatorName: wf.item.raisedBy?.name || '',
+    title: wf.item.title,
+  } : null;
+
+  res.json({ success: true, request: { ...reqDoc, images, comments, canDecide, workflow } });
 });
 
 // @route PUT /api/approvals/:id/claim  (designer)
@@ -344,11 +574,14 @@ export const claimDesignRequest = asyncHandler(async (req, res) => {
   if (isDesignType) request.status = APPROVAL_STATUS.IN_DESIGN;
   await request.save();
 
+  // Tell exactly the people who were invited. Work routed to the pool was
+  // offered to every designer everywhere, so the "it's taken" notice has to
+  // travel just as far; a brief that only ever concerned one college does not.
   const designers = await User.find({
     isActive: true,
     role: ROLES.USER,
     userType: USER_TYPES.DESIGNER,
-    organization: request.organization,
+    ...(request.openForDesigners ? {} : { organization: request.organization }),
   }).select('_id');
   const others = designers.filter((d) => String(d._id) !== String(req.user._id));
 
@@ -380,6 +613,15 @@ export const claimDesignRequest = asyncHandler(async (req, res) => {
 // DESIGN → a coordinator raises a brief and picks the designer (status IN_DESIGN).
 // POST   → standalone ready-to-publish content submitted for approval (status PENDING).
 export const createApproval = asyncHandler(async (req, res) => {
+  // A coordinator has exactly one way to ask for something: a request to the
+  // admin. That request is approved, allocated to a designer, and only then does
+  // finished work enter this pipeline. Letting them raise approvals as well gave
+  // the college two competing intakes, one of which bypassed the approval and
+  // allocation the other exists to provide.
+  if (isCoordinator(req.user)) {
+    res.status(403);
+    throw new Error('Raise this as a request to the admin instead — approvals are created from the work that comes back.');
+  }
   const { title, caption, description, hashtags, order, aspectRatio, organization, type, sourceDesign, designer, deliveryMode } = req.body;
   // One post can target several channels. Accepts `platforms` as a repeated
   // form field, an array, or a comma-separated string; falls back to the legacy
@@ -408,13 +650,49 @@ export const createApproval = asyncHandler(async (req, res) => {
   const org = await Organization.findById(orgId).select('_id isActive');
   if (!org || !org.isActive) { res.status(400); throw new Error('Selected organization does not exist'); }
 
-  // ---------- DESIGN brief: coordinator raises it and picks the designer ----------
+  // ---------- DESIGN: a brief handed to a designer, or a designer's own work ----------
+  // Two ways a DESIGN request starts life, and they differ only in who the
+  // designer is and how far along it already is:
+  //
+  //   BRIEF  — a coordinator (or an approver) describes what they need and picks
+  //            a designer. Nothing has been made yet, so it opens IN_DESIGN and
+  //            whatever is attached is reference material.
+  //   OWN WORK — a DESIGNER submits a finished piece they made. They are the
+  //            designer, so there is nobody to assign and nothing to wait for:
+  //            it opens PENDING with the artwork as the final media, exactly
+  //            where submit-design leaves a brief. Either way it belongs to the
+  //            DESIGN pipeline and shows under Design Approvals, never Post.
   if (reqType === APPROVAL_TYPES.DESIGN) {
-    const canRaise = isCoordinator(req.user) || [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
-    if (!canRaise) { res.status(403); throw new Error('Only coordinators can raise design requests'); }
+    const ownWork = submitterIsDesigner;
+    // Handing in against a workflow item ("Send for approval" in Designs to be
+    // Done). Checked before anything is created, so a stranger cannot attach work
+    // to somebody else's request.
+    const handIn = req.body.workflowItem
+      ? await workflowHandInRole(req.body.workflowItem, req.user)
+      : null;
+    if (req.body.workflowItem && (!handIn || handIn.half !== 'DESIGN')) {
+      res.status(403);
+      throw new Error('That design work is not yours to hand in, or it is not waiting on you');
+    }
+    // A second submission would be a second approval, orphaning the feedback
+    // rounds recorded against the first. Those go through the approval itself.
+    if (handIn && handIn.item.designApproval) {
+      res.status(409);
+      throw new Error('This design has already been submitted — resubmit it on the approval instead');
+    }
+    // A designer submitting their own finished artwork, or an Admin raising a
+    // brief. Coordinators are turned away at the top of this handler.
+    const canRaise = ownWork || [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
+    if (!canRaise) { res.status(403); throw new Error('Only designers and admins can raise design requests'); }
 
-    const chosen = await User.findOne({ _id: designer, isActive: true, role: ROLES.USER, userType: USER_TYPES.DESIGNER }).select('name');
-    if (!chosen) { res.status(400); throw new Error('Please choose a designer to work on this brief'); }
+    let chosen;
+    if (ownWork) {
+      chosen = req.user;
+      if (!(req.files || []).length) { res.status(400); throw new Error('Upload the finished design before submitting'); }
+    } else {
+      chosen = await User.findOne({ _id: designer, isActive: true, role: ROLES.USER, userType: USER_TYPES.DESIGNER }).select('name');
+      if (!chosen) { res.status(400); throw new Error('Please choose a designer to work on this brief'); }
+    }
 
     const request = await ApprovalRequest.create({
       organization: orgId,
@@ -429,38 +707,58 @@ export const createApproval = asyncHandler(async (req, res) => {
       hashtags: [],
       deliveryMode: deliveryMode === 'PRINT' ? 'PRINT' : 'DIGITAL',
       designer: chosen._id,
-      status: APPROVAL_STATUS.IN_DESIGN,
+      status: ownWork ? APPROVAL_STATUS.PENDING : APPROVAL_STATUS.IN_DESIGN,
+      submittedAt: ownWork ? new Date() : undefined,
       createdBy: req.user._id,
     });
 
-    // Anything the coordinator attaches is reference material for the designer.
+    // On a brief the attachments are reference material for the designer; on the
+    // designer's own submission they ARE the design, so they are stored as
+    // 'final' — the kind approvers review and resubmission replaces.
+    const kind = ownWork ? 'final' : 'reference';
     const refFiles = req.files || [];
     const refDocs = [];
     for (let i = 0; i < refFiles.length; i++) {
       const f = refFiles[i];
       const up = await uploadBuffer(f.buffer, { folder: 'approvals', originalName: f.originalname });
       const mediaType = mediaTypeOf(f);
-      refDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, kind: 'reference', order: i });
+      refDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, kind, order: i });
     }
     if (refDocs.length) await ApprovalImage.insertMany(refDocs);
     request.imageCount = refDocs.length;
     await request.save();
 
-    logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.DESIGN_REQUESTED, description: `Raised design brief "${title}" for ${chosen.name}`, entityType: 'ApprovalRequest', entityId: request._id });
-    await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: `raised this design brief and assigned it to ${chosen.name}` });
-    await createNotification({
-      recipient: chosen._id, organization: orgId, type: NOTIFICATION_TYPES.DESIGN_REQUESTED,
-      title: 'New design brief assigned to you', message: `${req.user.name} asked you to design "${title}"${platforms.length ? ` for ${platforms.join(", ")}` : ''}`,
-      link: `/approvals/${request._id}`, relatedRequest: request._id,
-    });
-    // The people who will sign it off hear about it now, not only once the
-    // designer submits - a coordinator raises the brief for them.
-    await notifyApprovers(
-      NOTIFICATION_TYPES.DESIGN_REQUESTED,
-      'New design brief raised',
-      `${req.user.name} raised "${title}" for ${chosen.name}`,
-      request
-    );
+    if (ownWork) {
+      logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.DESIGN_SUBMITTED, description: `Submitted design "${title}" for approval`, entityType: 'ApprovalRequest', entityId: request._id });
+      await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: 'submitted this design for approval' });
+      await notifyApprovers(
+        NOTIFICATION_TYPES.DESIGN_SUBMITTED,
+        'Design ready for approval',
+        `${req.user.name} submitted "${title}"`,
+        request
+      );
+      if (handIn) {
+        request.sourceRequest = handIn.item._id;
+        await request.save();
+        await advanceWorkflowForApproval({ approvalId: request._id, actor: req.user, linkAs: 'DESIGN' });
+      }
+    } else {
+      logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.DESIGN_REQUESTED, description: `Raised design brief "${title}" for ${chosen.name}`, entityType: 'ApprovalRequest', entityId: request._id });
+      await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: `raised this design brief and assigned it to ${chosen.name}` });
+      await createNotification({
+        recipient: chosen._id, organization: orgId, type: NOTIFICATION_TYPES.DESIGN_REQUESTED,
+        title: 'New design brief assigned to you', message: `${req.user.name} asked you to design "${title}"${platforms.length ? ` for ${platforms.join(", ")}` : ''}`,
+        link: `/approvals/${request._id}`, relatedRequest: request._id,
+      });
+      // The people who will sign it off hear about it now, not only once the
+      // designer submits - a coordinator raises the brief for them.
+      await notifyApprovers(
+        NOTIFICATION_TYPES.DESIGN_REQUESTED,
+        'New design brief raised',
+        `${req.user.name} raised "${title}" for ${chosen.name}`,
+        request
+      );
+    }
 
     const images = await ApprovalImage.find({ request: request._id }).sort({ order: 1 }).lean();
     res.status(201).json({ success: true, request: { ...request.toObject(), images } });
@@ -468,6 +766,23 @@ export const createApproval = asyncHandler(async (req, res) => {
   }
 
   // ---------- POST: standalone content (optionally raised from an approved design) ----------
+  // A handler writing the post for a workflow item hands it in through this form,
+  // exactly as the designer does with the artwork. Checked before anything is
+  // created, so a stranger cannot attach content to somebody else's request.
+  const postHandIn = req.body.workflowItem
+    ? await workflowHandInRole(req.body.workflowItem, req.user)
+    : null;
+  if (req.body.workflowItem && (!postHandIn || postHandIn.half !== 'POST')) {
+    res.status(403);
+    throw new Error('That posting work is not yours to hand in, or it is not waiting on you');
+  }
+  // A second submission would be a second approval, orphaning the feedback rounds
+  // recorded against the first. Resubmission goes through the approval itself.
+  if (postHandIn && postHandIn.item.postApproval) {
+    res.status(409);
+    throw new Error('This content has already been submitted — resubmit it on the approval instead');
+  }
+
   // A POST raised from an approved design: verify the link and the assignee.
   let design = null;
   if (reqType === APPROVAL_TYPES.POST && sourceDesign) {
@@ -496,8 +811,18 @@ export const createApproval = asyncHandler(async (req, res) => {
     }
   }
 
+  // Per-channel copy when several channels were chosen. The primary channel's
+  // pair is also mirrored into caption/description, so everything that reads a
+  // single caption — search, reports, the posting helpers — still works.
+  const perPlatform = parsePlatformContent(req.body.platformContent, platforms);
+  const primaryCopy = perPlatform?.find((row) => row.platform === platforms[0]);
+
   const request = await ApprovalRequest.create({
-    title, caption, description, workAssignment,
+    title,
+    caption: primaryCopy?.caption || caption,
+    description: primaryCopy?.description || description,
+    platformContent: perPlatform,
+    workAssignment,
     organization: orgId || undefined,
     platform: platform || undefined,
     platforms: platforms.length ? platforms : undefined,
@@ -516,16 +841,51 @@ export const createApproval = asyncHandler(async (req, res) => {
     await recordFeed({ request: design._id, kind: 'event', author: req.user._id, text: `created the post request "${title}" from this design` });
   }
 
+  /**
+   * The post the handler writes is the copy that goes AROUND the design, so the
+   * artwork travels with it. Without this, the approval an admin opens held the
+   * caption and nothing to look at, and the handler had to re-upload files the
+   * designer had already delivered.
+   *
+   * The rows point at the same stored files rather than copying them — but the
+   * `publicId` is deliberately left blank. Storage cleanup deletes by publicId
+   * (deleteApproval, and resubmitRequest when an image is dropped), so carrying it
+   * across would let deleting the post erase the designer's original artwork from
+   * under the design approval.
+   */
+  const carried = [];
+  if (postHandIn?.item?.designApproval) {
+    const allDesignMedia = await ApprovalImage
+      .find({ request: postHandIn.item.designApproval, kind: 'final' })
+      .sort({ order: 1 }).lean();
+    // Only the round that was actually approved. A design that went through changes
+    // has every earlier version still on it — carrying those across would hand the
+    // handler the artwork the admins rejected alongside the artwork they signed off.
+    const latest = allDesignMedia.reduce((max, m) => Math.max(max, m.revision || 0), 0);
+    const designMedia = allDesignMedia.filter((m) => (m.revision || 0) === latest);
+    designMedia.forEach((m, i) => carried.push({
+      request: request._id,
+      url: m.url,
+      publicId: '',
+      mediaType: m.mediaType,
+      name: m.name,
+      fileSize: m.fileSize,
+      kind: 'final',
+      order: i,
+    }));
+  }
+
   // `order` (optional) is a parallel array of indices matching the uploaded files,
-  // letting the client control gallery order. Falls back to upload order.
+  // letting the client control gallery order. Falls back to upload order — after
+  // whatever came across from the design, so the artwork leads the gallery.
   const orderArr = Array.isArray(order) ? order.map(Number) : null;
   const files = req.files || [];
-  const imageDocs = [];
+  const imageDocs = [...carried];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const up = await uploadBuffer(f.buffer, { folder: 'approvals', originalName: f.originalname });
     const mediaType = mediaTypeOf(f);
-    imageDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, order: orderArr?.[i] ?? i });
+    imageDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, order: (orderArr?.[i] ?? i) + carried.length });
   }
   if (imageDocs.length) await ApprovalImage.insertMany(imageDocs);
   request.imageCount = imageDocs.length;
@@ -534,6 +894,11 @@ export const createApproval = asyncHandler(async (req, res) => {
   const kindLabel = reqType === APPROVAL_TYPES.DESIGN ? 'design' : 'post';
   logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.APPROVAL_SUBMISSION, description: `Submitted ${kindLabel} approval request "${title}"`, entityType: 'ApprovalRequest', entityId: request._id });
   await notifyApprovers(NOTIFICATION_TYPES.NEW_REQUEST, `New ${kindLabel} approval request`, `${req.user.name} submitted "${title}"`, request);
+  if (postHandIn) {
+    request.sourceRequest = postHandIn.item._id;
+    await request.save();
+    await advanceWorkflowForApproval({ approvalId: request._id, actor: req.user, linkAs: 'POST' });
+  }
 
   const images = await ApprovalImage.find({ request: request._id }).sort({ order: 1 }).lean();
   res.status(201).json({ success: true, request: { ...request.toObject(), images } });
@@ -573,7 +938,7 @@ export const submitDesign = asyncHandler(async (req, res) => {
     const f = files[i];
     const up = await uploadBuffer(f.buffer, { folder: 'approvals', originalName: f.originalname });
     const mediaType = mediaTypeOf(f);
-    docs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, kind: 'final', order: orderArr?.[i] ?? existingFinal + i });
+    docs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, kind: 'final', order: orderArr?.[i] ?? existingFinal + i, revision: request.resubmitCount || 0 });
   }
   if (docs.length) await ApprovalImage.insertMany(docs);
   const finalCount = await ApprovalImage.countDocuments({ request: request._id, kind: 'final' });
@@ -598,7 +963,7 @@ export const submitDesign = asyncHandler(async (req, res) => {
   res.json({ success: true, request: { ...request.toObject(), images } });
 });
 
-// @route PUT /api/approvals/:id/approve  (super admin)
+// @route PUT /api/approvals/:id/approve
 export const approveRequest = asyncHandler(async (req, res) => {
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
@@ -607,7 +972,24 @@ export const approveRequest = asyncHandler(async (req, res) => {
     res.status(403); throw new Error('Only the super admin or the Admin over this institution can approve requests');
   }
 
+  // Only work actually waiting on a decision can be decided — a decision landing
+  // on a request that was already approved, rejected or posted is not a decision.
+  if (![APPROVAL_STATUS.PENDING, APPROVAL_STATUS.RESUBMITTED].includes(request.status)) {
+    res.status(409);
+    throw new Error(`This request is ${String(request.status).toLowerCase()} — it is not waiting on a decision`);
+  }
+
   const { routeTo, targetOrganizationId, targetPlatforms } = req.body;
+
+  // Work that came in through the workflow is routed by the workflow, not from
+  // here: the coordinator picks the pages when they accept it, and a handler takes
+  // it off the To Be Posted board. Allocating it here as well would fork the
+  // pipeline into two disagreeing halves.
+  const workflowHalf = await workflowHalfForApproval(request._id);
+  if (workflowHalf && routeTo) {
+    res.status(409);
+    throw new Error('This is workflow work — approve it and the coordinator decides where it goes');
+  }
 
   if (routeTo === 'DESIGNER') {
     request.openForDesigners = true;
@@ -653,9 +1035,16 @@ export const approveRequest = asyncHandler(async (req, res) => {
   await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: 'approved this request' });
 
   logActivity({ user: req.user._id, organization: request.organization, action: ACTIVITY_ACTIONS.APPROVAL_APPROVED, description: `Approved "${request.title}"`, entityType: 'ApprovalRequest', entityId: request._id });
+  // Approving a finished POST hands it straight back to whoever wrote it — they
+  // are the one who publishes it — so the notice tells them to go and do that
+  // rather than just reporting a status change they then have to interpret.
+  const readyToPost = request.type !== APPROVAL_TYPES.DESIGN;
   await createNotification({
     recipient: request.createdBy, organization: request.organization, type: NOTIFICATION_TYPES.CONTENT_APPROVED,
-    title: 'Content approved', message: `Your request "${request.title}" was approved`,
+    title: readyToPost ? 'Approved — ready to post' : 'Content approved',
+    message: readyToPost
+      ? `"${request.title}" was approved${onChannels(request)} — publish it, then mark it as posted`
+      : `Your request "${request.title}" was approved`,
     link: `/approvals/${request._id}`, relatedRequest: request._id,
   });
   if (request.type === APPROVAL_TYPES.DESIGN && request.designer && String(request.designer) !== String(request.createdBy)) {
@@ -678,18 +1067,22 @@ export const approveRequest = asyncHandler(async (req, res) => {
     ));
   }
 
-  // Notify all social handlers when the admin routes the work to them.
+  // Routing to handlers raises the posting work in their assigned work, which is
+  // where they act on it — and is what tells them about it.
   if (routeTo === 'SOCIAL_HANDLER' && request.forwardedHandlers?.length) {
-    await Promise.all(request.forwardedHandlers.map((id) =>
-      createNotification({
-        recipient: id, organization: request.organization, type: NOTIFICATION_TYPES.CONTENT_FORWARDED,
-        title: 'Approved work routed to you', message: `${req.user.name} routed "${request.title}" for publishing`,
-        link: `/approvals/${request._id}`, relatedRequest: request._id,
-      })
-    ));
+    await raisePostingWork({
+      request,
+      actor: req.user,
+      targets: (request.forwardedTargets || []).length
+        ? request.forwardedTargets
+        : [{ organization: request.organization, platform: '', handlers: request.forwardedHandlers }],
+    });
   }
 
   await completeLinkedAssignment(request, req.user);
+  // The approval is one half of a workflow item: approving it here is the admin
+  // gate, so the item moves on to the coordinator who asked for the work.
+  if (workflowHalf) await advanceWorkflowOnDecision({ approvalId: request._id, actor: req.user, decision: 'APPROVE' });
 
   res.json({ success: true, request });
 });
@@ -771,6 +1164,9 @@ export const rejectRequest = asyncHandler(async (req, res) => {
     title: 'Content needs revision', message: `Your request "${request.title}" was rejected with ${feedbackPoints.length} note(s)`,
     link: `/approvals/${request._id}`, relatedRequest: request._id,
   });
+  // Changes on a workflow half send that item back to its maker; the feedback
+  // rounds just recorded above are what they read.
+  await advanceWorkflowOnDecision({ approvalId: request._id, actor: req.user, decision: 'CHANGES' });
   res.json({ success: true, request });
 });
 
@@ -791,6 +1187,18 @@ export const resubmitRequest = asyncHandler(async (req, res) => {
   if (caption !== undefined) request.caption = caption;
   if (description !== undefined) request.description = description;
   if (hashtags !== undefined) request.hashtags = parseHashtags(hashtags);
+  // Changes asked for on a multi-channel post are usually about one channel's
+  // wording, so the per-channel copy has to be correctable here too.
+  if (req.body.platformContent !== undefined) {
+    const channels = (request.platforms?.length ? request.platforms : [request.platform]).filter(Boolean);
+    const perPlatform = parsePlatformContent(req.body.platformContent, channels);
+    request.platformContent = perPlatform;
+    const primaryCopy = perPlatform?.find((row) => row.platform === channels[0]);
+    if (primaryCopy) {
+      request.caption = primaryCopy.caption;
+      request.description = primaryCopy.description;
+    }
+  }
 
   // Remove dropped images on resubmit — but never the coordinator's reference material.
   if (keepImageIds !== undefined) {
@@ -804,7 +1212,10 @@ export const resubmitRequest = asyncHandler(async (req, res) => {
       await Promise.all(keep.map((id, i) => ApprovalImage.updateOne({ _id: id }, { order: Number(keepOrder[i] ?? i) })));
     }
   }
-  // Append any newly uploaded images after the kept ones
+  // Append any newly uploaded images after the kept ones, stamped with the round
+  // they answer. Without it the replacement sat in the gallery beside the version
+  // that was rejected, with nothing to tell a reviewer which was which.
+  const revision = (request.resubmitCount || 0) + 1;
   const existingCount = await ApprovalImage.countDocuments({ request: request._id });
   const files = req.files || [];
   const newDocs = [];
@@ -812,7 +1223,7 @@ export const resubmitRequest = asyncHandler(async (req, res) => {
     const f = files[i];
     const up = await uploadBuffer(f.buffer, { folder: 'approvals', originalName: f.originalname });
     const mediaType = mediaTypeOf(f);
-    newDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, order: existingCount + i });
+    newDocs.push({ request: request._id, url: up.url, publicId: up.publicId, mediaType, name: f.originalname, fileSize: f.size, order: existingCount + i, revision });
   }
   if (newDocs.length) await ApprovalImage.insertMany(newDocs);
 
@@ -821,6 +1232,9 @@ export const resubmitRequest = asyncHandler(async (req, res) => {
   request.resubmittedAt = new Date();
   request.resubmitCount += 1;
   await request.save();
+  // If this approval is one half of a workflow item, resubmitting it is that half
+  // being handed in again — the item goes back to the admins for review.
+  await advanceWorkflowForApproval({ approvalId: request._id, actor: req.user });
 
   // Durable status-change marker in the request's activity feed.
   await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: 'resubmitted with updates' });
@@ -906,6 +1320,11 @@ export const markPosted = asyncHandler(async (req, res) => {
   request.postedBy = req.user._id;
   await request.save();
 
+  // The posting job in the handler's assigned work existed to get this out. It
+  // is out, so it is done — leaving it open would have their list contradicting
+  // the board about something they just did.
+  await closePostingWorkForApproval(request._id, req.user);
+
   // Durable status-change marker in the request's activity feed.
   await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: `marked as posted on ${platformsOf(request).join(", ")}` });
 
@@ -939,10 +1358,14 @@ export const markPosted = asyncHandler(async (req, res) => {
 // Allocate an approved design to a social-media handler who will post it.
 // Body: { userId }. Re-allocation is allowed until the design is posted.
 export const assignRequest = asyncHandler(async (req, res) => {
-  if (!isSuperApprover(req.user)) { res.status(403); throw new Error('Only super admin can allocate designs'); }
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
   assertOrgAccess(req, res, request);
+  // Whoever could approve this can also decide where it goes: the super admin
+  // anywhere, an Admin inside the institutions they hold.
+  if (!canDecideOn(req.user, request)) {
+    res.status(403); throw new Error('Only the super admin or the Admin over this institution can allocate designs');
+  }
   if (request.type !== APPROVAL_TYPES.DESIGN) { res.status(400); throw new Error('Only design requests can be allocated'); }
   if (request.status !== APPROVAL_STATUS.APPROVED) { res.status(400); throw new Error('Approve the design before allocating it'); }
 
@@ -957,10 +1380,16 @@ export const assignRequest = asyncHandler(async (req, res) => {
 
   await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: `allocated this design to ${assignee.name} to publish${onChannels(request)}` });
   logActivity({ user: req.user._id, organization: request.organization, action: ACTIVITY_ACTIONS.DESIGN_ASSIGNED, description: `Allocated design "${request.title}" to ${assignee.name}`, entityType: 'ApprovalRequest', entityId: request._id });
-  await createNotification({
-    recipient: assignee._id, organization: request.organization, type: NOTIFICATION_TYPES.DESIGN_ASSIGNED,
-    title: 'Design allocated to you to post', message: `${req.user.name} allocated "${request.title}" — publish it${onChannels(request)} and mark it posted`,
-    link: `/approvals/${request._id}`, relatedRequest: request._id,
+  // Posting it is work they have to do, so it lands in their assigned work —
+  // which is also what notifies them.
+  await raisePostingWork({
+    request,
+    actor: req.user,
+    targets: [{
+      organization: request.organization,
+      platform: (request.platforms || [])[0] || '',
+      handlers: [assignee._id],
+    }],
   });
 
   const populated = await ApprovalRequest.findById(request._id)
@@ -974,10 +1403,12 @@ export const assignRequest = asyncHandler(async (req, res) => {
 // Deliver an approved design back to the coordinator who raised the brief
 // (no social posting needed). Terminal state DELIVERED.
 export const deliverToCoordinator = asyncHandler(async (req, res) => {
-  if (!isSuperApprover(req.user)) { res.status(403); throw new Error('Only super admin can deliver designs'); }
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
   assertOrgAccess(req, res, request);
+  if (!canDecideOn(req.user, request)) {
+    res.status(403); throw new Error('Only the super admin or the Admin over this institution can deliver designs');
+  }
   if (request.type !== APPROVAL_TYPES.DESIGN) { res.status(400); throw new Error('Only design requests can be delivered'); }
   if (request.status !== APPROVAL_STATUS.APPROVED) { res.status(400); throw new Error('Approve the design before delivering it'); }
 
@@ -1004,11 +1435,12 @@ export const deliverToCoordinator = asyncHandler(async (req, res) => {
 // @route PUT /api/approvals/:id/forward  (super admin)
 // Body: { targets: [{ organization, platform, handlerIds: [] }] }
 export const forwardRequest = asyncHandler(async (req, res) => {
-  if (!isSuperApprover(req.user)) { res.status(403); throw new Error('Only super admin can forward approved designs'); }
-
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
   assertOrgAccess(req, res, request);
+  if (!canDecideOn(req.user, request)) {
+    res.status(403); throw new Error('Only the super admin or the Admin over this institution can forward approved designs');
+  }
   if (request.type !== APPROVAL_TYPES.DESIGN) { res.status(400); throw new Error('Only design requests can be forwarded'); }
   if (request.status !== APPROVAL_STATUS.APPROVED) { res.status(400); throw new Error('Approve the design before forwarding'); }
 
@@ -1061,19 +1493,9 @@ export const forwardRequest = asyncHandler(async (req, res) => {
     entityId: request._id,
   });
 
-  await Promise.all(
-    Array.from(uniqueHandlers).map((id) =>
-      createNotification({
-        recipient: id,
-        organization: request.organization,
-        type: NOTIFICATION_TYPES.CONTENT_FORWARDED,
-        title: 'Approved design forwarded to you',
-        message: `${req.user.name} forwarded "${request.title}" for publishing preparation`,
-        link: `/approvals/${request._id}`,
-        relatedRequest: request._id,
-      })
-    )
-  );
+  // Each handler gets the posting job in their own assigned work, on the channel
+  // they were forwarded for — that is what notifies them too.
+  await raisePostingWork({ request, targets: normalized, actor: req.user });
 
   const populated = await ApprovalRequest.findById(request._id)
     .populate('forwardedTargets.organization', 'name color')

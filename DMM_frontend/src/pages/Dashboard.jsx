@@ -60,6 +60,13 @@ export default function Dashboard() {
         { label: 'My Posted', value: stats.posted, icon: Send, tone: 'violet', to: '/approvals?status=POSTED' },
       ];
 
+  // A coordinator has no Approvals page, so those figures stay figures — a card
+  // that bounced them straight back here would just look broken.
+  const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
+  const withoutApprovalLinks = (list) => (isCoordinator
+    ? list.map((k) => (String(k.to || '').startsWith('/approvals') ? { ...k, to: undefined } : k))
+    : list);
+
   const overall = [
     { label: 'Total Requests', value: stats.totalRequests, icon: FileText, tone: 'brand', to: '/approvals' },
     { label: 'Total Posts', value: stats.totalPosts, icon: Send, tone: 'violet', to: '/approvals?status=POSTED' },
@@ -115,12 +122,12 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {loadingStats
           ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)
-          : kpis.map((k, i) => <StatCard key={k.label} {...k} delay={i * 0.05} />)}
+          : withoutApprovalLinks(kpis).map((k, i) => <StatCard key={k.label} {...k} delay={i * 0.05} />)}
       </div>
 
       {/* Overall stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {overall.map((k, i) => <StatCard key={k.label} {...k} delay={i * 0.05} />)}
+        {withoutApprovalLinks(overall).map((k, i) => <StatCard key={k.label} {...k} delay={i * 0.05} />)}
       </div>
 
       {/* Top platform highlight (CEO) */}

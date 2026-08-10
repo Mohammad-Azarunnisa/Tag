@@ -19,7 +19,8 @@ export const useAuthStore = create(
 
       login: async (email, password) => {
         const data = await authApi.login({ email, password });
-        if (data.user.role !== 'ADMIN') throw new NotAdminError();
+        // The super admin and institution Admins (role CEO) both belong here.
+        if (!['ADMIN', 'CEO'].includes(data.user.role)) throw new NotAdminError();
         localStorage.setItem(TOKEN_KEY, data.token);
         set({ user: data.user, token: data.token });
         return data.user;
@@ -35,8 +36,8 @@ export const useAuthStore = create(
         if (!token) return null;
         try {
           const data = await authApi.me();
-          // Guard: if this account is no longer an admin, drop the session.
-          if (data.user.role !== 'ADMIN') {
+          // Guard: if this account no longer administers anything, drop the session.
+          if (!['ADMIN', 'CEO'].includes(data.user.role)) {
             localStorage.removeItem(TOKEN_KEY);
             set({ user: null, token: null });
             return null;

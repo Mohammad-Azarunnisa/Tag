@@ -43,11 +43,7 @@ export default function ApprovalDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { user } = useAuthStore();
-  // Mirrors the backend gate: the super admin decides anywhere, and an Admin
-  // decides inside the institutions the super admin put under them. The server
-  // re-checks the request's own college, so this only governs what is shown.
   const isViewOnly = !!user?.viewOnly;
-  const canDecide = !isViewOnly && (!!user?.isSuperAdmin || user?.role === 'CEO');
   // Routing an approved design (allocate / deliver / forward) stays with the
   // super admin, so the design pipeline keeps one owner.
   const privileged = !!user?.isSuperAdmin;
@@ -55,6 +51,7 @@ export default function ApprovalDetail() {
   const [activeImg, setActiveImg] = useState(0);
   const [lightbox, setLightbox] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [approveWorkflowOpen, setApproveWorkflowOpen] = useState(false);
   const [resubmitOpen, setResubmitOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -71,6 +68,9 @@ export default function ApprovalDetail() {
   const r = data?.request;
   const isViewer = !!user?.viewOnly; // Chairman — read-only
   const isOwner = r && String(r.createdBy?._id) === String(user?._id); // coordinator for a design
+  // Who may decide is the server's answer, not a guess from the role; the role
+  // check stands in until the request loads.
+  const canDecide = r ? !!r.canDecide : !isViewOnly && (!!user?.isSuperAdmin || user?.role === 'CEO');
   const isDesigner = r && String(r.designer?._id || r.designer || '') === String(user?._id);
   const isHandler = r && String(r.assignedTo?._id || r.assignedTo || '') === String(user?._id);
 
@@ -86,11 +86,8 @@ export default function ApprovalDetail() {
     onSuccess: () => { toast.success('You have claimed this brief'); invalidate(); },
     onError: (e) => toast.error(e.response?.data?.message || 'Failed to claim'),
   });
-  const postedMut = useMutation({
-    mutationFn: () => approvalApi.markPosted(id),
-    onSuccess: () => { toast.success('Marked as posted'); invalidate(); },
-    onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
-  });
+  // Marking it posted now lives inside the go-live dialog, alongside setting a
+  // time — see ScheduleModal.
   const removeMut = useMutation({
     mutationFn: () => approvalApi.remove(id),
     onSuccess: () => { toast.success('Request deleted'); qc.invalidateQueries({ queryKey: ['approvals'] }); navigate('/approvals'); },
@@ -102,13 +99,27 @@ export default function ApprovalDetail() {
 
   const allImages = [...(r.images || [])].sort((a, b) => a.order - b.order);
   const referenceImages = allImages.filter((i) => i.kind === 'reference');
-  const finalImages = allImages.filter((i) => i.kind !== 'reference');
+  const allFinals = allImages.filter((i) => i.kind !== 'reference');
+  /**
+   * Each round of changes appends its files, so an approval that has been sent back
+   * carries every earlier attempt too. The gallery is what somebody signs off, so it
+   * shows only the current round; the superseded versions get their own labelled
+   * strip below, where they can be compared without being mistaken for the live work.
+   *
+   * Files predating revisions all read as round 0, which leaves them in one group —
+   * the old undivided gallery rather than a wrong label.
+   */
+  const latestRevision = allFinals.reduce((max, m) => Math.max(max, m.revision || 0), 0);
+  const finalImages = allFinals.filter((i) => (i.revision || 0) === latestRevision);
+  const supersededImages = allFinals.filter((i) => (i.revision || 0) !== latestRevision);
   // Main gallery shows the finished work; a brief before submission shows references.
   const images = finalImages.length ? finalImages : allImages;
   // Clamp: a resubmission can shrink the list below the selected thumbnail index.
   const shownImg = images[Math.min(activeImg, images.length - 1)];
   const isDesign = r.type === 'DESIGN';
   const canReview = canDecide && ['PENDING', 'RESUBMITTED'].includes(r.status);
+  // Workflow submissions go to the coordinator on approval — say so first.
+  const wf = r.workflow || null;
   const canSubmitDesign = isDesign && isDesigner && r.status === 'IN_DESIGN';
   const canClaim = isDesign && r.status === 'PENDING' && !r.designer && user?.userType === 'DESIGNER';
   const canResubmit = r.status === 'REJECTED' && (isDesign ? isDesigner : isOwner);
@@ -151,7 +162,10 @@ export default function ApprovalDetail() {
         <div className="flex flex-wrap items-center gap-2">
           {canReview && (
             <>
-              <Button variant="success" loading={approveMut.isPending} onClick={() => approveMut.mutate()}><Check className="h-4 w-4" /> Approve</Button>
+              <Button variant="success" loading={approveMut.isPending}
+                onClick={() => (wf ? setApproveWorkflowOpen(true) : approveMut.mutate())}>
+                <Check className="h-4 w-4" /> Approve
+              </Button>
               <Button variant="danger" onClick={() => setRejectOpen(true)}><X className="h-4 w-4" /> Request changes</Button>
             </>
           )}
@@ -166,14 +180,12 @@ export default function ApprovalDetail() {
           {canResubmit && (
             <Button onClick={() => setResubmitOpen(true)}><RefreshCw className="h-4 w-4" /> Edit &amp; Resubmit</Button>
           )}
-          {canSchedule && (
+          {/* One action, and it asks WHEN: it is already out, or it goes out at
+              a time you set and closes itself then. Two separate buttons made
+              the time look like a different job from marking it posted. */}
+          {(canMarkPosted || canSchedule) && (
             <Button onClick={() => setScheduleOpen(true)}>
-              <Send className="h-4 w-4" /> {r.scheduledAt ? 'Reschedule' : 'Schedule post'}
-            </Button>
-          )}
-          {canMarkPosted && (
-            <Button variant="outline" loading={postedMut.isPending} onClick={() => postedMut.mutate()}>
-              Already posted
+              <Send className="h-4 w-4" /> {r.scheduledAt ? 'Change the time' : 'Mark as posted'}
             </Button>
           )}
           {canDelete && (
@@ -235,6 +247,32 @@ export default function ApprovalDetail() {
             )}
           </Card>
 
+          {/* What earlier rounds looked like. Separate, dimmed and labelled, so the
+              version that was sent back can be compared against the one replacing
+              it without the two ever reading as one set of work. */}
+          {supersededImages.length > 0 && (
+            <Card className="p-4">
+              <p className="mb-2.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+                <RefreshCw className="h-3.5 w-3.5 text-amber-500" />
+                Earlier versions · replaced after changes were asked for
+              </p>
+              <div className="flex flex-wrap gap-2 opacity-60">
+                {supersededImages.map((img) => (
+                  <div key={img._id} className="text-center">
+                    {isVideo(img)
+                      ? <video src={img.url} className="h-20 w-20 rounded-lg object-cover" muted />
+                      : isDoc(img)
+                        ? <DocTile item={img} className="h-20 w-20" />
+                        : <img src={img.url} alt="" onClick={() => setLightbox(img.url)} className="h-20 w-20 cursor-zoom-in rounded-lg object-cover" />}
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      rev {(img.revision || 0) + 1}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
           {/* Reference material the coordinator attached (once the final work exists) */}
           {finalImages.length > 0 && referenceImages.length > 0 && (
             <Card className="p-4">
@@ -273,7 +311,11 @@ export default function ApprovalDetail() {
 
 // ---- Approval lifecycle ----
 // POST:   Submitted -> In review -> Approved -> Posted
-// DESIGN: Brief -> In design -> In review -> Approved -> Posted / Delivered
+// DESIGN: Brief -> In review -> Approved -> Posted / Delivered
+//
+// A brief sitting with its designer is still at the Brief stage as far as this
+// bar is concerned — who has it and what they are doing is said underneath by
+// DesignHint, which is where that detail belongs.
 function LifecycleCard({ r }) {
   const rejected = r.status === 'REJECTED';
   const resubmitted = r.status === 'RESUBMITTED';
@@ -288,16 +330,15 @@ function LifecycleCard({ r }) {
     const finalLabel = r.status === 'POSTED' ? 'Posted' : r.status === 'DELIVERED' ? 'Delivered' : r.deliveryMode === 'PRINT' ? 'Deliver' : 'Post';
     const steps = [
       { label: 'Brief', date: r.createdAt, note: r.designer?.name ? `claimed by ${r.designer.name}` : 'Awaiting a designer' },
-      { label: 'In design', date: r.submittedAt },
       reviewStep,
       { label: 'Approved', date: r.approvedAt },
       { label: finalLabel, date: r.postedAt || r.deliveredAt, note: r.status === 'DELIVERED' ? `to ${r.createdBy?.name || 'coordinator'}` : (r.status === 'POSTED' && r.assignedTo?.name ? `by ${r.assignedTo.name}` : null) },
     ];
-    const stageIdx = ['POSTED', 'DELIVERED'].includes(r.status) ? 4
-      : r.status === 'APPROVED' ? 3
-      : ['PENDING', 'RESUBMITTED', 'REJECTED'].includes(r.status) ? 2
-      : 1; // IN_DESIGN
-    return <LifecycleBar steps={steps} stageIdx={stageIdx} cols={5} hint={<DesignHint r={r} />} />;
+    const stageIdx = ['POSTED', 'DELIVERED'].includes(r.status) ? 3
+      : r.status === 'APPROVED' ? 2
+      : ['PENDING', 'RESUBMITTED', 'REJECTED'].includes(r.status) ? 1
+      : 0; // IN_DESIGN — still with the designer, so the bar rests on Brief
+    return <LifecycleBar steps={steps} stageIdx={stageIdx} cols={4} hint={<DesignHint r={r} />} />;
   }
 
   const steps = [
@@ -580,10 +621,29 @@ function PostDetailsCard({ r }) {
         {r.postedAt && <Def label="Posted on" value={formatDateTime(r.postedAt)} />}
         {r.resubmitCount > 0 && <Def label="Resubmissions" value={r.resubmitCount} />}
       </div>
-      {(r.caption || r.description || r.hashtags?.length > 0) && (
+      {(r.caption || r.description || r.hashtags?.length > 0 || r.platformContent?.length > 0) && (
         <div className="mt-5 space-y-4 border-t border-slate-100 dark:border-slate-800 pt-4">
-          {r.caption && <Def label="Caption" value={<span className="whitespace-pre-wrap">{r.caption}</span>} />}
-          {r.description && <Def label="Description" value={<span className="whitespace-pre-wrap">{r.description}</span>} />}
+          {/* Several channels means several pieces of copy, each shown under the
+              channel it is for. One channel keeps the plain pair. */}
+          {r.platformContent?.length > 0 ? (
+            r.platformContent.map((row, i) => (
+              <div key={row.platform} className="rounded-xl border border-slate-100 p-3 dark:border-slate-800">
+                <p className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
+                  {row.platform}
+                  {i === 0 && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">Primary</span>}
+                </p>
+                <div className="space-y-3">
+                  {row.description && <Def label="Description" value={<span className="whitespace-pre-wrap">{row.description}</span>} />}
+                  {row.caption && <Def label="Caption" value={<span className="whitespace-pre-wrap">{row.caption}</span>} />}
+                </div>
+              </div>
+            ))
+          ) : (
+            <>
+              {r.caption && <Def label="Caption" value={<span className="whitespace-pre-wrap">{r.caption}</span>} />}
+              {r.description && <Def label="Description" value={<span className="whitespace-pre-wrap">{r.description}</span>} />}
+            </>
+          )}
           {r.hashtags?.length > 0 && (
             <div>
               <p className="text-xs text-slate-400">Hashtags</p>
@@ -896,21 +956,52 @@ function ResubmitModal({ request, onClose, onDone }) {
 // ---- Designer submits the finished work for their assigned brief ----
 // Approved content needs a go-live moment. A server sweep flips the request to
 // POSTED when it arrives, so nobody has to be online at the time.
+/**
+ * "Mark as posted" — which is really the question "when did/does this go out?".
+ *
+ * Two answers. It is already live, so close it now. Or it goes out at a time you
+ * set, in which case the server sweeps for anything due and closes it then
+ * (services/scheduledPosts.js) — nobody has to come back and click.
+ */
 function ScheduleModal({ request, onClose, onDone }) {
   const toLocalInput = (d) => {
     const dt = d ? new Date(d) : new Date(Date.now() + 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
     return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
   };
+  // Already scheduled? Then they came here to change the time, not to say it is
+  // out — so start on the timed option.
+  const [mode, setMode] = useState(request.scheduledAt ? 'later' : 'now');
   const [when, setWhen] = useState(toLocalInput(request.scheduledAt));
-  const mut = useMutation({
+
+  const scheduleMut = useMutation({
     mutationFn: () => approvalApi.schedule(request._id, new Date(when).toISOString()),
-    onSuccess: () => { toast.success('Scheduled - it will be marked posted automatically'); onDone(); },
-    onError: (e) => toast.error(e.response?.data?.message || 'Could not schedule that'),
+    onSuccess: () => { toast.success('Booked in — it closes itself at that time'); onDone(); },
+    onError: (e) => toast.error(e.response?.data?.message || 'Could not set that time'),
   });
+  const nowMut = useMutation({
+    mutationFn: () => approvalApi.markPosted(request._id),
+    onSuccess: () => { toast.success('Marked as posted'); onDone(); },
+    onError: (e) => toast.error(e.response?.data?.message || 'Could not mark it posted'),
+  });
+  const saving = scheduleMut.isPending || nowMut.isPending;
+
+  const OPTIONS = [
+    { key: 'now', label: 'It is already posted', hint: 'Close it now, with this moment as the time it went out.' },
+    { key: 'later', label: 'It goes out at a set time', hint: 'Pick the time — it is marked posted then, on its own.' },
+  ];
+
   return (
-    <Modal open onClose={onClose} title={request.scheduledAt ? 'Reschedule post' : 'Schedule post'}>
-      <form onSubmit={(e) => { e.preventDefault(); if (!when) { toast.error('Pick the date and time'); return; } mut.mutate(); }} className="space-y-4">
+    <Modal open onClose={onClose} title={request.scheduledAt ? 'Change the go-live time' : 'Mark as posted'}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (mode === 'now') { nowMut.mutate(); return; }
+          if (!when) { toast.error('Pick the date and time'); return; }
+          scheduleMut.mutate();
+        }}
+        className="space-y-4"
+      >
         <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
           <p className="text-sm font-bold text-slate-800 dark:text-white">{request.title}</p>
           <p className="mt-0.5 text-xs text-slate-400">
@@ -918,17 +1009,38 @@ function ScheduleModal({ request, onClose, onDone }) {
             {request.organization?.name ? ` · ${request.organization.name}` : ''}
           </p>
         </div>
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Goes live on</span>
-          <input type="datetime-local" className="input-base" value={when} min={toLocalInput(new Date())}
-            onChange={(e) => setWhen(e.target.value)} />
-        </label>
-        <p className="-mt-2 text-xs text-slate-400">
-          Uses your local time. Everyone on the request is notified now, and again when it goes live.
-        </p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {OPTIONS.map((o) => (
+            <button key={o.key} type="button" onClick={() => setMode(o.key)}
+              className={`rounded-2xl border-2 p-3 text-left transition ${
+                mode === o.key
+                  ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10'
+                  : 'border-slate-200 hover:border-brand-300 dark:border-slate-700'}`}>
+              <p className="text-sm font-bold text-slate-800 dark:text-white">{o.label}</p>
+              <p className="mt-0.5 text-xs text-slate-400">{o.hint}</p>
+            </button>
+          ))}
+        </div>
+
+        {mode === 'later' && (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Goes live on</span>
+              <input type="datetime-local" className="input-base" value={when} min={toLocalInput(new Date())}
+                onChange={(e) => setWhen(e.target.value)} />
+            </label>
+            <p className="-mt-2 text-xs text-slate-400">
+              Uses your local time. Everyone on the request is notified now, and again when it goes live.
+            </p>
+          </>
+        )}
+
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={mut.isPending}><Send className="h-4 w-4" /> {request.scheduledAt ? 'Reschedule' : 'Schedule'}</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button type="submit" loading={saving}>
+            <Send className="h-4 w-4" /> {mode === 'now' ? 'Mark as posted' : request.scheduledAt ? 'Change the time' : 'Set the time'}
+          </Button>
         </div>
       </form>
     </Modal>

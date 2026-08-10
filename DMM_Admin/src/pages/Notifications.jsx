@@ -34,13 +34,17 @@ const ICONS = {
   WORK_SUBMITTED: { icon: Send, color: 'text-violet-600 bg-violet-50 dark:bg-violet-500/10' },
   WORK_APPROVED: { icon: Check, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10' },
   WORK_REJECTED: { icon: XCircle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
+  WORK_ACKNOWLEDGED_ELSEWHERE: { icon: MessageSquare, color: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
 };
 
 // Notification links are written for the product app's routes. Translate the
 // ones that live under a different path here, and don't navigate at all for a
 // target this console doesn't have (the catch-all would bounce to /dashboard).
 const ROUTE_ALIASES = { '/planner': '/planners', '/profile': '/settings' };
-const KNOWN_PREFIXES = ['/approvals', '/planners', '/users', '/notifications', '/settings', '/calendar', '/analytics', '/assigned-work', '/requests', '/reports'];
+// `/workflow` covers the design → post pipeline. Leaving it off this list meant
+// every workflow notification resolved to null and clicking one did nothing at
+// all — the console has the route, the allowlist just never learned about it.
+const KNOWN_PREFIXES = ['/approvals', '/workflow', '/planners', '/users', '/notifications', '/settings', '/calendar', '/analytics', '/assigned-work', '/requests', '/reports'];
 
 // Older rows stored a link back to this page, which is a dead end — fall back to
 // the page the notification is actually about.
@@ -51,6 +55,9 @@ const TYPE_FALLBACK = {
   PLAN_RESUBMITTED: '/planners',
   PROFILE_UPDATE_SUBMITTED: '/users',
   WORK_SUBMITTED: '/assigned-work',
+  // Workflow rows always carry a link; these only matter if one ever loses it.
+  DESIGN_SUBMITTED: '/workflow/designs',
+  DESIGN_REQUESTED: '/workflow/designs',
   INSTITUTION_REQUEST: '/requests',
   MONTHLY_REPORT: '/reports',
   REQUEST_APPROVED: '/requests',

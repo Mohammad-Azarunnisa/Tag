@@ -48,7 +48,9 @@ function useFitStep(ref, cols) {
     const measure = () => {
       const avail = el.clientWidth - LABEL_W;
       if (avail <= 0) return;
-      setStep(Math.max(MIN_STEP, Math.min(MAX_STEP, Math.floor(avail / cols))));
+      // Include inter-column gaps so the full-year grid reaches the card edge.
+      const fitted = Math.floor((avail + GAP) / cols);
+      setStep(Math.max(MIN_STEP, fitted));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -60,8 +62,10 @@ function useFitStep(ref, cols) {
 
 export default function ActivityHeatmap({ orgId, platform }) {
   const [metric, setMetric] = useState(''); // '' → backend picks the platform default
+  const [selectedDate, setSelectedDate] = useState('');
   // Reset to the default metric whenever the platform changes.
   useEffect(() => { setMetric(''); }, [platform]);
+  useEffect(() => { setSelectedDate(''); }, [platform, orgId, metric]);
   const scrollRef = useRef(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -94,7 +98,8 @@ export default function ActivityHeatmap({ orgId, platform }) {
   }, [weeks]);
 
   const stats = data?.stats;
-  const gridWidth = weeks.length * STEP;
+  const gridWidth = Math.max(0, weeks.length * CELL + Math.max(0, weeks.length - 1) * GAP);
+  const selectedCell = useMemo(() => cells.find((c) => c.date === selectedDate) || null, [cells, selectedDate]);
 
   return (
     <Card className="overflow-hidden">
@@ -133,14 +138,6 @@ export default function ActivityHeatmap({ orgId, platform }) {
           <p className="text-sm text-slate-400">No {data?.label?.toLowerCase() || 'activity'} recorded for {platform} in the last year yet.</p>
         ) : (
           <>
-            {/* Stat strip */}
-            <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat icon={TrendingUp} label={`Total ${data.label.toLowerCase()}`} value={formatNumber(stats.total)} color={rgb} />
-              <Stat icon={CalendarDays} label="Active days" value={`${stats.activeDays} / ${data.days}`} color={rgb} />
-              <Stat icon={Activity} label="Daily average" value={formatNumber(stats.average)} color={rgb} />
-              <Stat icon={Flame} label="Best day" value={stats.bestDay ? formatNumber(stats.bestDay.value) : '—'} sub={stats.bestDay ? prettyDate(stats.bestDay.date) : ''} color={rgb} />
-            </div>
-
             {/* The grid — sized to fill the card width */}
             <div ref={scrollRef} className="overflow-x-auto pb-1">
               <div style={{ width: Math.max(gridWidth + LABEL_W, 0) }}>
@@ -166,16 +163,28 @@ export default function ActivityHeatmap({ orgId, platform }) {
                         {week.map((cell, ri) => {
                           if (!cell) return <div key={ri} style={{ width: CELL, height: CELL }} />;
                           const lvl = levelOf(cell.value);
+                          const isSelected = selectedDate === cell.date;
                           return (
-                            <div
+                            <button
                               key={ri}
+                              type="button"
+                              onClick={() => setSelectedDate(cell.date)}
                               title={`${formatNumber(cell.value)} ${data.label.toLowerCase()} · ${prettyDate(cell.date)}`}
                               className={cn(
-                                'rounded-[3px] ring-1 ring-inset transition-transform hover:scale-[1.35]',
+                                'rounded-[3px] ring-1 ring-inset transition-transform hover:scale-[1.35] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50',
                                 lvl === 0 ? 'bg-slate-100 ring-slate-200/70 dark:bg-slate-800 dark:ring-slate-700/60' : 'ring-black/[0.06] dark:ring-white/[0.06]'
                               )}
-                              style={{ width: CELL, height: CELL, backgroundColor: fill(lvl) }}
-                            />
+                              style={{
+                                width: CELL,
+                                height: CELL,
+                                backgroundColor: fill(lvl),
+                                boxShadow: isSelected ? '0 0 0 2px rgba(10,102,194,0.9)' : undefined,
+                              }}
+                              aria-pressed={isSelected}
+                              aria-label={`${prettyDate(cell.date)} ${data.label.toLowerCase()} ${cell.value}`}
+                            >
+                              <span className="sr-only">{prettyDate(cell.date)} · {formatNumber(cell.value)} {data.label.toLowerCase()}</span>
+                            </button>
                           );
                         })}
                       </div>
@@ -193,6 +202,24 @@ export default function ActivityHeatmap({ orgId, platform }) {
                   style={{ width: 12, height: 12, backgroundColor: fill(lvl) }} />
               ))}
               More
+            </div>
+
+            {selectedCell && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/40">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Selected day</p>
+                <p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{prettyDate(selectedCell.date)}</p>
+                <p className="mt-0.5 text-slate-600 dark:text-slate-300">
+                  {data?.label || 'Activity'}: <span className="font-bold">{formatNumber(selectedCell.value)}</span>
+                </p>
+              </div>
+            )}
+
+            {/* Stat strip */}
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat icon={TrendingUp} label={`Total ${data.label.toLowerCase()}`} value={formatNumber(stats.total)} color={rgb} />
+              <Stat icon={CalendarDays} label="Active days" value={`${stats.activeDays} / ${data.days}`} color={rgb} />
+              <Stat icon={Activity} label="Daily average" value={formatNumber(stats.average)} color={rgb} />
+              <Stat icon={Flame} label="Best day" value={stats.bestDay ? formatNumber(stats.bestDay.value) : '—'} sub={stats.bestDay ? prettyDate(stats.bestDay.date) : ''} color={rgb} />
             </div>
           </>
         )}

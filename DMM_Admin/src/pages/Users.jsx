@@ -15,7 +15,10 @@ import { Modal } from '../components/ui/Modal.jsx';
 import { cn, formatDate, roleLabel, roleStyle, userTypeLabel } from '../lib/utils.js';
 
 // Filter options (label → internal role value). Super Admin is seed-only.
-const ROLE_FILTERS = [{ value: 'ADMIN', label: 'Super Admin' }, { value: 'CEO', label: 'Admin' }, { value: 'USER', label: 'User' }];
+// Matches the tiles above the list, so the two never disagree. 'SUPER' is the
+// account flag rather than a role value — role ADMIN also covers view-only
+// oversight accounts, which are not the super admin.
+const ROLE_FILTERS = [{ value: 'SUPER', label: 'Super Admin' }, { value: 'CEO', label: 'Admin' }, { value: 'USER', label: 'User' }];
 // Roles the super admin can assign. 'SUPER' → ADMIN + isSuperAdmin (Branding
 // Director). 'CHAIRMAN' → global ADMIN + viewOnly (read-only oversight).
 const CREATE_ROLES = [
@@ -42,7 +45,9 @@ export default function Users() {
   const users = data?.users || [];
   const { data: orgData } = useQuery({ queryKey: ['organizations', 'all'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];
-  const counts = users.reduce((acc, u) => { acc[u.role] = (acc[u.role] || 0) + 1; return acc; }, {});
+  // Counted server-side out of everything in view except the role tile, so
+  // picking one tile never drops the others to zero.
+  const roleCounts = data?.roleCounts || {};
 
   const removeMut = useMutation({
     mutationFn: (id) => userApi.remove(id),
@@ -55,13 +60,36 @@ export default function Users() {
     onError: (e) => toast.error(e.response?.data?.message || 'Update failed'),
   });
 
-  const superAdmins = users.filter((u) => u.isSuperAdmin).length;
+  // Only the super admin's own login lists that account, so the tile counts from
+  // the server rather than from the rows — otherwise everyone else would be told
+  // there are none, when the truth is "there is one, and it is not yours to see".
+  const superAdmins = data?.superAdminCount ?? users.filter((u) => u.isSuperAdmin).length;
+  // Each tile IS its role filter — clicking one narrows the list, clicking it
+  // again clears it. `role` is what gets sent; null means the tile is a total
+  // rather than a filter.
   const stats = [
-    { label: 'Total Users', value: users.length, icon: UsersIcon, cls: 'text-brand-600 bg-brand-50 dark:bg-brand-500/10' },
-    { label: 'Super Admin', value: superAdmins, icon: ShieldCheck, cls: 'text-violet-600 bg-violet-50 dark:bg-violet-500/10' },
-    { label: 'Admins', value: counts.CEO || 0, icon: Crown, cls: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
-    { label: 'Users', value: counts.USER || 0, icon: UserIcon, cls: 'text-sky-600 bg-sky-50 dark:bg-sky-500/10' },
+    { label: 'Total Users', value: roleCounts.total ?? users.length, icon: UsersIcon, role: 'All', cls: 'text-brand-600 bg-brand-50 dark:bg-brand-500/10' },
+    {
+      label: 'Super Admin',
+      value: superAdmins,
+      icon: ShieldCheck,
+      // Only the super admin can open that account; for everyone else the tile
+      // states a fact and is not a filter, since it could only ever come back
+      // empty for them.
+      role: me?.isSuperAdmin ? 'SUPER' : null,
+      cls: 'text-violet-600 bg-violet-50 dark:bg-violet-500/10',
+      note: me?.isSuperAdmin ? null : 'Account details are private',
+    },
+    { label: 'Admins', value: roleCounts.CEO || 0, icon: Crown, role: 'CEO', cls: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
+    { label: 'Users', value: roleCounts.USER || 0, icon: UserIcon, role: 'USER', cls: 'text-sky-600 bg-sky-50 dark:bg-sky-500/10' },
   ];
+
+  // 'All' is the reset tile, so it is "active" only when nothing is filtered.
+  const tileActive = (s) => (s.role === 'All' ? filters.role === 'All' : filters.role === s.role);
+  const pickRole = (s) => {
+    if (!s.role) return;
+    setFilters({ ...filters, role: s.role === 'All' || filters.role === s.role ? 'All' : s.role });
+  };
 
   return (
     <div>
@@ -72,9 +100,25 @@ export default function Users() {
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {stats.map((s) => (
-          <Card key={s.label} className="flex items-center gap-3 p-4">
+          <Card
+            key={s.label}
+            {...(s.role ? {
+              role: 'button',
+              tabIndex: 0,
+              onClick: () => pickRole(s),
+              onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickRole(s); } },
+              title: s.role === 'All' ? 'Show everyone' : `Show only ${s.label}`,
+            } : {})}
+            className={cn('flex items-center gap-3 p-4',
+              s.role && 'cursor-pointer transition hover:-translate-y-0.5 hover:shadow-glow',
+              s.role && tileActive(s) && 'ring-2 ring-brand-500/40')}
+          >
             <div className={`rounded-xl p-2.5 ${s.cls}`}><s.icon className="h-5 w-5" /></div>
-            <div><p className="text-2xl font-extrabold text-slate-800 dark:text-white">{s.value}</p><p className="text-xs text-slate-400">{s.label}</p></div>
+            <div className="min-w-0">
+              <p className="text-2xl font-extrabold text-slate-800 dark:text-white">{s.value}</p>
+              <p className="text-xs text-slate-400">{s.label}</p>
+              {s.note && <p className="mt-0.5 text-[11px] leading-tight text-slate-400">{s.note}</p>}
+            </div>
           </Card>
         ))}
       </div>
@@ -86,7 +130,10 @@ export default function Users() {
         </div>
         <Select className="sm:w-44" value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })}>
           <option value="All">All Roles</option>
-          {ROLE_FILTERS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          {/* Filtering to Super Admin can only ever come back empty for anyone
+              but the super admin, so it is not offered to them. */}
+          {ROLE_FILTERS.filter((r) => r.value !== 'SUPER' || me?.isSuperAdmin)
+            .map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </Select>
         <Select className="sm:w-52" value={filters.organization} onChange={(e) => setFilters({ ...filters, organization: e.target.value })}>
           <option value="All">All colleges</option>
@@ -152,7 +199,7 @@ export default function Users() {
                         </div>
                       </td>
                       <td className="px-5 py-3">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${roleStyle(u)}`}><RoleIcon className="h-3 w-3" />{roleLabel(u)}</span>
+                        <span className={`inline-flex min-h-6 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold leading-none ${roleStyle(u)}`}><RoleIcon className="h-3 w-3" />{roleLabel(u)}</span>
                       </td>
                       <td className="px-5 py-3">
                         {u.organization ? (
@@ -163,7 +210,7 @@ export default function Users() {
                         ) : <span className="text-xs text-slate-400">— Global —</span>}
                       </td>
                       <td className="px-5 py-3">
-                        <Badge className={u.isActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
+                        <Badge className={u.isActive ? 'min-h-6 justify-center whitespace-nowrap leading-none bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'min-h-6 justify-center whitespace-nowrap leading-none bg-slate-100 text-slate-500 dark:bg-slate-800'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
                       </td>
                       <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{formatDate(u.createdAt)}</td>
                       <td className="px-5 py-3">
