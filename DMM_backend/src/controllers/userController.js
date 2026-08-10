@@ -182,12 +182,75 @@ export const listDesigners = asyncHandler(async (req, res) => {
   res.json({ success: true, designers });
 });
 
+/**
+ * @route GET /api/users/directory — who you work with, and how to reach them.
+ *
+ * Everyone can see the people in their own college. A DESIGNER sees more,
+ * because they are the one role that works across the whole network: briefs
+ * reach them from any college's coordinator, so that coordinator's number is the
+ * one they actually need. They also get the Admins over their college, who are
+ * who you escalate to.
+ *
+ * The super admin is never listed — see getUsers; other logins are told one
+ * exists and nothing more. Global oversight accounts (role ADMIN, e.g. the
+ * Chairman) are not part of a college's people either, so they stay out too:
+ * "Admin" here means the CEO who runs institutions.
+ */
+export const listDirectory = asyncHandler(async (req, res) => {
+  const me = req.user;
+  const ownOrg = me.organization?._id || me.organization || null;
+  // A social handler can serve colleges they do not belong to, through `handles`
+  // — those are their colleagues too.
+  const handled = (me.handles || []).map((h) => h.organization).filter(Boolean);
+  const myOrgs = [...new Set([ownOrg, ...handled].filter(Boolean).map(String))];
+
+  const isDesigner = me.role === ROLES.USER && me.userType === USER_TYPES.DESIGNER;
+  const clauses = [];
+  // Everyone: the people of the colleges I belong to or serve.
+  if (myOrgs.length) {
+    clauses.push({ organization: { $in: myOrgs } }, { 'handles.organization': { $in: myOrgs } });
+  }
+  if (isDesigner) {
+    // Every coordinator, whichever college — any of them can send this designer
+    // a brief, and they need to be able to talk to whoever did.
+    clauses.push({ role: ROLES.USER, userType: USER_TYPES.COORDINATOR });
+    // And the Admins who hold their college, by either route.
+    if (ownOrg) {
+      clauses.push({ role: ROLES.CEO, $or: [{ organization: ownOrg }, { managedOrganizations: ownOrg }] });
+    }
+  }
+  // An account attached to nothing would otherwise match everyone.
+  if (!clauses.length) return res.json({ success: true, count: 0, people: [] });
+
+  const query = {
+    isActive: true,
+    isSuperAdmin: { $ne: true },
+    // A global oversight account is not a colleague to list.
+    role: { $ne: ROLES.ADMIN },
+    $or: clauses,
+  };
+  const { search } = req.query;
+  if (search) {
+    const rx = { $regex: String(search), $options: 'i' };
+    query.$and = [{ $or: [{ name: rx }, { email: rx }, { jobTitle: rx }, { phone: rx }] }];
+  }
+
+  const people = await User.find(query)
+    // Exactly the columns the directory shows — nothing else leaves the server.
+    .select('name email phone avatar role userType jobTitle organization handles')
+    .populate('organization', 'name color')
+    .populate('handles.organization', 'name color')
+    .sort({ name: 1 })
+    .lean();
+
+  res.json({ success: true, count: people.length, people });
+});
+
 // @route GET /api/users  (ADMIN, or an Admin/CEO within their own institutions)
 // — list with search + role + organization filter
 export const getUsers = asyncHandler(async (req, res) => {
   const { search, role, organization } = req.query;
   const query = {};
-  if (role && role !== 'All') query.role = role;
   if (organization && organization !== 'All') query.organization = organization;
   if (search) query.$or = [
     { name: { $regex: search, $options: 'i' } },
@@ -208,8 +271,45 @@ export const getUsers = asyncHandler(async (req, res) => {
       { $or: [{ organization: { $in: allowed } }, { 'handles.organization': { $in: allowed } }] },
     ];
   }
-  const users = await User.find(query).populate('organization', 'name slug color').sort({ createdAt: -1 });
-  res.json({ success: true, count: users.length, users: users.map(sanitize) });
+  // The super admin's account is their own business: name, email and everything
+  // else stay private to them. Everyone else is told one EXISTS — a count, so
+  // they know who to escalate to — without a single detail of who it is. The
+  // exclusion is explicit rather than relying on the org scope above, which only
+  // happens to hide them because the account belongs to no college.
+  const viewerIsSuperAdmin = !!req.user.isSuperAdmin;
+  if (!viewerIsSuperAdmin) query.isSuperAdmin = { $ne: true };
+
+  // The role tile is applied to the LIST only, never to the counts — the tiles
+  // are how you pick a role, so counting out of the filtered list would zero
+  // every other tile the moment you clicked one.
+  //
+  // 'SUPER' is a tile, not a role value: the account carries the flag while its
+  // role is ADMIN, and role ADMIN also covers view-only oversight accounts. Only
+  // the super admin can list that account at all, so for anyone else the answer
+  // is an empty list rather than a filter that quietly matches everything.
+  let listQuery = query;
+  if (role && role !== 'All') {
+    if (role === 'SUPER') listQuery = viewerIsSuperAdmin ? { ...query, isSuperAdmin: true } : null;
+    else listQuery = { ...query, role };
+  }
+
+  const [users, total, ceoCount, userCount, superAdminCount] = await Promise.all([
+    listQuery
+      ? User.find(listQuery).populate('organization', 'name slug color').sort({ createdAt: -1 })
+      : [],
+    User.countDocuments(query),
+    User.countDocuments({ ...query, role: ROLES.CEO }),
+    User.countDocuments({ ...query, role: ROLES.USER }),
+    User.countDocuments({ isSuperAdmin: true, isActive: true }),
+  ]);
+
+  res.json({
+    success: true,
+    count: users.length,
+    superAdminCount,
+    roleCounts: { total, SUPER: superAdminCount, CEO: ceoCount, USER: userCount },
+    users: users.map(sanitize),
+  });
 });
 
 // @route POST /api/users  (ADMIN) — create a new user

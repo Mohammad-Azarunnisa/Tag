@@ -8,7 +8,7 @@ import { cn, formatDateTime, formatNumber, timeAgo } from '../lib/utils.js';
 
 const GAP = 4;
 const LABEL_W = 28;
-const MIN_STEP = 15; // smallest cell+gap before the grid scrolls horizontally
+const MIN_STEP = 12; // smallest cell+gap before the grid scrolls horizontally
 const MAX_STEP = 22; // largest, so squares never look oversized on wide screens
 const WEEKDAY_LABELS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -24,7 +24,9 @@ function useFitStep(ref, cols) {
     const measure = () => {
       const avail = el.clientWidth - LABEL_W;
       if (avail <= 0) return;
-      setStep(Math.max(MIN_STEP, Math.min(MAX_STEP, Math.floor(avail / cols))));
+      // Include inter-column gaps in the fit so the full year map aligns to width.
+      const fitted = Math.floor((avail + GAP) / cols);
+      setStep(Math.max(MIN_STEP, fitted));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -125,7 +127,7 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
   const scrollRef = useRef(null);
   const STEP = useFitStep(scrollRef, weeks.length);
   const CELL = STEP - GAP;
-  const gridWidth = weeks.length * STEP;
+  const gridWidth = Math.max(0, weeks.length * CELL + Math.max(0, weeks.length - 1) * GAP);
   const [r, g, b] = hexToRgb('#0A66C2');
   const fill = (lvl) => (lvl === 0 ? undefined : `rgba(${r},${g},${b},${LEVEL_ALPHA[lvl]})`);
   const months = useMemo(() => {

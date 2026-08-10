@@ -110,11 +110,12 @@ const DRAFT_TOOL = {
   input_schema: {
     type: 'object',
     properties: {
-      caption: { type: 'string', description: 'The ready-to-publish caption, written natively for the platform. No hashtags inside — put those in the hashtags array.' },
+      description: { type: 'string', description: 'The post description — the body copy that runs with the post, written natively for the platform. Fuller than the caption: set the context, the detail and the takeaway. No hashtags inside.' },
+      caption: { type: 'string', description: 'The ready-to-publish caption — the short hook that leads the post. No hashtags inside — put those in the hashtags array.' },
       hashtags: { type: 'array', items: { type: 'string' }, description: 'Relevant hashtags WITHOUT the # symbol, most relevant first.' },
-      description: { type: 'string', description: 'A one or two line internal note for the approver: the angle taken and any suggestion (best posting time, media idea). Keep it short.' },
+      note: { type: 'string', description: 'A one or two line internal note for the approver: the angle taken and any suggestion (best posting time, media idea). Not part of the post. Keep it short.' },
     },
-    required: ['caption', 'hashtags', 'description'],
+    required: ['description', 'caption', 'hashtags', 'note'],
   },
 };
 
@@ -149,7 +150,8 @@ export const aiDraft = asyncHandler(async (req, res) => {
 
   const orgLine = org ? `Organization: ${org.name}${org.description ? ` — ${org.description}` : ''}.` : 'Organization: a Nagarjuna group institution.';
   const prompt = [
-    `Write a ${platform} post.`,
+    `Write a ${platform} post: a description (the body copy), a caption (the short hook that leads it) and hashtags.`,
+    'The caption and the description must not repeat each other — the caption pulls the reader in, the description gives them the substance.',
     orgLine,
     `Platform style — ${PLATFORM_VOICE[platform] || 'Clear, engaging and platform-appropriate.'}`,
     title && `Topic / title: ${title}`,
@@ -174,9 +176,12 @@ export const aiDraft = asyncHandler(async (req, res) => {
       : [];
     res.json({
       success: true,
+      // The three pieces that go into the post…
+      description: String(out.description || '').trim(),
       caption: String(out.caption || '').trim(),
       hashtags: hashtags.join(', '),
-      description: String(out.description || '').trim(),
+      // …and the aside for whoever reviews it, which is not part of the post.
+      note: String(out.note || '').trim(),
       model: modelName(),
     });
   } catch (err) {

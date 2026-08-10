@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Check, Plus, ChevronLeft, ChevronRight, Palette, Sparkles, Loader2, Share2, PackageCheck, BriefcaseBusiness, Building2 } from 'lucide-react';
-import { approvalApi, organizationApi, aiApi, workAssignmentApi } from '../../api/endpoints.js';
+import { approvalApi, organizationApi, aiApi, workAssignmentApi, workflowApi } from '../../api/endpoints.js';
 import { useAuthStore } from '../../store/authStore.js';
 import { Modal } from '../ui/Modal.jsx';
 import { Button } from '../ui/Button.jsx';
@@ -12,6 +12,15 @@ import { UPLOAD_ACCEPT } from '../../lib/uploads.js';
 import { cn } from '../../lib/utils.js';
 
 const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
+
+// Channel badge for the per-channel copy headings, so the blocks are told apart
+// at a glance rather than by reading each label.
+const PLATFORM_TAG = {
+  LinkedIn: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+  Instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-300',
+  YouTube: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+  Facebook: 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
+};
 // Common social aspect ratios, with a hint of where each is used.
 const RATIOS = [
   { value: '1:1', label: '1:1 — Square (feed)' },
@@ -21,18 +30,40 @@ const RATIOS = [
   { value: '1.91:1', label: '1.91:1 — Link / landscape' },
 ];
 
-export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'POST', sourceDesignId = '' }) {
+// Shown against each linkable task so it is obvious which is which. Submitting
+// against OPEN work claims it, so there is nothing to do beforehand — the label
+// just says it has not been picked up yet.
+const WORK_STATE = {
+  OPEN: 'not started',
+  ACKNOWLEDGED: 'in progress',
+  SUBMITTED: 'awaiting approval',
+};
+
+export default function CreateApprovalModal({
+  onClose, onSaved, defaultType = 'POST', sourceDesignId = '',
+  // Arriving from "Send for approval" on a workflow item: the college already said
+  // what it wants, so the title comes in filled and the submission is tied back to
+  // that request, which moves it on to admin review.
+  workflowItemId = '', defaultTitle = '',
+}) {
   const { user } = useAuthStore();
   const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
   const isPrincipal = user?.role === 'CEO';
   const ownOrgId = user?.organization?._id || user?.organization || '';
-  // Coordinators AND principals raise DESIGN briefs; everyone else raises
-  // standalone POSTs. (A legacy ?compose flow still forces POST via sourceDesignId.)
-  const briefMode = (isCoordinator || isPrincipal) && !sourceDesignId;
-  const type = briefMode ? 'DESIGN' : 'POST';
   // A designer delivers artwork, so the post copy (caption / description /
   // hashtags) isn't theirs to write — whoever publishes it does that.
   const isDesignerUser = user?.role === 'USER' && user?.userType === 'DESIGNER';
+  // Coordinators AND principals raise DESIGN briefs for someone else to make.
+  // (A legacy ?compose flow still forces POST via sourceDesignId.)
+  const briefMode = (isCoordinator || isPrincipal) && !sourceDesignId;
+  // A designer submits a finished design of their own. That is a DESIGN
+  // approval too — it belongs in the Design Approvals pipeline, not Post
+  // Approvals — but there is no designer to pick, because they are the designer.
+  const ownDesignMode = isDesignerUser && !sourceDesignId;
+  // A social handler writing the post for a workflow item hands it in here.
+  const isHandlerUser = user?.role === 'USER' && user?.userType === 'SOCIAL_HANDLER';
+  // Everyone else raises standalone ready-to-publish POSTs.
+  const type = briefMode || ownDesignMode ? 'DESIGN' : 'POST';
   const noPostCopy = briefMode || isDesignerUser;
   // A brief has no channel at all. A designer MAY name one but is never forced
   // to; everyone else must pick at least one.
@@ -50,46 +81,206 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
-    title: '', platforms: [], caption: '', description: '', hashtags: '',
-    aspectRatios: [], organization: ownOrgId, designer: '', deliveryType: 'DIGITAL', workAssignment: '',
+    // perPlatform holds a { caption, description } per channel, used only when
+    // more than one is chosen. Keyed by channel so unticking and re-ticking one
+    // does not lose what was already written for it.
+    title: defaultTitle, platforms: [], caption: '', description: '', hashtags: '', perPlatform: {},
+    aspectRatios: [], organization: ownOrgId, designer: '', deliveryType: 'DIGITAL',
+    // 'wf:<id>' for a workflow item, 'wa:<id>' for a directly assigned task.
+    linkedWork: workflowItemId ? `wf:${workflowItemId}` : '',
   });
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [drafting, setDrafting] = useState(false);
+
+  // One channel keeps the single description/caption pair; two or more get one
+  // pair each, because the same post rarely reads the same everywhere.
+  const multiChannel = !noPostCopy && form.platforms.length > 1;
+  const setPerPlatform = (platform, field, value) => setForm((f) => ({
+    ...f,
+    perPlatform: { ...f.perPlatform, [platform]: { ...f.perPlatform[platform], [field]: value } },
+  }));
   const [tagoNote, setTagoNote] = useState('');
 
   // Any organization can be the target of an approval request (shared workspace).
   const { data: orgData } = useQuery({ queryKey: ['org-options'], queryFn: organizationApi.options });
   const orgs = orgData?.organizations || [];
 
+  // Only the channels the chosen college actually runs. Offering the full list
+  // invited posts for a platform the college has no presence on — and the handler
+  // then had nowhere to publish it. The server sends each college's own set with
+  // the picker options, so no extra call is needed.
+  const selectedOrg = orgs.find((o) => String(o._id) === String(form.organization));
+  const orgPlatforms = selectedOrg?.platforms?.length ? selectedOrg.platforms : null;
+  const platformChoices = (orgPlatforms || PLATFORMS).filter((p) => PLATFORMS.includes(p));
+
+  // Switching college can strand a channel the new one does not run, which would
+  // otherwise be submitted invisibly.
+  useEffect(() => {
+    if (!orgPlatforms) return;
+    setForm((f) => {
+      const kept = f.platforms.filter((p) => platformChoices.includes(p));
+      return kept.length === f.platforms.length ? f : { ...f, platforms: kept };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.organization, orgData]);
+
   // Designers the coordinator can hand the brief to.
   const { data: designerData } = useQuery({ queryKey: ['designers'], queryFn: approvalApi.designers, enabled: briefMode });
   const designers = designerData?.designers || [];
 
-  // Work this person has accepted but not finished — offered as an optional link
-  // so the reviewer knows which task the submission belongs to.
+  // Everything still open to this person, so they can say which task the
+  // submission is for. Only completed work is left out — that one is finished
+  // and signed off, so nothing new belongs against it. Asking the server for
+  // ACKNOWLEDGED alone used to hide work they had already submitted once, which
+  // is exactly what a re-submission needs to point at.
   const { data: workData } = useQuery({
-    queryKey: ['my-acknowledged-work'],
-    queryFn: () => workAssignmentApi.list({ status: 'ACKNOWLEDGED' }),
+    queryKey: ['my-linkable-work'],
+    queryFn: () => workAssignmentApi.list(),
   });
-  const myWork = workData?.assignments || [];
+  const myWork = (workData?.assignments || []).filter((w) => w.status !== 'DONE');
+
+  // Since the workflow boards landed, "my assigned work" is two things: the tasks
+  // handed out directly, and the design work picked up in Designs to be Done. Both
+  // belong in this picker or the list is only half the answer.
+  const { data: workflowData } = useQuery({
+    queryKey: ['my-linkable-workflow'],
+    queryFn: () => workflowApi.list({ mine: 1 }),
+    enabled: ownDesignMode || isHandlerUser,
+  });
+  // Only what this form can actually attach itself to: work that is mine, still
+  // waiting on me, and not already handed in. A designer hands in the artwork; a
+  // handler hands in the copy. Offering anything else would put options in the
+  // list that the server then refuses.
+  const myWorkflow = (workflowData?.items || []).filter((i) => (ownDesignMode
+    ? i.myRole === 'DESIGNER' && i.workflowStage === 'DESIGN_IN_PROGRESS' && !i.designApproval
+    : i.myRole === 'SOCIAL_HANDLER' && i.workflowStage === 'POST_IN_PROGRESS' && !i.postApproval));
+
+  // One picker, two sources, so the value has to say which it came from.
+  const linkedWorkOptions = [
+    ...myWorkflow.map((i) => ({
+      value: `wf:${i._id}`,
+      group: 'From the workflow',
+      label: [i.title, i.organization?.name, i.workCategory].filter(Boolean).join(' · '),
+    })),
+    ...myWork.map((w) => ({
+      value: `wa:${w._id}`,
+      group: 'Assigned to me',
+      label: [w.title, w.organization?.name, w.platform, WORK_STATE[w.status]].filter(Boolean).join(' · '),
+    })),
+  ];
+  const groups = [...new Set(linkedWorkOptions.map((o) => o.group))];
+
+  // A handler handing in post content inherits the designer's artwork server-side,
+  // so demanding an upload here would make them re-add the very files that are
+  // already coming across.
+  const pickedWorkflow = form.linkedWork.startsWith('wf:')
+    ? myWorkflow.find((i) => `wf:${i._id}` === form.linkedWork)
+    : null;
+  const inheritsDesignMedia = !!pickedWorkflow?.designApproval && pickedWorkflow.myRole === 'SOCIAL_HANDLER';
+
+  /**
+   * Linking the coordinator's request carries its title across.
+   *
+   * The college named the thing it asked for; the approval the admin reviews
+   * should carry that same name, or the two are the same piece of work under two
+   * titles. Filling it from the selection means the designer never retypes it,
+   * whether they arrived from "Send for approval" or picked the request here.
+   *
+   * `autoTitle` remembers what was filled in, so switching to another request
+   * updates the title, while anything the designer typed themselves survives.
+   */
+  const autoTitle = useRef(defaultTitle);
+  useEffect(() => {
+    if (!form.linkedWork.startsWith('wf:')) return;
+    const picked = myWorkflow.find((i) => `wf:${i._id}` === form.linkedWork);
+    if (!picked) return;
+
+    // The pages come across whatever the title says. These used to share one
+    // early return, so editing the title before the request loaded dropped the
+    // college's page selection on the floor — the handler then wrote copy for
+    // whichever single channel they re-picked, and the rest went out with none.
+    const pages = (picked.postPlatforms || []).filter((p) => PLATFORMS.includes(p));
+    // Decided out here, not inside the updater: React invokes updaters more than
+    // once, and moving the ref on from within one made the second pass read the
+    // new value, judge the title "touched", and keep the previous request's name.
+    const untouched = !form.title.trim() || form.title === autoTitle.current;
+    if (untouched) autoTitle.current = picked.title;
+
+    setForm((f) => ({
+      ...f,
+      ...(untouched ? { title: picked.title } : {}),
+      // The coordinator already said which pages this goes out on, so the handler
+      // does not choose again. Only channels this form knows about can be shown;
+      // anything else stays on the request itself, where the handler can read it.
+      platforms: f.platforms.length ? f.platforms : pages,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.linkedWork, workflowData]);
+
+  // A workflow item handed in through the URL may turn out not to be linkable —
+  // already submitted, no longer this person's, or this form is not the design
+  // form at all. Once the real list is in, drop a selection that is not on it, so
+  // nothing is submitted that the picker never showed.
+  useEffect(() => {
+    if (!form.linkedWork || !form.linkedWork.startsWith('wf:')) return;
+    // Wait for the list whenever it is being fetched at all — clearing the
+    // selection before it arrives would throw away a perfectly good hand-in.
+    if ((ownDesignMode || isHandlerUser) && !workflowData) return;
+    if (!linkedWorkOptions.some((o) => o.value === form.linkedWork)) {
+      setForm((f) => (f.linkedWork === form.linkedWork ? { ...f, linkedWork: '' } : f));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowData, ownDesignMode, form.linkedWork]);
 
   // Only offer AI drafting when the backend has an AI key configured.
   const { data: aiStatus } = useQuery({ queryKey: ['ai-status'], queryFn: aiApi.status, staleTime: 5 * 60 * 1000 });
   const aiReady = !!aiStatus?.configured;
 
-  const draftWithTago = async () => {
-    if (!form.title.trim() && !form.description.trim() && !form.caption.trim()) {
+  /**
+   * Draft the whole post with Tago: description, caption and hashtags.
+   *
+   * `platform` names which channel to write for — on a multi-channel post each
+   * block drafts for its own channel, because copy that reads well on LinkedIn
+   * is the wrong shape for Instagram. Whatever is already typed goes up as the
+   * brief, so this improves a draft rather than discarding it.
+   */
+  const draftWithTago = async (platform = form.platforms[0]) => {
+    const perChannel = !!platform && multiChannel;
+    const current = perChannel
+      ? (form.perPlatform[platform] || {})
+      : { description: form.description, caption: form.caption };
+
+    if (!form.title.trim() && !String(current.description || '').trim() && !String(current.caption || '').trim()) {
       toast.error('Add a title or a short brief first so Tago knows the topic'); return;
     }
-    setDrafting(true);
+    setDrafting(platform || true);
     try {
       const r = await aiApi.draft({
-        platform: form.platforms[0], organization: form.organization,
-        title: form.title, brief: form.description, caption: form.caption,
+        platform, organization: form.organization,
+        title: form.title, brief: current.description, caption: current.caption,
       });
-      setForm((f) => ({ ...f, caption: r.caption || f.caption, hashtags: r.hashtags || f.hashtags }));
-      setTagoNote(r.description || '');
+      if (perChannel) {
+        setForm((f) => ({
+          ...f,
+          perPlatform: {
+            ...f.perPlatform,
+            [platform]: {
+              description: r.description || f.perPlatform[platform]?.description || '',
+              caption: r.caption || f.perPlatform[platform]?.caption || '',
+            },
+          },
+          hashtags: r.hashtags || f.hashtags,
+        }));
+      } else {
+        setForm((f) => ({
+          ...f,
+          description: r.description || f.description,
+          caption: r.caption || f.caption,
+          hashtags: r.hashtags || f.hashtags,
+        }));
+      }
+      setTagoNote(r.note || '');
       toast.success('Tago drafted your copy — review and edit as you like');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not draft right now — try again in a moment');
@@ -125,8 +316,12 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
   };
 
   const submit = async () => {
-    // A design brief may have optional reference media; a post needs its final media.
-    if (!briefMode && images.length === 0) { toast.error('Please add at least one file'); return; }
+    // A design brief may have optional reference media; a post needs its final
+    // media — unless the design it is written around is coming across with it.
+    if (!briefMode && images.length === 0 && !inheritsDesignMedia) {
+      toast.error('Please add at least one file');
+      return;
+    }
     setLoading(true);
     try {
       const fd = new FormData();
@@ -140,24 +335,46 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
         fd.append('caption', form.caption);
         fd.append('hashtags', form.hashtags);
       }
+      // Several channels: send the pair written for each. The server keeps only
+      // the channels actually chosen and mirrors the primary one into
+      // caption/description, so single-caption readers are unaffected.
+      if (multiChannel) {
+        fd.append('platformContent', JSON.stringify(form.platforms.map((p) => ({
+          platform: p,
+          caption: form.perPlatform[p]?.caption || '',
+          description: form.perPlatform[p]?.description || '',
+        }))));
+      }
       form.aspectRatios.forEach((r) => fd.append('aspectRatios', r));
       if (briefMode) {
         fd.append('designer', form.designer);
         fd.append('deliveryMode', form.deliveryType);
       }
-      if (form.workAssignment) fd.append('workAssignment', form.workAssignment);
+      // The picker holds either kind; each goes up under its own name.
+      if (form.linkedWork.startsWith('wf:')) fd.append('workflowItem', form.linkedWork.slice(3));
+      else if (form.linkedWork.startsWith('wa:')) fd.append('workAssignment', form.linkedWork.slice(3));
       if (sourceDesignId) fd.append('sourceDesign', sourceDesignId);
       images.forEach((img) => fd.append('images', img));
       await approvalApi.create(fd);
       const chosen = designers.find((d) => d._id === form.designer);
-      toast.success(briefMode ? `Design brief sent to ${chosen?.name || 'the designer'}` : 'Post approval request submitted');
-      onSaved();
+      toast.success(
+        briefMode ? `Design brief sent to ${chosen?.name || 'the designer'}`
+          : ownDesignMode ? 'Design approval request submitted'
+            : 'Post approval request submitted'
+      );
+      // Hand back the pipeline this landed in, so the list can open on the tab
+      // that actually holds the new request.
+      onSaved(type);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Submission failed');
     } finally { setLoading(false); }
   };
 
-  const title = briefMode ? 'Raise a design brief' : sourceDesignId ? 'Create Post Approval Request' : 'Create Post Approval Request';
+  const title = briefMode
+    ? 'Raise a design brief'
+    : ownDesignMode
+      ? 'Create Design Approval Request'
+      : 'Create Post Approval Request';
 
   return (
     <Modal open onClose={onClose} title={title} size="lg">
@@ -233,7 +450,7 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
               </span>
             </span>
             <div className="flex flex-wrap gap-2">
-              {PLATFORMS.map((p) => {
+              {platformChoices.map((p) => {
                 const on = form.platforms.includes(p);
                 return (
                   <button
@@ -255,6 +472,11 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
                 );
               })}
             </div>
+            {platformChoices.length === 0 && (
+              <p className="mt-1.5 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                This college has no social pages set up yet — ask the admin to add them before raising a post for it.
+              </p>
+            )}
             {form.platforms.length > 1 && (
               <p className="mt-1.5 text-xs text-slate-400">
                 One request for {form.platforms.length} channels — <span className="font-semibold">{form.platforms[0]}</span> counts as the primary for analytics and goals.
@@ -263,29 +485,32 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
           </div>
           )}
 
-          {/* Optional: tie this submission to a task you've been assigned, so the
-              reviewer knows which piece of work they're checking. */}
-          {myWork.length > 0 && (
+          {/* Optional: tie this submission to work already on your plate, so the
+              reviewer knows which piece they are checking — and so signing it off
+              moves that work on rather than leaving it open behind this request. */}
+          {linkedWorkOptions.length > 0 && (
             <div>
               <Select
                 label="My assigned work (optional)"
-                value={form.workAssignment}
-                onChange={(e) => setForm({ ...form, workAssignment: e.target.value })}
+                value={form.linkedWork}
+                onChange={(e) => setForm({ ...form, linkedWork: e.target.value })}
               >
                 <option value="">— Not linked to assigned work —</option>
-                {myWork.map((w) => (
-                  <option key={w._id} value={w._id}>
-                    {w.title}
-                    {w.organization?.name ? ` · ${w.organization.name}` : ''}
-                    {w.platform ? ` · ${w.platform}` : ''}
-                  </option>
+                {groups.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {linkedWorkOptions.filter((o) => o.group === g).map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </Select>
               <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-400">
                 <BriefcaseBusiness className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                {form.workAssignment
-                  ? 'Approving this request will also mark that assigned work complete.'
-                  : 'Link the task this is for and the admin will see exactly which assigned work to check against.'}
+                {form.linkedWork.startsWith('wf:')
+                  ? 'This goes in as the design for that request — it moves on to the Admin for approval.'
+                  : form.linkedWork
+                    ? 'Approving this request will also mark that assigned work complete.'
+                    : 'Link the work this is for and the reviewer sees exactly what to check it against.'}
               </p>
             </div>
           )}
@@ -388,17 +613,26 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
                   </span>
                   <div>
                     <p className="text-sm font-bold text-slate-800 dark:text-white">Let Tago write it for you</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">On-brand {form.platforms[0]} caption &amp; hashtags from your title{form.description.trim() ? ' & brief' : ''}.</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {multiChannel
+                        ? `Description, caption & hashtags written for each channel — use the Tago button on any of the ${form.platforms.length} blocks below.`
+                        : `On-brand ${form.platforms[0]} description, caption & hashtags from your title${form.description.trim() ? ' & brief' : ''}.`}
+                    </p>
                   </div>
                 </div>
-                <button
-                  type="button" onClick={draftWithTago} disabled={drafting}
-                  className={cn('inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition',
-                    'bg-gradient-to-r from-brand-600 to-amber-500 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70')}
-                >
-                  {drafting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  {drafting ? 'Tago is writing…' : form.caption.trim() ? 'Redraft with Tago' : 'Draft with Tago'}
-                </button>
+                {/* On a multi-channel post the drafting happens per channel, on
+                    each block, so there is nothing sensible for one button here
+                    to write. */}
+                {!multiChannel && (
+                  <button
+                    type="button" onClick={() => draftWithTago()} disabled={!!drafting}
+                    className={cn('inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition',
+                      'bg-gradient-to-r from-brand-600 to-amber-500 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70')}
+                  >
+                    {drafting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {drafting ? 'Tago is writing…' : form.caption.trim() ? 'Redraft with Tago' : 'Draft with Tago'}
+                  </button>
+                )}
               </div>
               {tagoNote && (
                 <p className="mt-3 flex items-start gap-1.5 border-t border-brand-200/60 pt-2.5 text-xs text-slate-500 dark:border-brand-500/20 dark:text-slate-400">
@@ -408,8 +642,56 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
               )}
             </div>
           )}
-          <textarea className="input-base min-h-[90px]" placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <textarea className="input-base min-h-[70px]" placeholder="Caption" value={form.caption} onChange={(e) => setForm({ ...form, caption: e.target.value })} />
+          {/* One channel: one description and caption, as before. Several: the
+              same post rarely reads the same on all of them, so each gets its
+              own pair under its own heading. */}
+          {multiChannel ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                You picked {form.platforms.length} channels — write the copy for each. {form.platforms[0]} is the
+                primary, and its wording is what reports and analytics quote.
+              </p>
+              {form.platforms.map((p, i) => (
+                <div key={p} className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+                  <p className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
+                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-extrabold ${PLATFORM_TAG[p] || 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                      {p.slice(0, 2)}
+                    </span>
+                    {p}
+                    {i === 0 && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">Primary</span>}
+                    {/* Drafts this channel's copy in this channel's voice. */}
+                    {aiReady && (
+                      <button
+                        type="button" onClick={() => draftWithTago(p)} disabled={!!drafting}
+                        title={`Let Tago write the ${p} description, caption and hashtags`}
+                        className="ml-auto inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-brand-600 to-amber-500 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {drafting === p ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                        {drafting === p ? 'Writing…' : 'Tago'}
+                      </button>
+                    )}
+                  </p>
+                  <textarea
+                    className="input-base min-h-[80px]"
+                    placeholder={`Description for ${p}`}
+                    value={form.perPlatform[p]?.description || ''}
+                    onChange={(e) => setPerPlatform(p, 'description', e.target.value)}
+                  />
+                  <textarea
+                    className="input-base mt-2 min-h-[64px]"
+                    placeholder={`Caption for ${p}`}
+                    value={form.perPlatform[p]?.caption || ''}
+                    onChange={(e) => setPerPlatform(p, 'caption', e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <textarea className="input-base min-h-[90px]" placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              <textarea className="input-base min-h-[70px]" placeholder="Caption" value={form.caption} onChange={(e) => setForm({ ...form, caption: e.target.value })} />
+            </>
+          )}
           <Input label="Hashtags (comma or space separated)" value={form.hashtags} onChange={(e) => setForm({ ...form, hashtags: e.target.value })} placeholder="college, placement, success" />
         </div>
       )}
@@ -420,6 +702,15 @@ export default function CreateApprovalModal({ onClose, onSaved, defaultType = 'P
           <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
             {briefMode ? 'Reference material (optional) — logos, examples, raw photos' : 'Images & videos (drag & drop, multiple, reorderable)'}
           </span>
+          {inheritsDesignMedia && (
+            <p className="mb-3 flex items-start gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
+              <PackageCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                The approved design is attached automatically — add files here only if this post
+                needs something extra.
+              </span>
+            </p>
+          )}
           <FileDropzone multiple reorderable accept={UPLOAD_ACCEPT} files={images} onChange={setImages}
             label={briefMode ? 'Drop any reference files here (optional)' : 'Drop images or videos here or click to browse'} />
         </div>

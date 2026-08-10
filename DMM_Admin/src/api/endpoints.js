@@ -2,13 +2,18 @@ import api from './client.js';
 
 export const authApi = {
   setupStatus: () => api.get('/auth/setup-status').then((r) => r.data),
-  login: (data) => api.post('/auth/login', data).then((r) => r.data),
+  // `portal` tells the API this sign-in is for the console, so a non-admin
+  // account is refused there and pointed at the product app instead.
+  login: (data) => api.post('/auth/login', { ...data, portal: 'admin' }).then((r) => r.data),
   me: () => api.get('/auth/me').then((r) => r.data),
 };
 
 export const organizationApi = {
   list: (params) => api.get('/organizations', { params }).then((r) => r.data),
-  options: () => api.get('/organizations/options').then((r) => r.data),
+  // `{ scope: 'mine' }` narrows to the institutions the caller may actually act
+  // in — their own, plus anything granted to an Admin. Use it wherever offering
+  // a college they cannot touch would just produce an empty view or a refusal.
+  options: (params) => api.get('/organizations/options', { params }).then((r) => r.data),
   get: (id) => api.get(`/organizations/${id}`).then((r) => r.data),
   create: (formData) =>
     api.post('/organizations', formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
@@ -67,6 +72,9 @@ export const workAssignmentApi = {
   review: (id, action, note) => api.put(`/work-assignments/${id}/review`, { action, note }).then((r) => r.data),
   // Move unfinished work to someone else (super admin).
   reassign: (id, assigneeId) => api.put(`/work-assignments/${id}/reassign`, { assigneeId }).then((r) => r.data),
+  // Where signed-off work goes: a social handler posts it, or it goes back to
+  // the coordinator who raised the request.
+  handoff: (id, data) => api.put(`/work-assignments/${id}/handoff`, data).then((r) => r.data),
 };
 
 // What the colleges have asked the admin for, and the decisions on them.
@@ -77,7 +85,6 @@ export const institutionRequestApi = {
       ? api.post('/requests', data, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data)
       : api.post('/requests', data).then((r) => r.data)
   ),
-  respond: (id, action, response) => api.put(`/requests/${id}/respond`, { action, response }).then((r) => r.data),
   remove: (id) => api.delete(`/requests/${id}`).then((r) => r.data),
 };
 
@@ -118,7 +125,8 @@ export const analyticsApi = {
   report: (platform, organizationId, range, anchor, from, to) => api.get(`/analytics/${platform}/report`, { params: { organizationId, range, anchor, from, to } }).then((r) => r.data),
   compare: (platform, metric) => api.get('/analytics/compare', { params: { platform, metric } }).then((r) => r.data),
   overview: () => api.get('/analytics/overview').then((r) => r.data),
-  pulse: () => api.get('/analytics/pulse').then((r) => r.data),
+  // Headline numbers per organization for one platform (defaults to LinkedIn).
+  pulse: (platform) => api.get('/analytics/pulse', { params: { platform } }).then((r) => r.data),
   record: (data) => api.post('/analytics', data).then((r) => r.data),
   clear: (platform, organizationId) => api.delete('/analytics', { params: { platform, organizationId } }).then((r) => r.data),
   import: (formData) => api.post('/analytics/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
@@ -228,7 +236,8 @@ export const linkApi = {
 export const eventApi = {
   list: (params) => api.get('/events', { params }).then((r) => r.data),
   create: (formData) => api.post('/events', formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
-  update: (id, payload) => api.put(`/events/${id}`, payload).then((r) => r.data),
+  // FormData when a cover image is attached, plain JSON when it isn't.
+  update: (id, payload) => api.put(`/events/${id}`, payload, multipart(payload)).then((r) => r.data),
   addFiles: (id, formData) => api.post(`/events/${id}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
   remove: (id) => api.delete(`/events/${id}`).then((r) => r.data),
 };
@@ -249,7 +258,10 @@ export const signageApi = {
 
 // Premium packs / purchases — org-scoped (active org via header).
 export const purchaseApi = {
-  list: () => api.get('/purchases').then((r) => r.data),
+  // Pass { organizationId: 'all' } for the cross-college roll-up. Sending it as a
+  // param also stops the client interceptor pinning the request to the currently
+  // selected college via the x-organization-id header.
+  list: (params) => api.get('/purchases', { params }).then((r) => r.data),
   create: (data) => api.post('/purchases', data).then((r) => r.data),
   update: (id, data) => api.put(`/purchases/${id}`, data).then((r) => r.data),
   remove: (id) => api.delete(`/purchases/${id}`).then((r) => r.data),
@@ -322,4 +334,12 @@ export const notificationApi = {
   markRead: (id) => api.put(`/notifications/${id}/read`).then((r) => r.data),
   markAllRead: () => api.put('/notifications/read-all').then((r) => r.data),
   remove: (id) => api.delete(`/notifications/${id}`).then((r) => r.data),
+};
+
+// ---- Workflow: the design → post pipeline, for monitoring and for the admin's
+// own review at the two approval gates. Same endpoints the product app uses.
+export const workflowApi = {
+  list: (params) => api.get('/workflow', { params }).then((r) => r.data),
+  get: (id) => api.get(`/workflow/${id}`).then((r) => r.data),
+  review: (id, action, feedbackPoints) => api.put(`/workflow/${id}/review`, { action, feedbackPoints }).then((r) => r.data),
 };

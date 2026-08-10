@@ -193,30 +193,72 @@ export const getAnalyticsOverview = asyncHandler(async (req, res) => {
   res.json({ success: true, platforms, organizations });
 });
 
-// @route GET /api/analytics/pulse — the three headline LinkedIn numbers per
-// organization over the last 15 days (impressions, new followers, engagement
-// rate) plus the audience total. One call powers the dashboard pulse cards.
-// Windows are anchored per metric, same as the LinkedIn view.
+// Each platform counts "reach", "engagement" and "audience" out of different
+// fields, and calls them different things. The pulse reads one spec per platform
+// so the same three headline numbers can be shown for any of them, labelled the
+// way that platform labels them. `reach` and `gained` also name the field their
+// window is anchored on — exports for different tabs end on different dates, so
+// each metric ends at its own last-known-good day (same rule as the LinkedIn view).
+const PULSE_SPECS = {
+  LinkedIn: {
+    reachLabel: 'Impressions', gainedLabel: 'New followers', audienceLabel: 'Total followers',
+    reach: (s) => s.impressions || 0,
+    engagements: (s) => (s.clicks || 0) + (s.reactions || 0) + (s.comments || 0) + (s.reposts || 0),
+    gained: (s) => s.newFollowers || 0,
+    audience: (s) => s.followers || 0,
+  },
+  Instagram: {
+    reachLabel: 'Reach', gainedLabel: 'New followers', audienceLabel: 'Total followers',
+    // Meta reports reach; impressions is the fallback for older imported rows.
+    reach: (s) => s.reach || s.impressions || 0,
+    engagements: (s) => s.interactions || ((s.reactions || 0) + (s.comments || 0)),
+    gained: (s) => s.newFollowers || 0,
+    audience: (s) => s.followers || 0,
+  },
+  Facebook: {
+    reachLabel: 'Reach', gainedLabel: 'New followers', audienceLabel: 'Total followers',
+    reach: (s) => s.reach || s.impressions || 0,
+    engagements: (s) => s.interactions || ((s.reactions || 0) + (s.comments || 0) + (s.reposts || 0) + (s.linkClicks || 0)),
+    gained: (s) => s.newFollowers || 0,
+    audience: (s) => s.followers || 0,
+  },
+  YouTube: {
+    reachLabel: 'Views', gainedLabel: 'New subscribers', audienceLabel: 'Subscribers',
+    reach: (s) => s.views || 0,
+    engagements: (s) => (s.reactions || 0) + (s.comments || 0),
+    gained: (s) => s.newFollowers || 0,
+    audience: (s) => s.subscribers || s.followers || 0,
+  },
+};
+
+// @route GET /api/analytics/pulse?platform=LinkedIn — the three headline numbers
+// per organization over the last 15 days (reach, new audience, engagement rate)
+// plus the audience total. One call powers the dashboard pulse table.
+// Windows are anchored per metric, same as the LinkedIn view. Defaults to
+// LinkedIn so existing callers keep the response they already expect.
 export const getAnalyticsPulse = asyncHandler(async (req, res) => {
   const DAYS = 15;
+  const platform = PULSE_SPECS[req.query.platform] ? req.query.platform : 'LinkedIn';
+  const spec = PULSE_SPECS[platform];
   const orgs = await Organization.find({ isActive: true }).select('name color logo').sort({ name: 1 }).lean();
   const organizations = await Promise.all(orgs.map(async (org) => {
-    const snaps = await Analytics.find({ organization: org._id, platform: 'LinkedIn' }).sort({ date: -1 }).limit(500).lean();
+    const snaps = await Analytics.find({ organization: org._id, platform }).sort({ date: -1 }).limit(500).lean();
     const base = { organization: { _id: org._id, name: org.name, color: org.color, logo: org.logo } };
     if (!snaps.length) return { ...base, hasData: false };
 
-    const windowSum = (anchorField, sum) => {
-      const anchor = snaps.find((s) => (s[anchorField] || 0) > 0) || snaps[0];
+    // Window ending at the most recent day this metric actually reported.
+    const windowSum = (pick, sum) => {
+      const anchor = snaps.find((s) => pick(s) > 0) || snaps[0];
       const end = new Date(anchor.date).getTime();
       const rows = snaps.filter((s) => { const t = new Date(s.date).getTime(); return t <= end && t > end - DAYS * 86400000; });
       return sum(rows);
     };
-    const { impressions, engagements } = windowSum('impressions', (rows) => ({
-      impressions: rows.reduce((a, s) => a + (s.impressions || 0), 0),
-      engagements: rows.reduce((a, s) => a + (s.clicks || 0) + (s.reactions || 0) + (s.comments || 0) + (s.reposts || 0), 0),
+    const { impressions, engagements } = windowSum(spec.reach, (rows) => ({
+      impressions: rows.reduce((a, s) => a + spec.reach(s), 0),
+      engagements: rows.reduce((a, s) => a + spec.engagements(s), 0),
     }));
-    const newFollowers = windowSum('newFollowers', (rows) => rows.reduce((a, s) => a + (s.newFollowers || 0), 0));
-    const followers = snaps.find((s) => (s.followers || 0) > 0)?.followers || 0;
+    const newFollowers = windowSum(spec.gained, (rows) => rows.reduce((a, s) => a + spec.gained(s), 0));
+    const followers = snaps.map(spec.audience).find((v) => v > 0) || 0;
     return {
       ...base,
       hasData: true,
@@ -226,7 +268,13 @@ export const getAnalyticsPulse = asyncHandler(async (req, res) => {
       engagementRate: impressions > 0 ? +((engagements / impressions) * 100).toFixed(2) : 0,
     };
   }));
-  res.json({ success: true, days: DAYS, platform: 'LinkedIn', organizations });
+  res.json({
+    success: true,
+    days: DAYS,
+    platform,
+    labels: { reach: spec.reachLabel, gained: spec.gainedLabel, audience: spec.audienceLabel },
+    organizations,
+  });
 });
 
 // @route GET /api/analytics/:platform/report — rich report: latest, previous, WoW deltas, series

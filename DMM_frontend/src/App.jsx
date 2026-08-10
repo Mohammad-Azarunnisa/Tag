@@ -31,9 +31,12 @@ import SocialAnalytics from './pages/SocialAnalytics.jsx';
 import Reports from './pages/Reports.jsx';
 import Notifications from './pages/Notifications.jsx';
 import Settings from './pages/Settings.jsx';
+import Directory from './pages/Directory.jsx';
 import MyAssignedWork from './pages/MyAssignedWork.jsx';
 import TeamWork from './pages/TeamWork.jsx';
 import Requests from './pages/Requests.jsx';
+import WorkflowBoard from './pages/WorkflowBoard.jsx';
+import WorkflowDetail from './pages/WorkflowDetail.jsx';
 
 // Until a newly-created USER completes their profile (name, phone, skills,
 // tools, pages handled), every page redirects to /profile.
@@ -46,14 +49,20 @@ function ProfileGate({ children }) {
   return children;
 }
 
-// A coordinator runs one college: its content, events, signage, numbers, the
-// work they hand out, and the requests they raise. Everything here is scoped to
-// their own college by the server (middleware/auth.js pins the org); this list
-// only keeps them off pages that would be nothing but failed requests.
+// A coordinator runs one college: its content, events, signage, numbers, and the
+// requests they raise. Everything here is scoped to their own college by the
+// server (middleware/auth.js pins the org); this list only keeps them off pages
+// that would be nothing but failed requests.
+// Approvals are deliberately absent: a coordinator raises a request and reviews
+// what comes back through the Workflow module, which only ever shows them their
+// own asks. The approvals pipeline itself is the admins' and the makers'.
+// Team Work is absent for the same reason: allocating work to a designer or a
+// handler is the Admin's call, never the coordinator's.
 const COORDINATOR_ROUTES = [
-  /^\/dashboard/, /^\/approvals/, /^\/notifications/, /^\/profile/, /^\/settings/,
+  /^\/dashboard/, /^\/notifications/, /^\/profile/, /^\/settings/,
   /^\/templates/, /^\/assets/, /^\/brand-library/, /^\/events/, /^\/signage/,
-  /^\/social-analytics/, /^\/calendar/, /^\/planner/, /^\/team-work/, /^\/requests/,
+  /^\/social-analytics/, /^\/calendar/, /^\/planner/, /^\/requests/,
+  /^\/people/, /^\/workflow/,
 ];
 
 function CoordinatorGate({ children }) {
@@ -119,6 +128,9 @@ export default function App() {
         <Route path="/signage" element={<Signage />} />
         <Route path="/social-handlers" element={<SocialHandlers />} />
         <Route path="/premium-packs" element={<PremiumPacks />} />
+        <Route path="/workflow/designs" element={<WorkflowBoard board="DESIGN" />} />
+        <Route path="/workflow/to-be-posted" element={<WorkflowBoard board="POST" />} />
+        <Route path="/workflow/:id" element={<WorkflowDetail />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/approvals/:id" element={<ApprovalDetail />} />
         <Route path="/planner" element={<Planner />} />
@@ -128,6 +140,7 @@ export default function App() {
         <Route path="/approval-analytics" element={<ApprovalAnalytics />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/my-assigned-work" element={<MyAssignedWork />} />
+        <Route path="/people" element={<Directory />} />
         <Route path="/team-work" element={<TeamWork />} />
         <Route path="/requests" element={<Requests />} />
         <Route path="/notifications" element={<Notifications />} />

@@ -2,6 +2,7 @@ import express from 'express';
 import {
   getUsers,
   listHandlers,
+  listDirectory,
   listDesigners,
   createUser,
   getUser,
@@ -33,6 +34,9 @@ router.put('/settings', updateSettings);
 
 // Social-media handlers of an org (for allocating approved designs to post).
 // Registered before '/:id' so the path isn't swallowed by the param route.
+// Who you work with and how to reach them. Open to any signed-in account: the
+// controller decides whose details each caller may see.
+router.get('/directory', listDirectory);
 router.get('/handlers', authorize(ROLES.ADMIN, ROLES.CEO), listHandlers);
 // Designers a coordinator can pick when raising a design brief (any authenticated
 // user — coordinators are USER role). Before '/:id' for the same reason.

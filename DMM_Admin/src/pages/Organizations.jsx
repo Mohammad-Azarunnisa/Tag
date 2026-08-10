@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  Building2, Plus, Search, Pencil, Trash2, Users as UsersIcon, Send, Globe, Power, MoreVertical,
+  Building2, Plus, Search, Pencil, Trash2, Users as UsersIcon, Send, Globe, Power, MoreVertical, ImagePlus,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { organizationApi } from '../api/endpoints.js';
@@ -137,6 +137,8 @@ function OrgFormModal({ org, onClose, onSaved }) {
   const [loading, setLoading] = useState(false);
 
   const onLogo = (e) => { const f = e.target.files?.[0]; if (f) { setLogo(f); setPreview(URL.createObjectURL(f)); } };
+  // Drops the pick and goes back to whatever the organization already had.
+  const clearLogo = () => { setLogo(null); setPreview(org?.logo || ''); };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -160,17 +162,38 @@ function OrgFormModal({ org, onClose, onSaved }) {
   return (
     <Modal open onClose={onClose} title={org ? 'Edit Organization' : 'New Organization'}>
       <form onSubmit={submit} className="space-y-4">
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            {preview ? <img src={preview} alt="" className="h-16 w-16 rounded-2xl object-cover" />
-              : <div className="flex h-16 w-16 items-center justify-center rounded-2xl text-2xl font-extrabold text-white" style={{ background: form.color }}>{(form.name[0] || 'O').toUpperCase()}</div>}
-            <label className="absolute -bottom-1 -right-1 cursor-pointer rounded-full bg-brand-600 p-1.5 text-white hover:bg-brand-700">
-              <Pencil className="h-3 w-3" />
-              <input type="file" accept="image/*" className="hidden" onChange={onLogo} />
-            </label>
-          </div>
-          <div className="flex-1">
-            <Input label="Organization name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. NCT" />
+        <Input label="Organization name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. NCT" />
+
+        {/* Logo — spelled out rather than hidden behind a badge on the avatar,
+            which people were missing when creating an organization. */}
+        <div>
+          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
+            Logo <span className="font-normal text-slate-400">· optional</span>
+          </span>
+          <div className="flex items-center gap-4">
+            {preview ? (
+              <img src={preview} alt="" className="h-16 w-16 shrink-0 rounded-2xl object-cover" />
+            ) : (
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-2xl font-extrabold text-white" style={{ background: form.color }}>
+                {(form.name[0] || 'O').toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-brand-500/5">
+                <ImagePlus className="h-4 w-4 text-brand-600" />
+                {preview ? 'Change logo' : 'Upload logo'}
+                <input type="file" accept="image/*" className="hidden" onChange={onLogo} />
+              </label>
+              {logo && (
+                <button type="button" onClick={clearLogo}
+                  className="ml-2 rounded-xl px-2 py-2 text-sm font-medium text-slate-400 transition-colors hover:text-rose-600">
+                  Remove
+                </button>
+              )}
+              <p className="mt-1.5 truncate text-xs text-slate-400">
+                {logo ? logo.name : 'PNG, JPG or SVG. Falls back to the initial on the brand colour.'}
+              </p>
+            </div>
           </div>
         </div>
         <Input label="Website" value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder="https://..." />

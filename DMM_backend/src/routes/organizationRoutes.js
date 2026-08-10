@@ -23,10 +23,10 @@ router.get('/:id/goal', getOrganizationGoal);
 
 // Admins can VIEW organizations; only the super admin can create / edit / delete.
 router.route('/')
-  .get(authorize(ROLES.ADMIN), getOrganizations)
+  .get(authorize(ROLES.ADMIN, ROLES.CEO), getOrganizations)
   .post(requireSuperAdmin, upload.single('logo'), createOrganization);
 router.route('/:id')
-  .get(authorize(ROLES.ADMIN), getOrganization)
+  .get(authorize(ROLES.ADMIN, ROLES.CEO), getOrganization)
   .put(requireSuperAdmin, upload.single('logo'), updateOrganization)
   .delete(requireSuperAdmin, deleteOrganization);
 

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell, CheckCheck, Check, XCircle, RefreshCw, Send, FileText, Trash2, ClipboardList, UserCog,
-  MessageSquarePlus, CheckCircle2,
+  MessageSquarePlus, CheckCircle2, MessageSquare, Palette,
 } from 'lucide-react';
 import { notificationApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -28,6 +28,8 @@ const ICONS = {
   WORK_SUBMITTED: { icon: Send, color: 'text-violet-600 bg-violet-50 dark:bg-violet-500/10' },
   WORK_APPROVED: { icon: Check, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10' },
   WORK_REJECTED: { icon: XCircle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
+  WORK_ACKNOWLEDGED_ELSEWHERE: { icon: MessageSquare, color: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
+  DESIGN_REQUESTED: { icon: Palette, color: 'text-brand-600 bg-brand-50 dark:bg-brand-500/10' },
 };
 
 // Where a notification should take you when its stored link can't (older rows
@@ -37,6 +39,7 @@ const TYPE_FALLBACK = {
   WORK_ASSIGNED: '/my-assigned-work',
   WORK_APPROVED: '/my-assigned-work',
   WORK_REJECTED: '/my-assigned-work',
+  WORK_ACKNOWLEDGED_ELSEWHERE: '/my-assigned-work',
   PLAN_SUBMITTED: '/planner',
   PLAN_APPROVED: '/planner',
   PLAN_REJECTED: '/planner',
@@ -44,6 +47,7 @@ const TYPE_FALLBACK = {
   INSTITUTION_REQUEST: '/requests',
   REQUEST_APPROVED: '/requests',
   REQUEST_DECLINED: '/requests',
+  DESIGN_REQUESTED: '/workflow/designs',
 };
 
 // A link back to the notifications list is a dead end — fall back to the page

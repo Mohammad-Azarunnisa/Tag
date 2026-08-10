@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { ShoppingBag, Plus, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { purchaseApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
-import OrgPicker from '../components/OrgPicker.jsx';
+import OrgPicker, { ALL_ORGS } from '../components/OrgPicker.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
@@ -26,15 +26,21 @@ export default function Purchases() {
   return (
     <div>
       <PageHeader title="Premium Packs & Purchases" subtitle="Track what the design/marketing team has purchased — vendor, cost, and when it expires." />
-      <OrgPicker>{(orgId) => <Inner orgId={orgId} />}</OrgPicker>
+      <OrgPicker allowAll>{(orgId) => <Inner orgId={orgId} />}</OrgPicker>
     </div>
   );
 }
 
 function Inner({ orgId }) {
   const qc = useQueryClient();
+  // The roll-up spans colleges, so there is no single organization to add to or
+  // to save an edit against — it reads as a report rather than a worklist.
+  const allOrgs = orgId === ALL_ORGS;
   const key = ['purchases', orgId];
-  const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => purchaseApi.list() });
+  const { data, isLoading } = useQuery({
+    queryKey: key,
+    queryFn: () => purchaseApi.list(allOrgs ? { organizationId: ALL_ORGS } : undefined),
+  });
   const purchases = data?.purchases || [];
   const [modal, setModal] = useState(null);
 
@@ -46,25 +52,31 @@ function Inner({ orgId }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button size="sm" onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> Add purchase</Button>
+      <div className="flex items-center justify-end gap-3">
+        {allOrgs
+          ? <p className="text-xs text-slate-400">Every organization, soonest to expire first. Pick a single organization to add or edit.</p>
+          : <Button size="sm" onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> Add purchase</Button>}
       </div>
 
       {isLoading ? <Skeleton className="h-64" /> : purchases.length === 0 ? (
-        <EmptyState icon={ShoppingBag} title="No purchases yet" description="Add premium packs, stock subscriptions or tools the team has bought."
-          action={<Button size="sm" onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> Add purchase</Button>} />
+        <EmptyState icon={ShoppingBag} title="No purchases yet"
+          description={allOrgs
+            ? 'No organization has recorded a purchase yet.'
+            : 'Add premium packs, stock subscriptions or tools the team has bought.'}
+          action={!allOrgs && <Button size="sm" onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> Add purchase</Button>} />
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 text-left text-xs uppercase text-slate-400">
                 <th className="px-5 py-3 font-semibold">Item</th>
+                {allOrgs && <th className="px-5 py-3 font-semibold">Organization</th>}
                 <th className="px-5 py-3 font-semibold">Category</th>
                 <th className="px-5 py-3 font-semibold">Seats</th>
                 <th className="px-5 py-3 font-semibold">Cost</th>
                 <th className="px-5 py-3 font-semibold">Purchased</th>
                 <th className="px-5 py-3 font-semibold">Expires</th>
-                <th className="px-5 py-3 font-semibold text-right">Actions</th>
+                {!allOrgs && <th className="px-5 py-3 font-semibold text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
@@ -76,6 +88,14 @@ function Inner({ orgId }) {
                       <p className="font-semibold text-slate-700 dark:text-slate-200">{p.name}</p>
                       {p.vendor && <p className="text-xs text-slate-400">{p.vendor}</p>}
                     </td>
+                    {allOrgs && (
+                      <td className="px-5 py-3">
+                        <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: p.organization?.color || '#7c3aed' }} />
+                          {p.organization?.name || '—'}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-5 py-3 text-slate-600 dark:text-slate-300">{p.category}</td>
                     <td className="px-5 py-3 text-slate-600 dark:text-slate-300">{p.seats}</td>
                     <td className="px-5 py-3 text-slate-600 dark:text-slate-300">{p.cost ? `${p.currency} ${p.cost.toLocaleString()}` : '—'}</td>
@@ -88,12 +108,14 @@ function Inner({ orgId }) {
                         </span>
                       ) : '—'}
                     </td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="inline-flex gap-1">
-                        <button onClick={() => setModal({ type: 'edit', item: p })} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => window.confirm(`Remove "${p.name}"?`) && removeMut.mutate(p._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
-                      </div>
-                    </td>
+                    {!allOrgs && (
+                      <td className="px-5 py-3 text-right">
+                        <div className="inline-flex gap-1">
+                          <button onClick={() => setModal({ type: 'edit', item: p })} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
+                          <button onClick={() => window.confirm(`Remove "${p.name}"?`) && removeMut.mutate(p._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

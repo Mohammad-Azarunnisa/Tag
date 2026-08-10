@@ -24,7 +24,6 @@ export const listWebTasks = asyncHandler(async (req, res) => {
   if (organizationId && organizationId !== 'All') {
     query.organization = canAccessOrg(req.user, organizationId) ? organizationId : null;
   }
-  if (status && status !== 'All') query.status = status;
   if (taskType && taskType !== 'All') query.taskType = taskType;
   if (search) {
     const rx = { $regex: String(search), $options: 'i' };
@@ -37,9 +36,16 @@ export const listWebTasks = asyncHandler(async (req, res) => {
     if (isDay(to)) query.createdAt.$lte = new Date(`${to}T23:59:59.999Z`);
   }
 
-  const tasks = await populate(WebTask.find(query).sort({ createdAt: -1 })).lean({ virtuals: true });
+  // The status filter narrows the list only. Counting out of the narrowed list
+  // would report zero for every status the caller did not ask for, so the tallies
+  // are taken from the same scope minus the status.
+  const listQuery = (status && status !== 'All') ? { ...query, status } : query;
+  const [tasks, scoped] = await Promise.all([
+    populate(WebTask.find(listQuery).sort({ createdAt: -1 })).lean({ virtuals: true }),
+    WebTask.find(query).select('status').lean(),
+  ]);
   const counts = { OPEN: 0, IN_PROGRESS: 0, BLOCKED: 0, COMPLETED: 0 };
-  tasks.forEach((t) => { if (counts[t.status] !== undefined) counts[t.status] += 1; });
+  scoped.forEach((t) => { if (counts[t.status] !== undefined) counts[t.status] += 1; });
 
   res.json({ success: true, taskTypes: WEB_TASK_TYPES, statuses: WEB_TASK_STATUS, counts, tasks });
 });

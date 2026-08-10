@@ -21,6 +21,22 @@ export const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
 // analytics/competitor features (core 4 platforms) don't.
 export const SOCIAL_PLATFORMS = [...PLATFORMS, 'X (Twitter)'];
 
+/**
+ * Which requested work actually ends up on a social page.
+ *
+ * Only this work reaches the coordinator's "where should this be posted?" step
+ * and, from there, the To Be Posted board. Being digital is not enough: an LED
+ * screen design, a website slider or an email banner is digital and has no page
+ * to go on, so asking the college to pick Instagram for it is meaningless and
+ * would raise posting work no handler can honestly close.
+ *
+ * Matched on what the coordinator chose in the request form — the work category
+ * first, then a short list of items filed under another category that are still
+ * social posts in practice.
+ */
+export const SOCIAL_POST_WORK_CATEGORIES = ['Social Media'];
+export const SOCIAL_POST_WORK_ITEMS = ['Animated Social Media Posts'];
+
 // What a rejection feedback point asks the submitter to change. "Reject" means
 // the content is not salvageable rather than a specific fix.
 export const FEEDBACK_CATEGORIES = ['Image', 'Content', 'Other', 'Reject'];
@@ -97,6 +113,7 @@ export const NOTIFICATION_TYPES = {
   WORK_SUBMITTED: 'WORK_SUBMITTED',
   WORK_APPROVED: 'WORK_APPROVED',
   WORK_REJECTED: 'WORK_REJECTED',
+  WORK_ACKNOWLEDGED_ELSEWHERE: 'WORK_ACKNOWLEDGED_ELSEWHERE',
   // Approved content given a go-live time, and the reminder when it lands.
   POST_SCHEDULED: 'POST_SCHEDULED',
   // A college asking the admin for something, and the decision that comes back.

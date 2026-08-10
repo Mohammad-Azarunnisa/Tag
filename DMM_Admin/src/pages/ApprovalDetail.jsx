@@ -25,6 +25,7 @@ export default function ApprovalDetail() {
   const { user } = useAuthStore();
   const [rejectOpen, setRejectOpen] = useState(false);
   const [approveRouteOpen, setApproveRouteOpen] = useState(false);
+  const [approveWorkflowOpen, setApproveWorkflowOpen] = useState(false);
 
   // Live-chat feel: poll every 3s while the page is open (paused when the tab
   // is in the background), so a reviewer sees the submitter's replies and
@@ -85,14 +86,27 @@ export default function ApprovalDetail() {
   }
 
   const isViewer = !!user?.viewOnly; // Chairman: sees everything, changes nothing
-  const canDecide = !!user?.isSuperAdmin && !isViewer && (r.status === 'PENDING' || r.status === 'RESUBMITTED');
+  // Both administrators decide on content: the super admin anywhere, an Admin
+  // (CEO) inside the institutions they hold. The server settles which — its
+  // canDecideOn is exactly this pair, and a request they cannot access never
+  // reaches this page in the first place. Gating on isSuperAdmin alone meant an
+  // Admin could open a design submitted to them and find nothing to press.
+  const isAdministrator = !!user?.isSuperAdmin || user?.role === 'CEO';
+  const canDecide = isAdministrator && !isViewer && (r.status === 'PENDING' || r.status === 'RESUBMITTED');
+  // A workflow submission is not routed from here: approving it hands it to the
+  // coordinator who asked for the work, and they choose the pages. Asking "who
+  // should handle this?" would fork the pipeline and strand the request.
+  const wf = r.workflow || null;
   // An APPROVED request stays open and workable until someone marks it posted.
   // For a design that means after it has been allocated to a handler.
+  //
+  // Posting stays with the handler it was allocated to, or the super admin —
+  // that is what the server allows (markPosted), so it is not offered wider.
   const canMarkPosted = !!user?.isSuperAdmin && !isViewer && r.status === 'APPROVED'
     && (r.type !== 'DESIGN' || !!r.assignedTo);
   // Once a post is approved it needs a go-live time, so the system can mark it
   // posted on its own. A design has nothing to publish until it is allocated.
-  const canSchedule = !!user?.isSuperAdmin && !isViewer && r.status === 'APPROVED' && r.type !== 'DESIGN';
+  const canSchedule = isAdministrator && !isViewer && r.status === 'APPROVED' && r.type !== 'DESIGN';
   const needsSchedule = canSchedule && !r.scheduledAt;
 
   return (
@@ -119,7 +133,16 @@ export default function ApprovalDetail() {
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canDecide && (
             <>
-              <Button variant="success" onClick={() => setApproveRouteOpen(true)}><Check className="h-4 w-4" /> Approve</Button>
+              {/* A DESIGN is raw material — approving it raises the question of
+                  who publishes it, so that is asked. A POST is finished content
+                  whose author is the one who will put it out, so approving it is
+                  the whole decision and nothing further is asked. */}
+              <Button variant="success" loading={approveMut.isPending}
+                onClick={() => (wf ? setApproveWorkflowOpen(true)
+                  : r.type === 'DESIGN' ? setApproveRouteOpen(true)
+                    : approveMut.mutate({}))}>
+                <Check className="h-4 w-4" /> Approve
+              </Button>
               <Button variant="danger" onClick={() => setRejectOpen(true)}><X className="h-4 w-4" /> Request changes</Button>
             </>
           )}
@@ -173,6 +196,28 @@ export default function ApprovalDetail() {
 
       {rejectOpen && <RejectModal id={id} onClose={() => setRejectOpen(false)} onDone={() => { setRejectOpen(false); invalidate(); }} />}
 
+      {approveWorkflowOpen && (
+        <Modal open onClose={() => setApproveWorkflowOpen(false)} title="Approve and send to the coordinator?">
+          <div className="space-y-4">
+            <p className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
+              <UserCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Approving this will directly share the approval with
+                {' '}<span className="font-bold">{wf?.coordinatorName || 'the coordinator'}</span>, who asked for it.
+                They decide whether it is done or still needs changes
+                {wf?.half === 'DESIGN' ? ', and choose which pages it goes out on.' : '.'}
+              </span>
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setApproveWorkflowOpen(false)}>Cancel</Button>
+              <Button variant="success" loading={approveMut.isPending}
+                onClick={() => { setApproveWorkflowOpen(false); approveMut.mutate({}); }}>
+                <Check className="h-4 w-4" /> Approve and share
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {approveRouteOpen && <ApproveRoutingModal request={r} onClose={() => setApproveRouteOpen(false)} onApprove={(data) => approveMut.mutate(data)} saving={approveMut.isPending} />}
 
       {scheduleOpen && <ScheduleModal request={r} onClose={() => setScheduleOpen(false)} onDone={() => { setScheduleOpen(false); invalidate(); }} />}
@@ -277,7 +322,10 @@ function LifecycleCard({ r }) {
 // `deliveryMode` (DIGITAL = post to channels, PRINT = keep a copy) only decides
 // which one we visually lead with.
 function RoutingCard({ r, user, onChanged }) {
-  const isSuperAdmin = !!user?.isSuperAdmin;
+  // Whoever could approve it decides where it goes — the server's assign,
+  // deliver and forward routes all accept an Admin over the institution, so
+  // hiding this from them left approved work with nowhere to go.
+  const isSuperAdmin = !!user?.isSuperAdmin || user?.role === 'CEO';
   const isViewer = !!user?.viewOnly;
   const [allocateOpen, setAllocateOpen] = useState(false);
   const [delivering, setDelivering] = useState(false);
@@ -581,17 +629,50 @@ function DetailsCard({ r }) {
         {r.deliveredBy?.name && <DetailField label="Delivered by">{r.deliveredBy.name}</DetailField>}
         {r.deliveredAt && <DetailField label="Delivered on">{formatDateTime(r.deliveredAt)}</DetailField>}
       </div>
-      {r.caption && (
-        <div className="mt-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Caption</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm font-medium text-slate-700 dark:text-slate-200">{r.caption}</p>
+      {/* A post going to several channels carries a pair per channel, each under
+          the channel it belongs to — the reviewer is approving four different
+          pieces of copy, not one. A single-channel post keeps the plain pair. */}
+      {r.platformContent?.length > 0 ? (
+        <div className="mt-5 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Copy per channel · {r.platformContent.length}
+          </p>
+          {r.platformContent.map((row, i) => (
+            <div key={row.platform} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <p className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
+                {row.platform}
+                {i === 0 && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">Primary</span>}
+              </p>
+              {row.description && (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Description</p>
+                  <p className="mb-2 mt-0.5 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{row.description}</p>
+                </>
+              )}
+              {row.caption && (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Caption</p>
+                  <p className="mt-0.5 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{row.caption}</p>
+                </>
+              )}
+            </div>
+          ))}
         </div>
-      )}
-      {r.description && (
-        <div className="mt-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Description</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm font-medium text-slate-700 dark:text-slate-200">{r.description}</p>
-        </div>
+      ) : (
+        <>
+          {r.caption && (
+            <div className="mt-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Caption</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-medium text-slate-700 dark:text-slate-200">{r.caption}</p>
+            </div>
+          )}
+          {r.description && (
+            <div className="mt-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Description</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-medium text-slate-700 dark:text-slate-200">{r.description}</p>
+            </div>
+          )}
+        </>
       )}
       {r.hashtags?.length > 0 && (
         <div className="mt-5">
@@ -1061,10 +1142,16 @@ function ApproveRoutingModal({ request, onClose, onApprove, saving }) {
         </div>
       )}
 
-      <div className="mt-5 flex justify-end gap-2">
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
         <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+        {/* Routing can wait — the approved design shows the same choice again on
+            the page itself, so approving must not be held hostage to deciding it
+            now. */}
+        <Button variant="ghost" loading={saving} onClick={() => onApprove({})}>
+          Approve, decide later
+        </Button>
         <Button variant="success" loading={saving} disabled={!route} onClick={submit}>
-          <Check className="h-4 w-4" /> Approve
+          <Check className="h-4 w-4" /> Approve &amp; route
         </Button>
       </div>
     </Modal>

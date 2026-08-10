@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BriefcaseBusiness, Inbox, Search, Images as ImagesIcon, Clock, Play, RefreshCw, CheckCircle2, Send, X,
-  Palette, UserCheck, FileText,
+  XCircle, Palette, UserCheck, FileText,
 } from 'lucide-react';
 import { approvalApi, organizationApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -64,8 +64,6 @@ const TYPE_TABS = [
 
 const TABS = [
   { value: 'All', label: 'All' },
-  // REVIEW is the backend's combined PENDING + RESUBMITTED triage queue.
-  { value: 'REVIEW', label: 'Needs review' },
   // IN_DESIGN / DELIVERED only exist in the design pipeline, so they show only
   // when the Design tab is active.
   { value: 'IN_DESIGN', label: 'In design', design: true },
@@ -77,18 +75,20 @@ const TABS = [
   { value: 'DELIVERED', label: 'Delivered', design: true },
 ];
 
-// Stat tiles double as shortcuts to their status tab (Total -> All).
+// Stat tiles double as shortcuts to their status tab (Total -> All). `key` is
+// the count returned by the API (see approvalController#getApprovals), `tab` the
+// status filter the tile switches to.
 const TILES = [
   { key: 'ALL', tab: 'All', label: 'Total', icon: Inbox, tone: 'text-slate-400' },
   { key: 'PENDING', tab: 'PENDING', label: 'Pending', icon: Clock, tone: 'text-amber-500' },
   { key: 'RESUBMITTED', tab: 'RESUBMITTED', label: 'Resubmitted', icon: RefreshCw, tone: 'text-sky-500' },
   { key: 'APPROVED', tab: 'APPROVED', label: 'Approved', icon: CheckCircle2, tone: 'text-emerald-500' },
+  { key: 'REJECTED', tab: 'REJECTED', label: 'Rejected', icon: XCircle, tone: 'text-rose-500' },
   { key: 'POSTED', tab: 'POSTED', label: 'Posted', icon: Send, tone: 'text-violet-500' },
 ];
 
 const EMPTY_COPY = {
   All: 'No approval requests yet. Content submitted by any organization will appear here.',
-  REVIEW: 'Nothing is awaiting a decision right now.',
   IN_DESIGN: 'No designs are in progress with a designer right now.',
   PENDING: 'Nothing is awaiting review right now.',
   RESUBMITTED: 'No resubmissions are waiting for a second look.',
@@ -172,7 +172,7 @@ export default function Approvals() {
       <PageHeader
         title="Approvals"
         subtitle="As the head of all organizations, review approvals or assign work to designers and social handlers."
-        actions={<Button onClick={() => setShowAssign(true)}><BriefcaseBusiness className="h-4 w-4" /> Assign Work</Button>}
+        actions={<Button onClick={() => setShowAssign(true)}><BriefcaseBusiness className="h-4 w-4" /> Work Allocation</Button>}
       />
 
       {/* Pipeline switch: post approvals vs design approvals */}
@@ -197,7 +197,7 @@ export default function Approvals() {
       </div>
 
       {/* Stat tiles — click to jump to that status tab */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {TILES.map((t) => {
           const Icon = t.icon;
           const active = filters.status === t.tab;

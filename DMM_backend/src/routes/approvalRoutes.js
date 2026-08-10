@@ -34,11 +34,13 @@ router.put('/:id/claim', claimDesignRequest);
 // checked against the request's own college in the controller.
 router.put('/:id/approve', authorize(ROLES.ADMIN, ROLES.CEO), approveRequest);
 router.put('/:id/reject', authorize(ROLES.ADMIN, ROLES.CEO), rejectRequest);
-// After approval, the super admin routes the design: allocate it to a social
-// handler to post, or deliver it back to the coordinator.
-router.put('/:id/assign', authorize(ROLES.ADMIN), assignRequest);
-router.put('/:id/deliver', authorize(ROLES.ADMIN), deliverToCoordinator);
-router.put('/:id/forward', authorize(ROLES.ADMIN), forwardRequest);
+// After approval, the design is routed: allocated to a social handler to post,
+// or delivered back to the coordinator. Whoever could approve it decides — the
+// super admin anywhere, an Admin within the institutions they hold, which the
+// controllers check per request.
+router.put('/:id/assign', authorize(ROLES.ADMIN, ROLES.CEO), assignRequest);
+router.put('/:id/deliver', authorize(ROLES.ADMIN, ROLES.CEO), deliverToCoordinator);
+router.put('/:id/forward', authorize(ROLES.ADMIN, ROLES.CEO), forwardRequest);
 router.put('/:id/resubmit', upload.array('images', 10), resubmitRequest);
 router.put('/:id/schedule', scheduleRequest);
 router.put('/:id/posted', markPosted);

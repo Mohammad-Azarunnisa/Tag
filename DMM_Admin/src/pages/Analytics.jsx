@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Linkedin, Instagram, Youtube, Facebook, Save, BarChart3, PenLine, Trophy, Users, Upload, Download, FileSpreadsheet, Trash2, LayoutGrid, Zap, BadgeIndianRupee } from 'lucide-react';
@@ -83,6 +83,24 @@ function OrgAnalytics({ orgId, initialPlatform }) {
   const [mode, setMode] = useState((initialPlatform || 'LinkedIn') === 'LinkedIn' ? 'linkedin' : 'report');
   const [range, setRange] = useState(7);
   const fileRef = useRef(null);
+  const { data: overviewData } = useQuery({ queryKey: ['analytics-overview'], queryFn: analyticsApi.overview, staleTime: 5 * 60 * 1000 });
+
+  const platformEnabled = useMemo(() => {
+    const defaultFlags = Object.fromEntries(PLATFORMS.map((p) => [p.key, true]));
+    const org = overviewData?.organizations?.find((o) => o._id === orgId);
+    if (!org?.cells) return defaultFlags;
+    return Object.fromEntries(PLATFORMS.map((p) => [p.key, !!org.cells[p.key]?.exists]));
+  }, [overviewData, orgId]);
+
+  useEffect(() => {
+    if (platformEnabled[platform]) return;
+    const firstEnabled = PLATFORMS.find((p) => platformEnabled[p.key]);
+    if (firstEnabled) {
+      setPlatform(firstEnabled.key);
+      setMode(firstEnabled.key === 'LinkedIn' ? 'linkedin' : 'report');
+    }
+  }, [platform, platformEnabled]);
+
   const { data: report, isLoading } = useQuery({ queryKey: ['report', orgId, platform, range], queryFn: () => analyticsApi.report(platform, orgId, range) });
 
   // Competitor tracking is only offered for LinkedIn — fall back to the report
@@ -113,14 +131,17 @@ function OrgAnalytics({ orgId, initialPlatform }) {
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onPickFile} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          {PLATFORMS.map(({ key, icon: Icon, color }) => (
-            <button key={key} onClick={() => selectPlatform(key)}
+          {PLATFORMS.map(({ key, icon: Icon, color }) => {
+            const disabled = !platformEnabled[key];
+            return (
+            <button key={key} onClick={() => !disabled && selectPlatform(key)} disabled={disabled}
               className={cn('flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition',
-                platform === key ? 'border-transparent text-white shadow-soft' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand-300')}
+                platform === key ? 'border-transparent text-white shadow-soft' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand-300',
+                disabled && 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-70 hover:border-slate-200 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-500')}
               style={platform === key ? { background: color } : undefined}>
               <Icon className="h-4 w-4" /> {key}
             </button>
-          ))}
+          );})}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {mode === 'report' && (

@@ -16,6 +16,7 @@ export default function FileDropzone({ multiple = false, accept, files, onChange
   };
 
   const removeAt = (i) => onChange(files.filter((_, idx) => idx !== i));
+  const clearAll = () => onChange([]);
 
   // Reorder helpers (native HTML5 DnD)
   const onItemDrop = (targetIdx) => {
@@ -43,11 +44,26 @@ export default function FileDropzone({ multiple = false, accept, files, onChange
         <p className="text-sm font-medium text-slate-600 dark:text-slate-300">{label}</p>
         <p className="mt-1 text-xs text-slate-400">{multiple ? 'Images, videos, PDF, Office & Excel' : 'Single file'}{reorderable && files?.length > 1 ? ' · drag to reorder' : ''}</p>
         <input ref={inputRef} type="file" multiple={multiple} accept={accept} className="hidden"
-          onChange={(e) => handleFiles(e.target.files)} />
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            // Let users pick the same file again after removing it.
+            e.target.value = '';
+          }} />
       </div>
 
       {files?.length > 0 && (
         <div className="mt-3 space-y-2">
+          {multiple && files.length > 1 && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={clearAll}
+                className="rounded px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
           {files.map((f, i) => (
             <div
               key={i}

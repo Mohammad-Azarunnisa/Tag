@@ -55,8 +55,24 @@ const approvalRequestSchema = new mongoose.Schema(
     // The controller requires it for everyone else (see createApproval).
     platform: { type: String, enum: PLATFORMS },
     platforms: { type: [{ type: String, enum: PLATFORMS }], default: undefined },
+    // The copy. `caption`/`description` are what a single-channel post carries,
+    // and stay the primary channel's copy when there are several — everything
+    // that reads one caption (search, reports, the AI helpers) keeps working.
     caption: { type: String, default: '' },
     description: { type: String, default: '' },
+    // One post going to several channels does not read the same on all of them:
+    // a LinkedIn write-up is not an Instagram caption. When more than one channel
+    // is chosen the submitter writes a pair per channel, and this holds them —
+    // empty for a single-channel post, where the two fields above say it all.
+    platformContent: {
+      type: [{
+        platform: { type: String, enum: PLATFORMS, required: true },
+        caption: { type: String, default: '' },
+        description: { type: String, default: '' },
+        _id: false,
+      }],
+      default: undefined,
+    },
     sourceRequest: { type: mongoose.Schema.Types.ObjectId, ref: 'InstitutionRequest', default: null, index: true },
     // Optional: the assigned work this submission is the output of, so the
     // reviewer knows which task they are signing off against.
