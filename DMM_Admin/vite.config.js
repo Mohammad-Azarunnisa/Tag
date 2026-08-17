@@ -9,13 +9,17 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
   },
   server: {
-    port: 3002,
+    host: '0.0.0.0',
+    port: 3001,
+    allowedHosts: ['tag.ncet.co.in'],
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/uploads': 'http://localhost:5000',
+      '/api': 'http://localhost:3002',
+      '/uploads': 'http://localhost:3002',
     },
   },
   preview: {
+    host: '0.0.0.0',
+    port: 3001,
     allowedHosts: ['tag.ncet.co.in'],
   },
 });
