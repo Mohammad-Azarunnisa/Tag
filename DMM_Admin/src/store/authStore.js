@@ -1,10 +1,18 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import { authApi } from '../api/endpoints.js';
 import { TOKEN_KEY } from '../api/client.js';
 import { useOrgStore } from './orgStore.js';
 
 // Raised when a non-admin tries to sign in to the admin portal.
+// The session is deliberately kept in sessionStorage, not localStorage:
+// localStorage is shared by every window and tab of the browser profile, so
+// opening the console in a second window silently inherited the previous login
+// and never asked for credentials. sessionStorage is scoped to one window, so
+// each new window starts signed out, while a refresh in the current window
+// still keeps you where you were.
+const sessionStore = () => sessionStorage;
+
 export class NotAdminError extends Error {
   constructor() {
     super('This portal is for administrators only.');
@@ -16,19 +24,19 @@ export const useAuthStore = create(
   persist(
     (set, get) => ({
       user: null,
-      token: localStorage.getItem(TOKEN_KEY) || null,
+      token: sessionStorage.getItem(TOKEN_KEY) || null,
 
       login: async (email, password) => {
         const data = await authApi.login({ email, password });
         // The super admin and institution Admins (role CEO) both belong here.
         if (!['ADMIN', 'CEO'].includes(data.user.role)) throw new NotAdminError();
-        localStorage.setItem(TOKEN_KEY, data.token);
+        sessionStorage.setItem(TOKEN_KEY, data.token);
         set({ user: data.user, token: data.token });
         return data.user;
       },
 
       logout: () => {
-        localStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_KEY);
         set({ user: null, token: null });
         // Don't let the next person on this machine inherit the previous
         // admin's selected organization.
@@ -36,20 +44,20 @@ export const useAuthStore = create(
       },
 
       fetchMe: async () => {
-        const token = localStorage.getItem(TOKEN_KEY);
+        const token = sessionStorage.getItem(TOKEN_KEY);
         if (!token) return null;
         try {
           const data = await authApi.me();
           // Guard: if this account no longer administers anything, drop the session.
           if (!['ADMIN', 'CEO'].includes(data.user.role)) {
-            localStorage.removeItem(TOKEN_KEY);
+            sessionStorage.removeItem(TOKEN_KEY);
             set({ user: null, token: null });
             return null;
           }
           set({ user: data.user, token });
           return data.user;
         } catch {
-          localStorage.removeItem(TOKEN_KEY);
+          sessionStorage.removeItem(TOKEN_KEY);
           set({ user: null, token: null });
           return null;
         }
@@ -59,6 +67,7 @@ export const useAuthStore = create(
     }),
     {
       name: 'dmm-admin-auth',
+      storage: createJSONStorage(sessionStore),
       partialize: (s) => ({ user: s.user, token: s.token }),
     }
   )

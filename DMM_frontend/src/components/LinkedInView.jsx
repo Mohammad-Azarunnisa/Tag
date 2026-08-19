@@ -29,6 +29,7 @@ const TABS = [
 const RANGES = [
   { value: 15, label: 'Last 15 days' },
   { value: 30, label: 'Last 30 days' },
+  { value: 45, label: 'Last 45 days' },
   { value: 90, label: 'Last 90 days' },
   { value: 365, label: 'Last 365 days' },
   { value: 'custom', label: 'Custom' },
@@ -516,7 +517,7 @@ function PostsTable({ posts }) {
         <h3 className="font-bold text-slate-800 dark:text-white">Post performance <span className="text-sm font-normal text-slate-400">({posts.length} posts)</span></h3>
         <div className="relative w-full max-w-[220px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search posts…" className="input-base h-9 pl-9 text-sm" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search posts…" className="input-base py-1 h-9 pl-9 text-sm" />
         </div>
       </div>
       {rows.length === 0 ? (
@@ -667,7 +668,7 @@ function BaselineSync({ orgId, currentTotal, onSynced }) {
       </div>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); syncMut.mutate(); }}>
         <input type="number" min="1" value={value} onChange={(e) => setValue(e.target.value)}
-          placeholder="e.g. 11172" className="input-base h-10 w-36" />
+          placeholder="e.g. 11172" className="input-base py-1 h-10 w-36" />
         <Button size="sm" type="submit" disabled={!Number(value)} loading={syncMut.isPending} style={{ background: LI_BLUE }}>
           <CheckCircle2 className="h-4 w-4" /> Sync
         </Button>

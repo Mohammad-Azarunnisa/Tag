@@ -13,8 +13,21 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// A session used to live in localStorage, which is shared by every window of the
+// browser profile — so a second window inherited the last login instead of
+// asking for it. Sessions are per-window now (see store/authStore.js), which
+// leaves any pre-existing localStorage copy as dead data that could still let
+// someone back into an account the user believes is closed. Clear it once, on
+// first load after the change.
+try {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem('dmm-admin-auth');
+} catch {
+  // Storage can be unavailable (private mode / blocked cookies) — nothing to clean.
+}
+
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = sessionStorage.getItem(TOKEN_KEY);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   // Attach the admin's currently-selected organization for org-scoped endpoints,
   // unless the call already specifies one explicitly.
@@ -34,7 +47,10 @@ api.interceptors.response.use(
   (err) => {
     const status = err.response?.status;
     if (status === 401 && !err.config?.url?.includes('/auth/login')) {
-      localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
+      // Drop the zustand-persisted session too, so a reload can't rehydrate a
+      // stale user + token behind an invalid session.
+      sessionStorage.removeItem('dmm-admin-auth');
       if (window.location.pathname !== LOGIN_PATH) window.location.href = LOGIN_PATH;
     }
     // View-only (Chairman) accounts are hard-blocked from any write on the

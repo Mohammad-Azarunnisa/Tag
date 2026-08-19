@@ -15,6 +15,12 @@ const idOf = (v) => String(v?._id || v || '');
  */
 export const accessibleOrgIds = (user) => {
   if (user?.role === ROLES.ADMIN) return null;
+  // `protect` (middleware/auth.js) has already resolved which of the user's
+  // organizations are still enabled. Preferring that list is what makes a
+  // disabled college vanish from every org-scoped query at once, instead of each
+  // controller having to remember to check.
+  const live = user?.$locals?.liveOrgIds;
+  if (Array.isArray(live)) return live;
   const own = idOf(user?.organization);
   const granted = (user?.managedOrganizations || []).map(idOf);
   return [...new Set([own, ...granted].filter(Boolean))];
@@ -63,7 +69,18 @@ export const resolveOrgId = (req) => {
     const asked = req.query.organizationId || req.body?.organization || req.headers['x-organization-id'];
     if (asked && canAccessOrg(req.user, asked)) return asked;
   }
+  // The fallback is "their own institution" — but if that one has been disabled,
+  // returning it would serve data from a college that is supposed to be hidden.
+  // An Admin can hold several, so prefer their own when it is live and otherwise
+  // any live one they hold. (A plain USER whose single college is disabled never
+  // reaches here: `protect` turns the request away outright.)
   const org = req.user.organization;
+  const own = idOf(org);
+  const live = req.user?.$locals?.liveOrgIds;
+  if (Array.isArray(live)) {
+    if (own && live.includes(own)) return own;
+    return live[0] || null;
+  }
   return org?._id || org || null;
 };
 

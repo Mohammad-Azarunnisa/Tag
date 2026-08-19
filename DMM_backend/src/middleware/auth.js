@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import { verifyToken } from '../utils/token.js';
 import User from '../models/User.js';
+import Organization from '../models/Organization.js';
 import { ROLES, USER_TYPES } from '../config/constants.js';
 
 export const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
@@ -117,6 +118,36 @@ export const protect = asyncHandler(async (req, res, next) => {
     res.status(401);
     throw new Error('Not authorized, user not found');
   }
+
+  // A disabled organization has to disappear for its people immediately, not at
+  // their next sign-in. Login already refuses one, but a token handed out before
+  // the switch was flipped stayed valid for its whole lifetime — so the check
+  // belongs here, on the path every authenticated request takes.
+  //
+  // The super admin is exempt: they hold no organization, and theirs is the
+  // account that turns one back on. An Admin (role CEO) may hold several
+  // institutions, so they are only turned away when *every* one they hold is
+  // disabled; otherwise they stay in and the disabled ones are dropped from
+  // their scope below, which is what hides that college's data without taking
+  // the live ones away too.
+  if (user.role !== ROLES.ADMIN) {
+    const held = [user.organization?._id || user.organization, ...(user.managedOrganizations || [])]
+      .map((v) => String(v?._id || v || ''))
+      .filter(Boolean);
+    let live = [];
+    if (held.length) {
+      const rows = await Organization.find({ _id: { $in: held }, isActive: { $ne: false } }).select('_id').lean();
+      live = rows.map((o) => String(o._id));
+      if (!live.length) {
+        res.status(403);
+        throw new Error('Your organization has been disabled. Contact your administrator.');
+      }
+    }
+    // Read by accessibleOrgIds (utils/org.js), which every org-scoped query
+    // funnels through, so a disabled college drops out of reads and writes alike.
+    user.$locals.liveOrgIds = live;
+  }
+
   req.user = user;
 
   // View-only accounts (e.g. the Chairman) may read anything but must never

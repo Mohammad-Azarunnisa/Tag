@@ -358,7 +358,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
                     <span className="text-xs font-semibold text-rose-500">pick at least one</span>
                   )}
                 </div>
-                <input className="input-base mt-2 h-9 text-xs" placeholder="Notes for this post (optional) — caption idea, asset to use…"
+                <input className="input-base py-1 mt-2 h-9 text-xs" placeholder="Notes for this post (optional) — caption idea, asset to use…"
                   value={it.notes} onChange={(e) => setItem(idx, { notes: e.target.value })} />
               </div>
             ))}

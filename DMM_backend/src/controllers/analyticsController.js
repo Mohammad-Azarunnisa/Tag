@@ -284,9 +284,13 @@ export const getPlatformReport = asyncHandler(async (req, res) => {
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('Invalid platform'); }
 
   // Window length for the period comparison, matching LinkedIn's range presets
-  // (Past 7 / 14 / 28 / 90 / 365 days, plus 30 and 180). Defaults to 7.
+  // (Past 7 / 14 / 28 / 90 / 365 days, plus 15, 30, 45 and 180). Defaults to 7.
   // "This period" = the most recent N days; "last period" = the N days before.
-  const ALLOWED_RANGES = [7, 14, 15, 28, 30, 90, 180, 365];
+  //
+  // This is a whitelist, not a clamp, so a value missing from it does not error —
+  // it silently becomes 7 days, and the UI shows a week's figures under another
+  // label. Any preset offered by the range picker has to be listed here.
+  const ALLOWED_RANGES = [7, 14, 15, 28, 30, 45, 90, 180, 365];
   let rangeDays = ALLOWED_RANGES.includes(Number(req.query.range)) ? Number(req.query.range) : 7;
 
   // Custom window (LinkedIn's "Custom" range picker): explicit ?from=YYYY-MM-DD

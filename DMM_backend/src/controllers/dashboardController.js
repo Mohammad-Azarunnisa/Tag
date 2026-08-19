@@ -112,22 +112,44 @@ export const getDashboardCharts = asyncHandler(async (req, res) => {
     });
   }
 
-  // Followers trend across platforms (area) — from this org's Analytics series
-  const followerSeries = await Analytics.aggregate([
+  // Followers trend across platforms — from this org's Analytics series.
+  //
+  // A follower count is a running total, not a daily event: if a platform was
+  // not synced on some day, the audience did not vanish, it is simply unchanged.
+  // The `$cond` fallback here used to be 0, which meant every date holding only
+  // (say) a LinkedIn row plotted Instagram, Facebook and YouTube at zero — and
+  // because LinkedIn syncs daily while the others do not, the chart collapsed
+  // into a sawtooth that crashed to the axis between every real reading.
+  // Missing days now yield null from the aggregation and the last known value is
+  // carried forward below, so each point reads "audience as at this date".
+  const followerDays = await Analytics.aggregate([
     { $match: { organization: oid } },
     { $sort: { date: 1 } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
-        LinkedIn: { $max: { $cond: [{ $eq: ['$platform', 'LinkedIn'] }, '$followers', 0] } },
-        Instagram: { $max: { $cond: [{ $eq: ['$platform', 'Instagram'] }, '$followers', 0] } },
-        Facebook: { $max: { $cond: [{ $eq: ['$platform', 'Facebook'] }, '$followers', 0] } },
-        YouTube: { $max: { $cond: [{ $eq: ['$platform', 'YouTube'] }, '$subscribers', 0] } },
+        LinkedIn: { $max: { $cond: [{ $eq: ['$platform', 'LinkedIn'] }, '$followers', null] } },
+        Instagram: { $max: { $cond: [{ $eq: ['$platform', 'Instagram'] }, '$followers', null] } },
+        Facebook: { $max: { $cond: [{ $eq: ['$platform', 'Facebook'] }, '$followers', null] } },
+        YouTube: { $max: { $cond: [{ $eq: ['$platform', 'YouTube'] }, '$subscribers', null] } },
       },
     },
     { $sort: { _id: 1 } },
     { $project: { _id: 0, date: '$_id', LinkedIn: 1, Instagram: 1, Facebook: 1, YouTube: 1 } },
   ]);
+
+  // Carry the last reading forward per platform. Dates before a platform's first
+  // ever snapshot stay null so the line starts where its history starts, rather
+  // than inventing a flat run back to the beginning of the chart.
+  const lastSeen = { LinkedIn: null, Instagram: null, Facebook: null, YouTube: null };
+  const followerSeries = followerDays.map((day) => {
+    const point = { date: day.date };
+    for (const platform of Object.keys(lastSeen)) {
+      if (day[platform] != null) lastSeen[platform] = day[platform];
+      point[platform] = lastSeen[platform];
+    }
+    return point;
+  });
 
   res.json({ success: true, charts: { statusDistribution, platformDistribution, monthlyTrend, followerSeries } });
 });

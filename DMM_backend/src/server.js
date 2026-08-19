@@ -7,7 +7,7 @@ import app from './app.js';
 import connectDB from './config/db.js';
 import { seedSuperAdmin } from './config/seedSuperAdmin.js';
 import { ensureStorageReady } from './config/storage.js';
-import { startDailyAnalyticsScheduler } from './services/dailyAnalyticsRefresh.js';
+import { startDailyAnalyticsScheduler, catchUpIfMissed } from './services/dailyAnalyticsRefresh.js';
 import { startScheduledPostWatcher } from './services/scheduledPosts.js';
 import { provider as aiProvider, modelName as aiModel } from './services/aiService.js';
 import { startMonthlyReportScheduler } from './services/monthlyReport.js';
@@ -36,6 +36,13 @@ const start = async () => {
   if (process.env.DISABLE_DAILY_ANALYTICS_REFRESH !== 'true') {
     startDailyAnalyticsScheduler();
     console.log(`   Daily analytics refresh scheduled at ${process.env.DAILY_ANALYTICS_REFRESH_TIME || '02:00'} UTC`);
+    // The scheduler is a timer in this process, so a day when the server was
+    // down or mid-deploy at that minute is simply skipped — and those readings
+    // cannot be fetched afterwards, because the platform APIs only report
+    // current totals. Asking on every boot whether today has run yet, and
+    // running it when it has not, is what keeps the history free of holes.
+    // Deliberately not awaited: a slow platform API must not hold up the server.
+    catchUpIfMissed();
   }
 
   // Let in-flight requests finish and close the DB connection cleanly on

@@ -10,6 +10,7 @@ import ActivityHeatmap from '../components/ActivityHeatmap.jsx';
 import SocialPostsTable from '../components/SocialPostsTable.jsx';
 import SocialPostSummary from '../components/SocialPostSummary.jsx';
 import { cn, isCoordinatorUser } from '../lib/utils.js';
+import { sortOrganizations } from '../lib/organizations.js';
 
 const PLATFORMS = [
   { key: 'LinkedIn', icon: Linkedin, color: '#0A66C2' },
@@ -28,10 +29,16 @@ export default function SocialAnalytics() {
   // A coordinator has one college, so there is nothing to switch between — and
   // the server would refuse another college anyway.
   const oneCollege = isCoordinatorUser(user);
+  // `scope: 'mine'` is load-bearing, not a tidy-up. The server resolves the
+  // requested college through resolveViewOrgId(), which silently falls back to
+  // the caller's own organization when they may not read the one asked for — so
+  // listing every college here meant picking another one appeared to work while
+  // the page still showed your own college's numbers under the new name. Offering
+  // only what the server will honour makes the switch mean what it says.
   const { data: orgData } = useQuery({
-    queryKey: ['org-options'], queryFn: organizationApi.options, enabled: !oneCollege,
+    queryKey: ['org-options', 'mine'], queryFn: () => organizationApi.options({ scope: 'mine' }), enabled: !oneCollege,
   });
-  const orgs = orgData?.organizations || [];
+  const orgs = sortOrganizations(orgData?.organizations);
   // Admins have no org of their own — default to the first one instead of an
   // empty page (the select already displays it; keep state in sync).
   useEffect(() => {
@@ -60,8 +67,8 @@ export default function SocialAnalytics() {
             </button>
           ))}
         </div>
-        {!oneCollege && (
-          <select className="input-base h-10 w-auto cursor-pointer text-sm font-semibold" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+        {!oneCollege && orgs.length > 1 && (
+          <select className="input-base py-1 h-10 w-auto cursor-pointer text-sm font-semibold" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
             {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
           </select>
         )}

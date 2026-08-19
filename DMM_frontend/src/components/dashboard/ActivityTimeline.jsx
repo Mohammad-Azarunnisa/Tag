@@ -2,7 +2,7 @@ import {
   Upload, CheckCircle2, XCircle, Send, RefreshCw, FileImage, Activity, MessageSquare, UserCog, BarChart3, BriefcaseBusiness,
 } from 'lucide-react';
 import { Card, Avatar, EmptyState } from '../ui/primitives.jsx';
-import { timeAgo } from '../../lib/utils.js';
+import { cn, timeAgo } from '../../lib/utils.js';
 
 // Plain-language phrasing so non-developers understand each entry at a glance.
 // `tone`: 'good' | 'bad' | 'neutral' keeps colour use minimal and consistent.
@@ -27,32 +27,62 @@ const TONES = {
   neutral: 'text-slate-500 bg-slate-100 dark:bg-slate-800',
 };
 
+// An enum turned into words, so an action without a bespoke entry above still
+// reads as English rather than as a raw constant.
+const prettify = (action) => String(action || '').toLowerCase().replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
 export default function ActivityTimeline({ activity }) {
   return (
-    <Card className="p-5">
-      <h3 className="mb-4 font-semibold text-slate-800 dark:text-white">Recent activity</h3>
+    <Card className="overflow-hidden">
+      <div className="border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+        <h3 className="font-semibold text-slate-800 dark:text-white">Recent activity</h3>
+      </div>
       {!activity?.length ? (
-        <EmptyState icon={Activity} title="No activity yet" description="Actions across the platform will appear here." />
+        <div className="p-5">
+          <EmptyState icon={Activity} title="No activity yet" description="Actions across the platform will appear here." />
+        </div>
       ) : (
-        <div className="space-y-0.5">
-          {activity.map((log) => {
-            const m = META[log.action] || { icon: Activity, verb: 'made an update', tone: 'neutral' };
-            const Icon = m.icon;
-            return (
-              <div key={log._id} className="flex items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${TONES[m.tone]}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-slate-700 dark:text-slate-200">
-                    <span className="font-semibold">{log.user?.name || 'Someone'}</span> {m.verb}
-                  </p>
-                  {log.description && <p className="truncate text-xs text-slate-400">{log.description}</p>}
-                </div>
-                <span className="shrink-0 text-[11px] text-slate-400">{timeAgo(log.createdAt)}</span>
-              </div>
-            );
-          })}
+        /* Same table treatment as the console's Activity Logs page — three
+           columns rather than four, because this card sits in a half-width
+           dashboard column. */
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 dark:border-slate-800 text-left text-xs uppercase text-slate-400">
+                <th className="px-5 py-3 font-semibold">Who</th>
+                <th className="px-5 py-3 font-semibold">Activity</th>
+                <th className="px-5 py-3 text-right font-semibold">When</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+              {activity.map((log) => {
+                const m = META[log.action] || { icon: Activity, verb: prettify(log.action) || 'made an update', tone: 'neutral' };
+                const Icon = m.icon;
+                return (
+                  <tr key={log._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                    <td className="px-5 py-3 align-top">
+                      <span className="flex items-center gap-2.5">
+                        <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
+                        <span className="min-w-0 truncate font-semibold text-slate-700 dark:text-slate-200">{log.user?.name || 'Someone'}</span>
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 align-top">
+                      <span className="flex items-start gap-2.5">
+                        <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', TONES[m.tone])}>
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">{m.verb}</span>
+                          {log.description && <span className="block truncate text-xs text-slate-400">{log.description}</span>}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right align-top text-xs text-slate-400">{timeAgo(log.createdAt)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </Card>

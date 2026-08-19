@@ -18,6 +18,40 @@ const PLATFORM_ICON = { LinkedIn: Linkedin, Instagram, YouTube: Youtube, Faceboo
 const PLATFORM_COLOR = { LinkedIn: '#0A66C2', Instagram: '#E1306C', YouTube: '#FF0000', Facebook: '#1877F2' };
 const audienceLabel = (p) => (p === 'YouTube' ? 'subscribers' : 'followers');
 
+// The headline is free text from the model, so the subject of the callout is
+// whichever platform it actually names — falling back to the leading platform
+// when the sentence is about the org as a whole.
+const headlineSubject = (headline, topPlatform) => {
+  const text = String(headline || '').toLowerCase();
+  const named = Object.keys(PLATFORM_ICON).find((p) => text.includes(p.toLowerCase()));
+  return named || topPlatform || null;
+};
+
+// The AI headline, framed as a callout so it reads as a statement about the
+// numbers rather than a stray line of bold text.
+function HeadlineCallout({ headline, topPlatform }) {
+  if (!headline) return null;
+  const subject = headlineSubject(headline, topPlatform);
+  const Icon = PLATFORM_ICON[subject] || Sparkles;
+  const color = PLATFORM_COLOR[subject] || '#6366f1';
+  return (
+    <div
+      className="rounded-2xl border p-4"
+      style={{ borderColor: `${color}33`, backgroundColor: `${color}0d` }}
+    >
+      {subject && (
+        <span
+          className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"
+          style={{ backgroundColor: `${color}1f`, color }}
+        >
+          <Icon className="h-3.5 w-3.5" /> {subject}
+        </span>
+      )}
+      <p className="text-lg font-bold leading-snug text-slate-800 dark:text-white">{headline}</p>
+    </div>
+  );
+}
+
 // The 28-day change chip next to each bar — green up, rose down, quiet dash.
 function DeltaChip({ value }) {
   if (value == null) return <span className="text-[11px] font-medium text-slate-300 dark:text-slate-600">no trend yet</span>;
@@ -114,13 +148,25 @@ export default function AiInsights({ orgId }) {
           </div>
           <button
             type="button" onClick={regenerate} disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400"
+            aria-busy={isRefreshing}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed',
+              isRefreshing
+                ? 'border-brand-300 bg-brand-50 text-brand-600 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-300'
+                : 'border-slate-200 text-slate-500 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400'
+            )}
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} /> Refresh
+            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+            {isRefreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
 
         <div className="p-5">
+          {isRefreshing && !isLoading && (
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-brand-100 bg-brand-50/60 px-3 py-2 text-sm font-medium text-brand-700 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
+              <Loader2 className="h-4 w-4 animate-spin" /> Refreshing — Tago is re-reading your latest numbers…
+            </div>
+          )}
           {isLoading ? (
             <div className="flex items-center gap-2.5 text-sm text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin text-brand-500" /> Tago is reading the latest numbers…
@@ -131,17 +177,15 @@ export default function AiInsights({ orgId }) {
             <p className="text-sm text-slate-400">{data.message || 'No analytics recorded yet for this organization.'}</p>
           ) : (
             <div className="space-y-6">
-              {/* Hero: total reach + net growth, with the AI headline.
+              {/* Hero: total followers + net growth, with the AI headline.
                   Falls back to the headline alone if metrics aren't present. */}
-              {!m && data?.headline && (
-                <p className="text-lg font-bold leading-snug text-slate-800 dark:text-white">{data.headline}</p>
-              )}
+              {!m && <HeadlineCallout headline={data?.headline} topPlatform={topPlatform} />}
               {m && (
               <div className="grid gap-5 md:grid-cols-5">
                 <div className="md:col-span-2">
                   <div className="rounded-2xl bg-gradient-to-br from-[#0b2350] via-[#0a1f44] to-[#07152e] p-5 text-white">
                     <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-brand-300/90">
-                      <Users className="h-3.5 w-3.5" /> Total reach
+                      <Users className="h-3.5 w-3.5" /> Total followers
                     </p>
                     <p className="mt-1 text-4xl font-extrabold tabular-nums">
                       <CountUp value={m?.totalAudience || 0} />
@@ -155,6 +199,35 @@ export default function AiInsights({ orgId }) {
                         </span>
                       )}
                     </div>
+                    {/* What the total is made of — one line per platform with
+                        its own 28-day movement, so the headline number is
+                        traceable without scrolling to the bars below. */}
+                    {platforms.length > 0 && (
+                      <div className="mt-4 space-y-1.5 border-t border-white/10 pt-3">
+                        {platforms.map((p) => {
+                          const PIcon = PLATFORM_ICON[p.platform] || Users;
+                          return (
+                            <div key={p.platform} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="flex items-center gap-1.5 font-semibold text-white/80">
+                                <PIcon className="h-3.5 w-3.5" /> {p.platform}
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className="tabular-nums font-bold text-white">{formatNumber(p.audience || 0)}</span>
+                                {p.gained28d ? (
+                                  <span className={cn('inline-flex items-center gap-0.5 font-bold',
+                                    p.gained28d > 0 ? 'text-emerald-300' : 'text-rose-300')}>
+                                    {p.gained28d > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+                                    {p.gained28d > 0 ? '+' : ''}{formatNumber(p.gained28d)}
+                                  </span>
+                                ) : (
+                                  <span className="text-white/40">—</span>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {topPlatform && (
                       <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-amber-200">
                         <Trophy className="h-3.5 w-3.5" /> Leading on {topPlatform}
@@ -163,9 +236,7 @@ export default function AiInsights({ orgId }) {
                   </div>
                 </div>
                 <div className="flex items-center md:col-span-3">
-                  {data?.headline && (
-                    <p className="text-lg font-bold leading-snug text-slate-800 dark:text-white">{data.headline}</p>
-                  )}
+                  <HeadlineCallout headline={data?.headline} topPlatform={topPlatform} />
                 </div>
               </div>
               )}

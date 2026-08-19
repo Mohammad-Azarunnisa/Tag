@@ -1,6 +1,14 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import { authApi } from '../api/endpoints.js';
+
+// The session is deliberately kept in sessionStorage, not localStorage:
+// localStorage is shared by every window and tab of the browser profile, so
+// opening the app in a second window silently inherited the previous login and
+// never asked for credentials. sessionStorage is scoped to one window, so each
+// new window starts signed out, while a refresh in the current window still
+// keeps you where you were.
+const sessionStore = () => sessionStorage;
 
 // Raised when an admin account is used on the product app. The API refuses
 // these sign-ins too (authController#assertPortal) — this is the second line,
@@ -21,25 +29,25 @@ export const useAuthStore = create(
   persist(
     (set, get) => ({
       user: null,
-      token: localStorage.getItem('dmm_token') || null,
+      token: sessionStorage.getItem('dmm_token') || null,
       loading: false,
 
       login: async (email, password) => {
         const data = await authApi.login({ email, password });
         if (isAdminAccount(data.user)) throw new AdminAccountError();
-        localStorage.setItem('dmm_token', data.token);
+        sessionStorage.setItem('dmm_token', data.token);
         set({ user: data.user, token: data.token });
         return data.user;
       },
 
       logout: () => {
-        localStorage.removeItem('dmm_token');
+        sessionStorage.removeItem('dmm_token');
         set({ user: null, token: null });
       },
 
       // Re-hydrate the user from token on app boot
       fetchMe: async () => {
-        const token = localStorage.getItem('dmm_token');
+        const token = sessionStorage.getItem('dmm_token');
         if (!token) return null;
         try {
           set({ loading: true });
@@ -47,14 +55,14 @@ export const useAuthStore = create(
           // Guard: an admin account has no session here — drop it rather than
           // rehydrating a portal this user isn't allowed in.
           if (isAdminAccount(data.user)) {
-            localStorage.removeItem('dmm_token');
+            sessionStorage.removeItem('dmm_token');
             set({ user: null, token: null, loading: false });
             return null;
           }
           set({ user: data.user, token, loading: false });
           return data.user;
         } catch {
-          localStorage.removeItem('dmm_token');
+          sessionStorage.removeItem('dmm_token');
           set({ user: null, token: null, loading: false });
           return null;
         }
@@ -73,6 +81,7 @@ export const useAuthStore = create(
     }),
     {
       name: 'dmm-auth',
+      storage: createJSONStorage(sessionStore),
       partialize: (s) => ({ user: s.user, token: s.token }),
     }
   )

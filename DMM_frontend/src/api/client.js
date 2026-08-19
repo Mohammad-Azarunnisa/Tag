@@ -9,9 +9,22 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach JWT from localStorage on every request
+// A session used to live in localStorage, which is shared by every window of the
+// browser profile — so a second window inherited the last login instead of
+// asking for it. Sessions are per-window now (see store/authStore.js), which
+// leaves any pre-existing localStorage copy as dead data that could still let
+// someone back into an account the user believes is closed. Clear it once, on
+// first load after the change.
+try {
+  localStorage.removeItem('dmm_token');
+  localStorage.removeItem('dmm-auth');
+} catch {
+  // Storage can be unavailable (private mode / blocked cookies) — nothing to clean.
+}
+
+// Attach JWT from the current window's session on every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('dmm_token');
+  const token = sessionStorage.getItem('dmm_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -21,12 +34,12 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401 && !err.config?.url?.includes('/auth/login')) {
-      localStorage.removeItem('dmm_token');
+      sessionStorage.removeItem('dmm_token');
       // Also drop the zustand-persisted session (store/authStore.js persist name
       // 'dmm-auth') so a reload can't rehydrate a stale/invalid user + token.
       // Cleared by key directly, not by importing useAuthStore, which would
       // create an import cycle (authStore.js -> api/endpoints.js -> this file).
-      localStorage.removeItem('dmm-auth');
+      sessionStorage.removeItem('dmm-auth');
       if (!window.location.pathname.startsWith('/login')) window.location.href = '/login';
     }
     // View-only (Chairman) accounts are blocked from writes server-side — surface
