@@ -96,7 +96,7 @@ export default function Planners() {
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="input-base h-10 w-auto max-w-[220px] cursor-pointer">
+          <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="input-base py-1 h-10 w-auto max-w-[220px] cursor-pointer">
             <option value="">All colleges</option>
             {(orgData?.organizations || []).map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
           </select>

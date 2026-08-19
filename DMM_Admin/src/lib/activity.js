@@ -1,3 +1,9 @@
+import {
+  Activity, BarChart3, BriefcaseBusiness, CalendarDays, CheckCircle2, FileImage, Globe, Inbox,
+  Megaphone, MessageSquare, Palette, Presentation, RefreshCw, Send, Share2, Target, Upload,
+  UserCog, UserPlus, UserX,
+} from 'lucide-react';
+
 // What each logged action means in plain language.
 //
 // Every ActivityLog row already carries a `description` written where the action
@@ -57,3 +63,74 @@ export const activityText = (log) => {
   if (described) return followName(described);
   return ACTIVITY_VERBS[log?.action] || 'recorded an activity';
 };
+
+// ---------------------------------------------------------------------------
+// How an action is presented: its icon, its short label, and its tone.
+//
+// This lived as a private copy inside ActivityLogs, the Overview feed and the
+// heatmap card, which is why the three drifted apart — each covered a different
+// subset of actions and labelled them differently. One map, imported by all of
+// them, is what keeps the audit trail reading the same wherever it appears.
+// `tone`: 'good' for a positive outcome, 'bad' for a removal or rejection,
+// 'neutral' otherwise — colour stays sparing so it means something.
+export const ACTION_TONES = {
+  good: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10',
+  bad: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10',
+  neutral: 'text-slate-500 bg-slate-100 dark:bg-slate-800',
+};
+
+export const ACTION_META = {
+  TEMPLATE_UPLOAD: { icon: FileImage, label: 'Template added', tone: 'neutral' },
+  ASSET_UPLOAD: { icon: Upload, label: 'Asset added', tone: 'neutral' },
+  APPROVAL_SUBMISSION: { icon: Send, label: 'Sent for approval', tone: 'neutral' },
+  APPROVAL_APPROVED: { icon: CheckCircle2, label: 'Approved', tone: 'good' },
+  APPROVAL_REJECTED: { icon: MessageSquare, label: 'Changes requested', tone: 'bad' },
+  APPROVAL_RESUBMITTED: { icon: RefreshCw, label: 'Resubmitted', tone: 'neutral' },
+  POST_COMPLETION: { icon: CheckCircle2, label: 'Posted', tone: 'good' },
+  USER_CREATED: { icon: UserPlus, label: 'Member added', tone: 'good' },
+  USER_UPDATED: { icon: UserCog, label: 'Member updated', tone: 'neutral' },
+  USER_DEACTIVATED: { icon: UserX, label: 'Member removed', tone: 'bad' },
+  ANALYTICS_UPDATED: { icon: BarChart3, label: 'Analytics updated', tone: 'neutral' },
+  COMPETITOR_UPDATED: { icon: BarChart3, label: 'Competitors updated', tone: 'neutral' },
+  REPORT_GENERATED: { icon: BarChart3, label: 'Report generated', tone: 'neutral' },
+  WORK_ASSIGNED: { icon: BriefcaseBusiness, label: 'Work assigned', tone: 'neutral' },
+  WORK_SUBMITTED: { icon: Send, label: 'Work submitted', tone: 'neutral' },
+  WORK_COMPLETED: { icon: CheckCircle2, label: 'Work signed off', tone: 'good' },
+  DESIGN_ASSIGNED: { icon: Palette, label: 'Design taken on', tone: 'neutral' },
+  DESIGN_REQUESTED: { icon: Palette, label: 'Design brief raised', tone: 'neutral' },
+  DESIGN_SUBMITTED: { icon: Palette, label: 'Design submitted', tone: 'neutral' },
+  DESIGN_FORWARDED: { icon: Palette, label: 'Design forwarded', tone: 'neutral' },
+  DESIGN_DELIVERED: { icon: Palette, label: 'Design delivered', tone: 'good' },
+  REQUEST_RAISED: { icon: Inbox, label: 'Request raised', tone: 'neutral' },
+  REQUEST_REVIEWED: { icon: Inbox, label: 'Request answered', tone: 'good' },
+  PLAN_SUBMITTED: { icon: CalendarDays, label: 'Plan submitted', tone: 'neutral' },
+  PLAN_REVIEWED: { icon: CalendarDays, label: 'Plan reviewed', tone: 'good' },
+  GOAL_UPDATED: { icon: Target, label: 'Goal updated', tone: 'neutral' },
+  PROFILE_UPDATED: { icon: UserCog, label: 'Profile updated', tone: 'neutral' },
+  SOCIAL_ACCOUNT_UPDATED: { icon: Share2, label: 'Social account updated', tone: 'neutral' },
+  WEBSITE_UPDATED: { icon: Globe, label: 'Website updated', tone: 'neutral' },
+  WEB_TASK_UPDATED: { icon: Globe, label: 'Website task updated', tone: 'neutral' },
+  EVENT_UPDATED: { icon: CalendarDays, label: 'Event updated', tone: 'neutral' },
+  SIGNAGE_UPDATED: { icon: Presentation, label: 'Signage updated', tone: 'neutral' },
+  AD_CAMPAIGN_UPDATED: { icon: Megaphone, label: 'Campaign updated', tone: 'neutral' },
+};
+
+// An action with no bespoke entry still reads as English, not as a raw constant.
+const prettify = (action) => String(action || '')
+  .toLowerCase().replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
+export const actionLabel = (action) => ACTION_META[action]?.label || prettify(action) || 'Activity';
+export const actionIcon = (action) => ACTION_META[action]?.icon || Activity;
+export const actionTone = (action) => ACTION_TONES[ACTION_META[action]?.tone || 'neutral'];
+
+// Every action the backend can log, as { value, label } sorted for a filter.
+export const ACTION_OPTIONS = Array.from(
+  new Set([...Object.keys(ACTION_META), ...Object.keys(ACTIVITY_VERBS)])
+)
+  .map((value) => ({ value, label: actionLabel(value) }))
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+// A row's own recorded description is the truest account of what happened, so it
+// is shown as written. The action's verb covers rows logged before descriptions
+// were kept.
+export const activityDetail = (log) => log?.description?.trim() || ACTIVITY_VERBS[log?.action] || '—';

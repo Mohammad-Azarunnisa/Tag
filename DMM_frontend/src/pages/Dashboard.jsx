@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
-  FileText, CheckCircle2, Clock, XCircle, Send, Image as ImageIcon,
+  FileText, CheckCircle2, Clock, XCircle, Send,
   FileImage, Layers, TrendingUp, Award,
 } from 'lucide-react';
 import { dashboardApi, organizationApi } from '../api/endpoints.js';
@@ -16,6 +16,8 @@ import ActivityTimeline from '../components/dashboard/ActivityTimeline.jsx';
 import MyUploads from '../components/dashboard/MyUploads.jsx';
 import { MonthlyTrendChart, FollowerTrendChart, PlatformBarChart, StatusPieChart } from '../components/dashboard/Charts.jsx';
 import { Card, Skeleton } from '../components/ui/primitives.jsx';
+import OrgSelect from '../components/ui/OrgSelect.jsx';
+import { sortOrganizations } from '../lib/organizations.js';
 
 export default function Dashboard() {
   const { user } = useAuthStore();
@@ -28,7 +30,7 @@ export default function Dashboard() {
   const ownOrgId = user?.organization?._id || user?.organization || '';
   const [orgId, setOrgId] = useState(() => ownOrgId || (isAdmin ? localStorage.getItem('tag-dashboard-org') || '' : ''));
   const { data: orgData } = useQuery({ queryKey: ['org-options'], queryFn: organizationApi.options, enabled: isAdmin });
-  const orgs = orgData?.organizations || [];
+  const orgs = sortOrganizations(orgData?.organizations);
   useEffect(() => {
     if (!isAdmin || !orgs.length) return;
     if (!orgId || !orgs.some((o) => o._id === orgId)) setOrgId(orgs[0]._id);
@@ -97,11 +99,13 @@ export default function Dashboard() {
             </p>
           </div>
           {isAdmin && orgs.length > 0 && (
-            <select aria-label="Organization"
-              className="h-10 w-auto cursor-pointer rounded-xl border border-white/15 bg-white/10 px-3 text-sm font-semibold text-white outline-none backdrop-blur transition hover:bg-white/15 focus:ring-4 focus:ring-brand-500/30 [&>option]:text-slate-800"
-              value={orgId} onChange={(e) => setOrgId(e.target.value)}>
-              {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
-            </select>
+            <OrgSelect
+              ariaLabel="Organization"
+              className="w-auto min-w-[180px]"
+              value={orgId}
+              onChange={setOrgId}
+              options={orgs.map((o) => ({ value: o._id, label: o.name }))}
+            />
           )}
         </div>
       </motion.div>

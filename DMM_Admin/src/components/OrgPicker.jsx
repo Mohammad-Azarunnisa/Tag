@@ -4,6 +4,7 @@ import { Building2 } from 'lucide-react';
 import { organizationApi } from '../api/endpoints.js';
 import { useOrgStore } from '../store/orgStore.js';
 import { Card } from './ui/primitives.jsx';
+import { sortOrganizations } from '../lib/organizations.js';
 
 // The value `children` receives instead of an org id when the reader has asked
 // to see every college at once.
@@ -30,9 +31,7 @@ export default function OrgPicker({ allowAll = false, children }) {
   // what makes "is my college here?" answerable at a glance. Deactivated ones
   // are kept — their purchases and history still have to be reachable — but
   // labelled, so picking one is never a surprise.
-  const orgs = [...(data?.organizations || [])].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-  );
+  const orgs = sortOrganizations(data?.organizations);
 
   // Auto-select the first org if none chosen yet (or the chosen one disappeared).
   useEffect(() => {

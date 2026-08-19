@@ -38,9 +38,13 @@ const iso = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
 // Resolve an organization by (partial) name so the model can say "NCET".
 const resolveOrg = async (name) => {
   if (!name) return null;
-  const exact = await Organization.findOne({ name: new RegExp(`^${escapeRegex(name)}$`, 'i') }).lean();
+  // Disabled colleges are excluded: while one is switched off it should not be
+  // discussable, so asking Tago about it by name finds nothing rather than
+  // reporting on a college that is supposed to be hidden.
+  const live = { isActive: { $ne: false } };
+  const exact = await Organization.findOne({ ...live, name: new RegExp(`^${escapeRegex(name)}$`, 'i') }).lean();
   if (exact) return exact;
-  return Organization.findOne({ name: new RegExp(escapeRegex(name), 'i') }).lean();
+  return Organization.findOne({ ...live, name: new RegExp(escapeRegex(name), 'i') }).lean();
 };
 
 // ---- Tool definitions (Anthropic tool schema) ----
@@ -346,7 +350,7 @@ const handlers = {
         Model.find(base).populate('organization', 'name').populate('uploadedBy', 'name').sort({ createdAt: -1 }).limit(8).lean(),
       ]);
       const orgIds = byOrg.map((o) => o._id).filter(Boolean);
-      const orgs = await Organization.find({ _id: { $in: orgIds } }).select('name').lean();
+      const orgs = await Organization.find({ _id: { $in: orgIds }, isActive: { $ne: false } }).select('name').lean();
       const nameById = Object.fromEntries(orgs.map((o) => [String(o._id), o.name]));
       return {
         total,
@@ -377,7 +381,7 @@ const handlers = {
       BrandAsset.aggregate([{ $match: query }, { $group: { _id: '$organization', n: { $sum: 1 } } }]),
       BrandAsset.find(query).populate('organization', 'name').sort({ createdAt: -1 }).limit(8).lean(),
     ]);
-    const orgs = await Organization.find({ _id: { $in: byOrg.map((o) => o._id).filter(Boolean) } }).select('name').lean();
+    const orgs = await Organization.find({ _id: { $in: byOrg.map((o) => o._id).filter(Boolean) }, isActive: { $ne: false } }).select('name').lean();
     const nameById = Object.fromEntries(orgs.map((o) => [String(o._id), o.name]));
     return {
       total,
@@ -455,6 +459,7 @@ const handlers = {
     return { total: sites.length, websites: sites.map((w) => ({
       institution: w.institution, domain: w.domain || undefined, type: w.siteType || undefined,
       hosting: w.hosting || undefined, builtWith: w.builtWith || undefined,
+      expiryDate: w.expiryDate ? new Date(w.expiryDate).toISOString().slice(0, 10) : undefined,
       organization: w.organization?.name || undefined,
     })) };
   },

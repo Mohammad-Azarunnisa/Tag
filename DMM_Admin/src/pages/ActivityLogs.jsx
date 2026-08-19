@@ -1,40 +1,19 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Upload, FileImage, Send, CheckCircle2, XCircle, RefreshCw, UserPlus, UserCog, UserX, BarChart3, Activity, MessageSquare, ShoppingBag,
-} from 'lucide-react';
+import { Activity, Building2 } from 'lucide-react';
 import { activityApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
-import { Card, Select, Avatar, Skeleton, EmptyState, Badge } from '../components/ui/primitives.jsx';
-import { formatDateTime } from '../lib/utils.js';
-
-// Plain-language label + verb so anyone (not just developers) can read the log.
-// Colour is kept minimal: green for positive, red for removals/changes, neutral otherwise.
-const TONES = {
-  good: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10',
-  bad: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10',
-  neutral: 'text-slate-500 bg-slate-100 dark:bg-slate-800',
-};
-const META = {
-  TEMPLATE_UPLOAD: { icon: FileImage, label: 'Template added', verb: 'uploaded a template', tone: 'neutral' },
-  ASSET_UPLOAD: { icon: Upload, label: 'Asset added', verb: 'uploaded an asset', tone: 'neutral' },
-  APPROVAL_SUBMISSION: { icon: Send, label: 'Sent for approval', verb: 'sent content for approval', tone: 'neutral' },
-  APPROVAL_APPROVED: { icon: CheckCircle2, label: 'Approved', verb: 'approved content', tone: 'good' },
-  APPROVAL_REJECTED: { icon: MessageSquare, label: 'Changes requested', verb: 'requested changes', tone: 'bad' },
-  APPROVAL_RESUBMITTED: { icon: RefreshCw, label: 'Resubmitted', verb: 'resubmitted content', tone: 'neutral' },
-  POST_COMPLETION: { icon: CheckCircle2, label: 'Posted', verb: 'marked content as posted', tone: 'good' },
-  USER_CREATED: { icon: UserPlus, label: 'Member added', verb: 'added a team member', tone: 'good' },
-  USER_UPDATED: { icon: UserCog, label: 'Member updated', verb: 'updated a team member', tone: 'neutral' },
-  USER_DEACTIVATED: { icon: UserX, label: 'Member removed', verb: 'removed a team member', tone: 'bad' },
-  ANALYTICS_UPDATED: { icon: BarChart3, label: 'Analytics updated', verb: 'updated analytics', tone: 'neutral' },
-  COMPETITOR_UPDATED: { icon: BarChart3, label: 'Competitors updated', verb: 'updated competitors', tone: 'neutral' },
-};
+import { Card, Select, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
+import { ACTION_OPTIONS, actionIcon, actionLabel, actionTone, activityDetail } from '../lib/activity.js';
+import { cn, formatDateTime, timeAgo } from '../lib/utils.js';
 
 export default function ActivityLogs() {
   const [action, setAction] = useState('All');
   const [page, setPage] = useState(1);
   const { data, isLoading } = useQuery({ queryKey: ['activity', { action, page }], queryFn: () => activityApi.list({ action, page, limit: 25 }) });
   const logs = data?.logs || [];
+  // Worth a column only when the rows actually span more than one organization.
+  const showOrgColumn = new Set(logs.map((l) => l.organization?._id || l.organization).filter(Boolean)).size > 1;
 
   return (
     <div>
@@ -43,7 +22,7 @@ export default function ActivityLogs() {
       <div className="mb-5 flex justify-end">
         <Select className="w-56" value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }}>
           <option value="All">All actions</option>
-          {Object.entries(META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          {ACTION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </Select>
       </div>
 
@@ -53,22 +32,62 @@ export default function ActivityLogs() {
         <EmptyState icon={Activity} title="No activity found" description="Try a different filter." />
       ) : (
         <>
-          <Card className="divide-y divide-slate-50 dark:divide-slate-800/50">
-            {logs.map((log) => {
-              const m = META[log.action] || { icon: Activity, label: 'Activity', verb: 'made an update', tone: 'neutral' };
-              const Icon = m.icon;
-              return (
-                <div key={log._id} className="flex items-center gap-4 p-4">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${TONES[m.tone]}`}><Icon className="h-5 w-5" /></div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-700 dark:text-slate-200"><span className="font-semibold">{log.user?.name || 'Someone'}</span> {m.verb}</p>
-                    {log.description && <p className="truncate text-xs text-slate-400">{log.description}</p>}
-                    <span className="text-[11px] text-slate-400">{formatDateTime(log.createdAt)}</span>
-                  </div>
-                  <Badge className="hidden sm:inline-flex">{m.label}</Badge>
-                </div>
-              );
-            })}
+          {/* An audit trail is columnar by nature — when, who, what — so it reads
+              as the same kind of table as the rest of the console. */}
+          <Card className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-slate-800 text-left text-xs uppercase text-slate-400">
+                  <th className="px-5 py-3 font-semibold">When</th>
+                  <th className="px-5 py-3 font-semibold">Who</th>
+                  {showOrgColumn && <th className="px-5 py-3 font-semibold">Organization</th>}
+                  <th className="px-5 py-3 font-semibold">Action</th>
+                  <th className="px-5 py-3 font-semibold">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                {logs.map((log) => {
+                  const Icon = actionIcon(log.action);
+                  return (
+                    <tr key={log._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <td className="whitespace-nowrap px-5 py-3 align-top">
+                        <p className="font-medium text-slate-700 dark:text-slate-200">{formatDateTime(log.createdAt)}</p>
+                        <p className="text-xs text-slate-400">{timeAgo(log.createdAt)}</p>
+                      </td>
+                      <td className="px-5 py-3 align-top">
+                        <span className="flex items-center gap-2.5">
+                          <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
+                          <span className="min-w-0">
+                            <span className="block truncate font-semibold text-slate-700 dark:text-slate-200">{log.user?.name || 'Someone'}</span>
+                            {log.user?.email && <span className="block truncate text-xs text-slate-400">{log.user.email}</span>}
+                          </span>
+                        </span>
+                      </td>
+                      {showOrgColumn && (
+                        <td className="whitespace-nowrap px-5 py-3 align-top">
+                          {log.organization?.name ? (
+                            <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                              <Building2 className="h-3.5 w-3.5 text-slate-400" /> {log.organization.name}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-600">Platform</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="whitespace-nowrap px-5 py-3 align-top">
+                        <span className="inline-flex items-center gap-2">
+                          <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', actionTone(log.action))}>
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="font-medium text-slate-600 dark:text-slate-300">{actionLabel(log.action)}</span>
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 align-top text-slate-600 dark:text-slate-300">{activityDetail(log)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </Card>
 
           {data?.pages > 1 && (

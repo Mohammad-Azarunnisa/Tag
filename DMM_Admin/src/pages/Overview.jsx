@@ -11,9 +11,11 @@ import { useAuthStore } from '../store/authStore.js';
 import { Card, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import CountUp from '../components/CountUp.jsx';
 import AiInsights from '../components/AiInsights.jsx';
+import OrgSelect from '../components/ui/OrgSelect.jsx';
 import ActivityHeatmapCard from '../components/ActivityHeatmapCard.jsx';
 import { timeAgo, formatNumber, cn } from '../lib/utils.js';
-import { activityText } from '../lib/activity.js';
+import { actionIcon, actionLabel, actionTone, activityText } from '../lib/activity.js';
+import { sortOrganizations } from '../lib/organizations.js';
 
 export default function Overview() {
   const navigate = useNavigate();
@@ -22,11 +24,13 @@ export default function Overview() {
   const { data: userData } = useQuery({ queryKey: ['users', 'overview'], queryFn: () => userApi.list() });
   const { data: activityData } = useQuery({ queryKey: ['activity', 'overview'], queryFn: () => activityApi.list({ limit: 8 }) });
 
-  const orgs = orgData?.organizations || [];
+  const orgs = sortOrganizations(orgData?.organizations);
   const users = userData?.users || [];
   const counts = users.reduce((acc, u) => { acc[u.role] = (acc[u.role] || 0) + 1; return acc; }, {});
   const totalPosts = orgs.reduce((a, o) => a + (o.postCount || 0), 0);
   const activity = activityData?.logs || [];
+  // Worth a column only when the rows actually span more than one organization.
+  const showOrgColumn = new Set(activity.map((l) => l.organization?._id || l.organization).filter(Boolean)).size > 1;
   const showHeatmap = !!user?.isSuperAdmin;
 
   // Organization switch for Tago's read-out, mirroring the product app's
@@ -76,11 +80,13 @@ export default function Overview() {
             <p className="mt-1.5 text-sm text-white/65">Platform-wide administration overview.</p>
           </div>
           {pickable.length > 0 && (
-            <select aria-label="Organization"
-              className="h-10 w-auto cursor-pointer rounded-xl border border-white/15 bg-white/10 px-3 text-sm font-semibold text-white outline-none backdrop-blur transition hover:bg-white/15 focus:ring-4 focus:ring-brand-500/30 [&>option]:text-slate-800"
-              value={insightsOrgId} onChange={(e) => setInsightsOrgId(e.target.value)}>
-              {pickable.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
-            </select>
+            <OrgSelect
+              ariaLabel="Organization"
+              className="w-auto min-w-[180px]"
+              value={insightsOrgId}
+              onChange={setInsightsOrgId}
+              options={pickable.map((o) => ({ value: o._id, label: o.name }))}
+            />
           )}
         </div>
       </motion.div>
@@ -139,22 +145,84 @@ export default function Overview() {
         </Card>
       </div>
 
-      {/* Recent activity */}
-      <Card className="p-5">
-        <h3 className="mb-4 font-bold text-slate-800 dark:text-white">Recent Activity (all organizations)</h3>
+      {/* Recent activity — same table treatment as the full Activity Logs page,
+          so the console reads as one system. The organization column is what the
+          "all organizations" heading promises and the old flat list never showed:
+          without it, a super admin could not tell which college an action
+          belonged to. It is dropped when every row is from the same org, where it
+          would just be a repeated word. */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <div>
+            <h3 className="font-bold text-slate-800 dark:text-white">Recent activity</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              The latest {activity.length} actions across all organizations.
+            </p>
+          </div>
+          <button
+            type="button" onClick={() => navigate('/activity')}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400"
+          >
+            View full log <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
         {activity.length === 0 ? (
-          <EmptyState icon={Activity} title="No activity yet" description="Platform actions will appear here." />
+          <div className="p-5">
+            <EmptyState icon={Activity} title="No activity yet" description="Platform actions will appear here." />
+          </div>
         ) : (
-          <div className="space-y-1">
-            {activity.map((log) => (
-              <div key={log._id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
-                <p className="flex-1 text-sm text-slate-600 dark:text-slate-300">
-                  <span className="font-semibold text-slate-700 dark:text-slate-200">{log.user?.name}</span> {activityText(log)}
-                </p>
-                <span className="whitespace-nowrap text-[11px] text-slate-400">{timeAgo(log.createdAt)}</span>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-slate-800 text-left text-xs uppercase text-slate-400">
+                  <th className="px-5 py-3 font-semibold">Who</th>
+                  {showOrgColumn && <th className="px-5 py-3 font-semibold">Organization</th>}
+                  <th className="px-5 py-3 font-semibold">Action</th>
+                  <th className="px-5 py-3 font-semibold">Details</th>
+                  <th className="px-5 py-3 text-right font-semibold">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                {activity.map((log) => {
+                  const Icon = actionIcon(log.action);
+                  return (
+                    <tr key={log._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <td className="px-5 py-3 align-top">
+                        <span className="flex items-center gap-2.5">
+                          <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
+                          <span className="min-w-0 truncate font-semibold text-slate-700 dark:text-slate-200">
+                            {log.user?.name || 'Someone'}
+                          </span>
+                        </span>
+                      </td>
+                      {showOrgColumn && (
+                        <td className="whitespace-nowrap px-5 py-3 align-top">
+                          {log.organization?.name ? (
+                            <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                              <Building2 className="h-3.5 w-3.5 text-slate-400" /> {log.organization.name}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-600">Platform</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="whitespace-nowrap px-5 py-3 align-top">
+                        <span className="inline-flex items-center gap-2">
+                          <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', actionTone(log.action))}>
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="font-medium text-slate-600 dark:text-slate-300">{actionLabel(log.action)}</span>
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 align-top text-slate-600 dark:text-slate-300">{activityText(log)}</td>
+                      <td className="whitespace-nowrap px-5 py-3 text-right align-top text-xs text-slate-400">
+                        {timeAgo(log.createdAt)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>

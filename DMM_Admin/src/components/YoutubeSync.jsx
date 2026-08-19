@@ -99,7 +99,7 @@ export default function YoutubeSync({ orgId, report, onSynced }) {
       {linking && me?.isSuperAdmin && (
         <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) mapMut.mutate(q.trim()); }} className="flex w-full flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Channel @handle, URL, or ID (e.g. @NCET)"
-            className="input-base h-10 flex-1 min-w-[220px] text-sm" />
+            className="input-base py-1 h-10 flex-1 min-w-[220px] text-sm" />
           <Button size="sm" type="submit" loading={mapMut.isPending} disabled={!q.trim()}>Link</Button>
           {channel && <Button size="sm" type="button" variant="outline" onClick={() => mapMut.mutate('')} className="border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400">Unlink</Button>}
         </form>

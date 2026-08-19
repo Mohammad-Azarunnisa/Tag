@@ -7,7 +7,7 @@ import { formatNumber, formatDate, cn } from '../lib/utils.js';
 
 const RANGES = [
   { v: 7, label: '7 days' }, { v: 15, label: '15 days' }, { v: 30, label: '30 days' },
-  { v: 90, label: '90 days' }, { v: 365, label: '1 year' },
+  { v: 45, label: '45 days' }, { v: 90, label: '90 days' }, { v: 365, label: '1 year' },
 ];
 
 // Which totals to show per platform (from what the API actually returns).

@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { ExternalLink, RefreshCw, Image as ImageIcon, Loader2, Clock } from 'lucide-react';
+import { ExternalLink, RefreshCw, Image as ImageIcon, Clock, ArrowUpDown } from 'lucide-react';
 import { socialPostApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import { Card, Badge, Skeleton, EmptyState } from './ui/primitives.jsx';
@@ -29,8 +29,27 @@ export default function SocialPostsTable({ orgId, platform }) {
     queryFn: () => socialPostApi.list(platform, orgId),
     enabled: !!orgId && !!platform,
   });
-  const posts = data?.posts || [];
   const cov = data?.coverage;
+
+  // Sorting, matching the LinkedIn post table: click a metric to order by it
+  // (highest first), click again to reverse. Date is the default so the table
+  // still opens on the most recent posts.
+  const [sort, setSort] = useState({ key: 'publishedAt', dir: 'desc' });
+  const toggleSort = (key) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
+
+  const posts = useMemo(() => {
+    const list = [...(data?.posts || [])];
+    const valueOf = (row) => (sort.key === 'publishedAt'
+      ? new Date(row.publishedAt || 0).getTime()
+      : Number(row[sort.key]) || 0);
+    list.sort((a, b) => (sort.dir === 'desc' ? valueOf(b) - valueOf(a) : valueOf(a) - valueOf(b)));
+    return list;
+  }, [data?.posts, sort]);
+
+  // Switching platform changes which columns exist, so a sort on a column the
+  // new platform does not have would silently order by nothing.
+  useEffect(() => { setSort({ key: 'publishedAt', dir: 'desc' }); }, [platform]);
 
   // Pending refresh timers from the last sync — cleared before scheduling a new
   // batch (so a repeat click doesn't stack refreshes) and on unmount.
@@ -85,8 +104,23 @@ export default function SocialPostsTable({ orgId, platform }) {
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
                 <th className="px-5 py-3">Post</th>
-                <th className="px-3 py-3">Date</th>
-                {cols.map(([, label]) => <th key={label} className="px-3 py-3 text-right">{label}</th>)}
+                <th
+                  className="cursor-pointer select-none px-3 py-3 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                  onClick={() => toggleSort('publishedAt')}
+                  title="Sort by date"
+                >
+                  Date <ArrowUpDown className={cn('ml-0.5 inline h-3 w-3', sort.key === 'publishedAt' ? 'text-slate-500 dark:text-slate-300' : 'text-slate-300 dark:text-slate-600')} />
+                </th>
+                {cols.map(([key, label]) => (
+                  <th
+                    key={label}
+                    className="cursor-pointer select-none px-3 py-3 text-right transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                    onClick={() => toggleSort(key)}
+                    title={`Sort by ${label}`}
+                  >
+                    {label} <ArrowUpDown className={cn('ml-0.5 inline h-3 w-3', sort.key === key ? 'text-slate-500 dark:text-slate-300' : 'text-slate-300 dark:text-slate-600')} />
+                  </th>
+                ))}
                 <th className="px-3 py-3 text-right">Open</th>
               </tr>
             </thead>

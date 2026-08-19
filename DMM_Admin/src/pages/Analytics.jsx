@@ -246,7 +246,7 @@ function MetricEntry({ orgId, platform, report }) {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="max-w-lg">
           <label className="mb-1 block text-sm font-medium text-slate-600 dark:text-slate-300">Date these numbers are for</label>
-          <input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} className="input-base h-10 w-48" />
+          <input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} className="input-base py-1 h-10 w-48" />
           <p className="mt-1.5 text-xs text-slate-400">
             Pick the day the metrics belong to — for a weekly total, use the last day of that week. Saving updates only this date and keeps anything already imported for it. {editingExisting ? 'This date already has data, so the fields below are pre-filled.' : 'This date has no data yet — fields start blank.'}
           </p>

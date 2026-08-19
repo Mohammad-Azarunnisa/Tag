@@ -4,14 +4,56 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { analyticsApi } from '../../api/endpoints.js';
 import { useAuthStore } from '../../store/authStore.js';
+import { cn } from '../../lib/utils.js';
 import CountUp from './CountUp.jsx';
 
+// Each platform lists the metrics worth showing, best first. A card renders the
+// first three that actually carry a number.
+//
+// This is ordered rather than fixed because a platform's sync only fills the
+// fields its API exposes, and the gaps differ per platform: Instagram never
+// writes `engagementRate`, and YouTube never writes `watchHours` (watch time
+// needs the YouTube Analytics API, not the Data API). Pinning three fixed
+// metrics per card meant those two tiles always rendered a dead "0.0%" and "0".
+// Listing spares instead means a card shows three real figures, and any metric a
+// sync starts reporting later is picked up with no code change.
 const CONFIG = {
-  LinkedIn: { icon: Linkedin, color: '#0A66C2', metrics: [['followers', 'Followers'], ['impressions', 'Impressions'], ['engagementRate', 'Engagement', '%']] },
-  Instagram: { icon: Instagram, color: '#E1306C', metrics: [['followers', 'Followers'], ['reach', 'Reach'], ['engagementRate', 'Engagement', '%']] },
-  YouTube: { icon: Youtube, color: '#FF0000', metrics: [['subscribers', 'Subscribers'], ['views', 'Views'], ['watchHours', 'Watch Hrs']] },
-  Facebook: { icon: Facebook, color: '#1877F2', metrics: [['followers', 'Followers'], ['newFollowers', 'New'], ['interactions', 'Interactions']] },
+  LinkedIn: {
+    icon: Linkedin,
+    color: '#0A66C2',
+    metrics: [
+      ['followers', 'Followers'], ['impressions', 'Impressions'], ['engagementRate', 'Engagement', '%'],
+      ['clicks', 'Clicks'], ['reactions', 'Reactions'], ['uniqueImpressions', 'Unique views'], ['pageViews', 'Page views'],
+    ],
+  },
+  Instagram: {
+    icon: Instagram,
+    color: '#E1306C',
+    metrics: [
+      ['followers', 'Followers'], ['reach', 'Reach'], ['interactions', 'Interactions'],
+      ['views', 'Views'], ['impressions', 'Impressions'], ['pageViews', 'Profile views'],
+    ],
+  },
+  YouTube: {
+    icon: Youtube,
+    color: '#FF0000',
+    metrics: [
+      ['subscribers', 'Subscribers'], ['views', 'Views'], ['engagementRate', 'Engagement', '%'],
+      ['videoCount', 'Videos'], ['comments', 'Comments'], ['watchHours', 'Watch Hrs'],
+    ],
+  },
+  Facebook: {
+    icon: Facebook,
+    color: '#1877F2',
+    metrics: [
+      ['followers', 'Followers'], ['interactions', 'Interactions'], ['visits', 'Visits'],
+      ['newFollowers', 'New'], ['pageViews', 'Page views'],
+    ],
+  },
 };
+
+// Static class names so Tailwind keeps them in the build.
+const GRID = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3' };
 
 export default function SocialCards({ social, orgId: orgIdProp }) {
   const navigate = useNavigate();
@@ -24,7 +66,7 @@ export default function SocialCards({ social, orgId: orgIdProp }) {
   const { data: pulseData } = useQuery({ queryKey: ['analytics-pulse'], queryFn: analyticsApi.pulse, enabled: !!orgId });
   const pulse = (pulseData?.organizations || []).find((o) => String(o.organization._id) === String(orgId));
   const linkedin = pulse?.hasData
-    ? { followers: pulse.followers, impressions: pulse.impressions, engagementRate: pulse.engagementRate }
+    ? { ...(social?.LinkedIn || {}), followers: pulse.followers, impressions: pulse.impressions, engagementRate: pulse.engagementRate }
     : social?.LinkedIn;
 
   return (
@@ -32,7 +74,11 @@ export default function SocialCards({ social, orgId: orgIdProp }) {
       {Object.entries(CONFIG).map(([platform, cfg], i) => {
         const Icon = cfg.icon;
         const data = platform === 'LinkedIn' ? linkedin : social?.[platform];
-        const hasData = !!data;
+        // Only metrics this platform actually reported — a zero here means "not
+        // measured", so showing it would read as a real result of nothing.
+        const shown = data
+          ? cfg.metrics.filter(([key]) => Number(data[key]) > 0).slice(0, 3)
+          : [];
         return (
           <motion.div
             key={platform}
@@ -48,12 +94,12 @@ export default function SocialCards({ social, orgId: orgIdProp }) {
               </div>
               <span className="font-bold text-slate-700 dark:text-slate-200">{platform}</span>
             </div>
-            {hasData ? (
-              <div className="grid grid-cols-3 gap-2">
-                {cfg.metrics.map(([key, label, suffix]) => (
+            {shown.length > 0 ? (
+              <div className={cn('grid gap-2', GRID[shown.length])}>
+                {shown.map(([key, label, suffix]) => (
                   <div key={key}>
                     <p className="text-lg font-extrabold tabular-nums text-slate-800 dark:text-white">
-                      <CountUp value={data[key] ?? 0} decimals={suffix === '%' ? 1 : 0} />{suffix || ''}
+                      <CountUp value={data[key]} decimals={suffix === '%' ? 1 : 0} />{suffix || ''}
                     </p>
                     <p className="text-[11px] text-slate-400">{label}</p>
                   </div>

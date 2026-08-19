@@ -80,7 +80,7 @@ export const getActivityLogs = asyncHandler(async (req, res) => {
 
   const skip = (Number(page) - 1) * Number(limit);
   const [logs, total] = await Promise.all([
-    ActivityLog.find(query).populate('user', 'name avatar').sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
+    ActivityLog.find(query).populate('user', 'name avatar').populate('organization', 'name').sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
     ActivityLog.countDocuments(query),
   ]);
   res.json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), logs });

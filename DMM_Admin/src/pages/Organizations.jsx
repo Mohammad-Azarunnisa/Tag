@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  Building2, Plus, Search, Pencil, Trash2, Users as UsersIcon, Send, Globe, Power, MoreVertical, ImagePlus,
+  Building2, Plus, Search, Pencil, Trash2, Users as UsersIcon, Send, MoreVertical, ImagePlus,
+  Ban, CircleCheck,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { organizationApi } from '../api/endpoints.js';
@@ -12,6 +13,7 @@ import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { formatDate } from '../lib/utils.js';
+import { sortOrganizations } from '../lib/organizations.js';
 
 export default function Organizations() {
   const qc = useQueryClient();
@@ -21,19 +23,41 @@ export default function Organizations() {
   const [modal, setModal] = useState(null);
   const [menuFor, setMenuFor] = useState(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ['organizations', search], queryFn: () => organizationApi.list({ search }) });
-  const orgs = data?.organizations || [];
+  const { data, isLoading } = useQuery({ queryKey: ['organizations', search, 'with-disabled'], queryFn: () => organizationApi.list({ search, includeDisabled: 1 }) });
+  const orgs = sortOrganizations(data?.organizations);
 
   const removeMut = useMutation({
     mutationFn: (id) => organizationApi.remove(id),
     onSuccess: () => { toast.success('Organization deleted'); qc.invalidateQueries({ queryKey: ['organizations'] }); },
     onError: (e) => toast.error(e.response?.data?.message || 'Delete failed'),
   });
+  // Disabling is not a label change: the server stops serving that college's
+  // data to its own people on the very next request (middleware/auth.js), so the
+  // action names the consequence and asks before doing it.
   const toggleMut = useMutation({
     mutationFn: ({ id, isActive }) => { const fd = new FormData(); fd.append('isActive', isActive); return organizationApi.update(id, fd); },
-    onSuccess: () => { toast.success('Organization updated'); qc.invalidateQueries({ queryKey: ['organizations'] }); },
+    onSuccess: (_res, vars) => {
+      toast.success(vars.isActive ? 'Organization enabled — its people can sign in again' : 'Organization disabled — its data is now hidden from its people');
+      qc.invalidateQueries({ queryKey: ['organizations'] });
+    },
     onError: (e) => toast.error(e.response?.data?.message || 'Update failed'),
   });
+
+  const confirmToggle = (org) => {
+    if (org.isActive) {
+      const members = org.memberCount || 0;
+      const lines = [
+        `Disable ${org.name}?`,
+        '',
+        `${members} member${members === 1 ? '' : 's'} will lose access immediately and will not be able to log in.`,
+        'Its content, approvals and analytics stay stored, but are hidden from its people until you enable it again.',
+        '',
+        'Nothing is deleted.',
+      ];
+      if (!window.confirm(lines.join('\n'))) return;
+    }
+    toggleMut.mutate({ id: org._id, isActive: !org.isActive });
+  };
 
   const totalMembers = orgs.reduce((a, o) => a + (o.memberCount || 0), 0);
   const totalPosts = orgs.reduce((a, o) => a + (o.postCount || 0), 0);
@@ -76,7 +100,7 @@ export default function Organizations() {
                     <div>
                       <p className="font-bold text-slate-800 dark:text-white">{o.name}</p>
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${o.isActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}>
-                        {o.isActive ? 'Active' : 'Inactive'}
+                        {o.isActive ? 'Active' : 'Disabled'}
                       </span>
                     </div>
                   </div>
@@ -88,7 +112,12 @@ export default function Organizations() {
                         <div className="fixed inset-0 z-10" onClick={() => setMenuFor(null)} />
                         <div className="absolute right-0 top-9 z-20 w-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5 shadow-card">
                           <MenuItem icon={Pencil} label="Edit" onClick={() => { setMenuFor(null); setModal({ type: 'edit', org: o }); }} />
-                          <MenuItem icon={Power} label={o.isActive ? 'Deactivate' : 'Activate'} onClick={() => { setMenuFor(null); toggleMut.mutate({ id: o._id, isActive: !o.isActive }); }} />
+                          <MenuItem
+                            icon={o.isActive ? Ban : CircleCheck}
+                            label={o.isActive ? 'Disable' : 'Enable'}
+                            danger={o.isActive}
+                            onClick={() => { setMenuFor(null); confirmToggle(o); }}
+                          />
                           <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenuFor(null); window.confirm(`Delete ${o.name}? This is only allowed if it has no members.`) && removeMut.mutate(o._id); }} />
                         </div>
                       </>

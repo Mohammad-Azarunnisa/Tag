@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, CalendarDays, Flame, Loader2, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { activityApi } from '../api/endpoints.js';
-import { Modal } from './ui/Modal.jsx';
 import { Card, Avatar, Badge, EmptyState, Skeleton } from './ui/primitives.jsx';
 import { cn, formatDateTime, formatNumber, timeAgo } from '../lib/utils.js';
 
@@ -162,8 +161,8 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
                 <p className="text-sm font-bold text-slate-900 dark:text-white">Super admin activity heatmap</p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {selectedOrg
-                    ? `A year of activity for ${selectedOrg.name}. Click any day to open the exact audit trail.`
-                    : 'A year of platform-wide actions at a glance. Click any day to open the exact audit trail.'}
+                    ? `A year of activity for ${selectedOrg.name}. Click any day to see that day’s audit trail below.`
+                    : 'A year of platform-wide actions at a glance. Click any day to see that day’s audit trail below.'}
                 </p>
               </div>
             </div>
@@ -178,7 +177,7 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
               <label className="flex flex-col gap-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
                 Organization
                 <select
-                  className="input-base h-10 min-w-[220px] cursor-pointer text-sm"
+                  className="input-base py-1 h-10 min-w-[220px] cursor-pointer text-sm"
                   value={selectedOrgId}
                   onChange={(e) => setSelectedOrgId(e.target.value)}
                 >
@@ -299,6 +298,14 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
                     </button>
                   )}
                 </div>
+                {selectedDate && (
+                  <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                    <SummaryTile label="Date" value={prettyDate(selectedDate)} />
+                    <SummaryTile label="Activities" value={dayLoading ? '…' : formatNumber(dayData?.total || 0)} />
+                    <SummaryTile label="Status" value={dayLoading ? 'Loading' : (dayData?.total || 0) === 0 ? 'Empty day' : 'Has activity'} />
+                  </div>
+                )}
+
                 {!selectedDate ? (
                   <EmptyState icon={Activity} title="No day selected" description="Click any heatmap square to load the actions from that date." />
                 ) : dayLoading ? (
@@ -310,8 +317,8 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
                 ) : selectedDay.length === 0 ? (
                   <EmptyState icon={CalendarDays} title="Empty day" description="Nothing was recorded on this date." />
                 ) : (
-                  <div className="space-y-2">
-                    {selectedDay.slice(0, 6).map((log) => {
+                  <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                    {selectedDay.map((log) => {
                       const meta = ACTION_META[log.action] || { tone: 'text-slate-600 bg-slate-100 dark:bg-slate-800', label: 'Activity' };
                       return (
                         <div key={log._id} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
@@ -327,9 +334,6 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
                         </div>
                       );
                     })}
-                    {selectedDay.length > 6 && (
-                      <p className="text-xs text-slate-400">Showing the first 6 actions for space. Open the full activity log for the complete audit trail.</p>
-                    )}
                   </div>
                 )}
               </Card>
@@ -347,53 +351,13 @@ export default function ActivityHeatmapCard({ organizations = [] }) {
                 <div className="mt-4 space-y-3 text-sm text-white/82">
                   <InfoLine title="High activity" text="A bright cluster means a busy day, useful for spotting launches, approvals, or bursts in moderation." />
                   <InfoLine title="Empty days" text="Light squares are still visible, so gaps in platform action stand out immediately." />
-                  <InfoLine title="Click to inspect" text="Selecting a day opens the exact actions and people involved, turning the heatmap into a fast audit tool." />
+                  <InfoLine title="Click to inspect" text="Selecting a day lists the exact actions and people involved right below the map, turning the heatmap into a fast audit tool." />
                 </div>
               </Card>
             </div>
           </div>
         )}
       </div>
-
-      <Modal open={!!selectedDate} onClose={() => setSelectedDate(null)} title={selectedDate ? `Activity on ${prettyDate(selectedDate)}` : 'Activity'} size="lg">
-        {selectedDate && dayLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-20" />
-            <Skeleton className="h-20" />
-            <Skeleton className="h-20" />
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <SummaryTile label="Date" value={selectedDate ? prettyDate(selectedDate) : '-'} />
-              <SummaryTile label="Activities" value={formatNumber(dayData?.total || 0)} />
-              <SummaryTile label="Status" value={(dayData?.total || 0) === 0 ? 'Empty day' : 'Has activity'} />
-            </div>
-            {selectedDay.length === 0 ? (
-              <EmptyState icon={CalendarDays} title="No actions on this day" description="This is the exact empty state you asked for: the square exists, but the audit trail is empty." />
-            ) : (
-              <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
-                {selectedDay.map((log) => {
-                  const meta = ACTION_META[log.action] || { tone: 'text-slate-600 bg-slate-100 dark:bg-slate-800', label: 'Activity' };
-                  return (
-                    <div key={log._id} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-                      <Avatar src={log.user?.avatar} name={log.user?.name} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold text-slate-800 dark:text-white">{log.user?.name || 'Someone'}</p>
-                          <Badge className={meta.tone}>{meta.label}</Badge>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{log.description || 'No description provided.'}</p>
-                        <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(log.createdAt)}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
     </Card>
   );
 }

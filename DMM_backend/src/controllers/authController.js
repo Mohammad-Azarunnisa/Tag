@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import crypto from 'crypto';
 import User from '../models/User.js';
+import Organization from '../models/Organization.js';
 import { generateToken } from '../utils/token.js';
 import { sendEmail, isEmailConfigured } from '../utils/email.js';
 import { ROLES } from '../config/constants.js';
@@ -125,6 +126,13 @@ export const login = asyncHandler(async (req, res) => {
       res.status(403);
       throw new Error('Your account is not assigned to any institution. Contact your administrator.');
     }
+    // Held institutions can all be disabled, which leaves nothing to sign in to.
+    // Saying so here beats letting them in and having every request 403.
+    const liveHolds = await Organization.countDocuments({ _id: { $in: holds }, isActive: { $ne: false } });
+    if (!liveHolds) {
+      res.status(403);
+      throw new Error('Your organization has been disabled. Contact your administrator.');
+    }
   } else if (user.role !== ROLES.ADMIN) {
     // A college account belongs to exactly one organization, and it must be live.
     if (!user.organization) {
@@ -133,7 +141,7 @@ export const login = asyncHandler(async (req, res) => {
     }
     if (user.organization.isActive === false) {
       res.status(403);
-      throw new Error('Your organization has been deactivated. Contact your administrator.');
+      throw new Error('Your organization has been disabled. Contact your administrator.');
     }
   }
   res.json({ success: true, user: sanitize(user), token: generateToken(user._id) });

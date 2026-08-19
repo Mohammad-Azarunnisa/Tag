@@ -3,7 +3,7 @@ import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { Card } from '../ui/primitives.jsx';
-import { CHART_COLORS } from '../../lib/utils.js';
+import { cn, CHART_COLORS } from '../../lib/utils.js';
 
 const axisStyle = { fontSize: 12, fill: '#94a3b8' };
 const tooltipStyle = {
@@ -53,22 +53,118 @@ export function MonthlyTrendChart({ data }) {
   );
 }
 
-export function FollowerTrendChart({ data }) {
+// Audience growth, faceted one panel per platform.
+//
+// It used to be four lines on a single pair of axes, which failed in three ways
+// at once. LinkedIn's brand blue (#0A66C2) and Facebook's (#1877F2) are ΔE 8.4
+// apart to normal vision — below the readable floor of 15, so the two lines were
+// genuinely indistinguishable rather than merely similar. A shared y-axis scaled
+// to LinkedIn's ~11.5k flattened YouTube's ~1.5k into a line with no visible
+// movement. And because the platforms started reporting on different dates, three
+// of the four series were short stubs on the right of a mostly empty plot.
+//
+// Faceting fixes all three: one series per panel needs no colour to be told apart
+// (its heading names it), each panel scales to its own data so every platform's
+// shape is legible, and each spans only the dates it actually has.
+const AUDIENCE_PANELS = [
+  { key: 'LinkedIn', color: '#0A66C2', unit: 'followers' },
+  { key: 'Instagram', color: '#E1306C', unit: 'followers' },
+  { key: 'Facebook', color: '#1877F2', unit: 'followers' },
+  { key: 'YouTube', color: '#FF0000', unit: 'subscribers' },
+];
+
+const compact = (v) => {
+  const n = Number(v) || 0;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+};
+
+function AudiencePanel({ panel, rows }) {
+  // Only the stretch this platform actually reported. A carried-forward series has
+  // leading nulls until its first reading (see dashboardController) and plotting
+  // those as a flat run would invent history it never had.
+  const points = rows.filter((r) => r[panel.key] != null).map((r) => ({ date: r.date, value: r[panel.key] }));
+  if (points.length === 0) {
+    return (
+      <div className="rounded-2xl border border-slate-100 p-4 dark:border-slate-800">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: panel.color }} />
+          <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{panel.key}</p>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">No {panel.unit} recorded yet.</p>
+      </div>
+    );
+  }
+
+  const first = points[0].value;
+  const latest = points[points.length - 1].value;
+  const gained = latest - first;
+  // Padded a little so the line never sits on the panel's edges — a tight domain
+  // is what makes a small change visible at all at this size.
+  const lo = Math.min(...points.map((p) => p.value));
+  const hi = Math.max(...points.map((p) => p.value));
+  const pad = Math.max(1, Math.round((hi - lo) * 0.15));
+
   return (
-    <ChartCard title="Audience Growth" subtitle="Followers / subscribers across platforms">
-      <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={data} margin={{ left: -10, right: 8, top: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-          <XAxis dataKey="date" tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(d) => d?.slice(5)} minTickGap={24} />
-          <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
-          <Tooltip {...tooltipStyle} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Line type="monotone" dataKey="LinkedIn" stroke="#0A66C2" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="Instagram" stroke="#E1306C" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="Facebook" stroke="#1877F2" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="YouTube" stroke="#FF0000" strokeWidth={2} dot={false} />
+    <div className="rounded-2xl border border-slate-100 p-4 dark:border-slate-800">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          {/* Identity comes from the heading, with the dot as reinforcement —
+              never from the colour alone. */}
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: panel.color }} />
+            <p className="truncate text-sm font-bold text-slate-700 dark:text-slate-200">{panel.key}</p>
+          </div>
+          <p className="mt-1 text-2xl font-extrabold tabular-nums leading-none text-slate-800 dark:text-white">
+            {compact(latest)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">{panel.unit}</p>
+        </div>
+        {gained !== 0 && (
+          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums',
+            gained > 0
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+              : 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300')}>
+            {gained > 0 ? '+' : ''}{compact(gained)}
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={92}>
+        <LineChart data={points} margin={{ top: 4, right: 6, bottom: 0, left: 6 }}>
+          <CartesianGrid stroke="#e2e8f0" strokeWidth={1} vertical={false} />
+          <XAxis dataKey="date" hide />
+          <YAxis domain={[lo - pad, hi + pad]} hide />
+          <Tooltip
+            {...tooltipStyle}
+            labelFormatter={(d) => d}
+            formatter={(v) => [Number(v).toLocaleString('en-IN'), panel.unit]}
+          />
+          <Line
+            type="monotone" dataKey="value" stroke={panel.color} strokeWidth={2}
+            strokeLinecap="round" strokeLinejoin="round" dot={false}
+            activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }}
+          />
         </LineChart>
       </ResponsiveContainer>
+      <p className="mt-1 text-[11px] text-slate-400">
+        {points[0].date} → {points[points.length - 1].date}
+      </p>
+    </div>
+  );
+}
+
+export function FollowerTrendChart({ data }) {
+  const rows = data || [];
+  return (
+    <ChartCard title="Audience Growth" subtitle="Followers / subscribers, per platform">
+      {rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">No audience history recorded yet.</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {AUDIENCE_PANELS.map((panel) => <AudiencePanel key={panel.key} panel={panel} rows={rows} />)}
+        </div>
+      )}
     </ChartCard>
   );
 }

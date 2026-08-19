@@ -38,6 +38,13 @@ export const getOrganizations = asyncHandler(async (req, res) => {
   const { search } = req.query;
   const query = {};
   if (search) query.name = { $regex: search, $options: 'i' };
+  // A disabled organization is meant to disappear from the product, and this one
+  // endpoint feeds most of the console's org pickers, counts and roll-ups — so
+  // hiding it here hides it everywhere at once, rather than each caller having to
+  // remember. The Organizations management page opts back in with
+  // `includeDisabled=1`, because that is where a disabled college is turned back
+  // on and it cannot be re-enabled if it cannot be seen.
+  if (req.query.includeDisabled !== '1') query.isActive = { $ne: false };
   // The super admin sees every college; an Admin sees the ones they hold, and
   // reads them only — creating and changing a college stays super-admin-only,
   // enforced by requireSuperAdmin on those routes.
@@ -147,7 +154,16 @@ export const updateOrganization = asyncHandler(async (req, res) => {
   if (description !== undefined) org.description = description;
   if (website !== undefined) org.website = website;
   if (color) org.color = color;
-  if (typeof isActive === 'boolean') org.isActive = isActive;
+  // This route is multipart/form-data (it accepts a logo upload), and multipart
+  // delivers every field as a string — so a boolean arrives as "true"/"false".
+  // The old `typeof === 'boolean'` test therefore never matched and the flag was
+  // silently dropped: Disable/Enable looked like it worked, the toast appeared,
+  // and the organization stayed exactly as it was. Accept both shapes.
+  if (isActive !== undefined && isActive !== null && isActive !== '') {
+    org.isActive = typeof isActive === 'boolean'
+      ? isActive
+      : !['false', '0', 'no', 'off'].includes(String(isActive).trim().toLowerCase());
+  }
   if (goal && typeof goal === 'object') {
     org.goal = {
       year: Number(goal.year) || org.goal?.year || 0,

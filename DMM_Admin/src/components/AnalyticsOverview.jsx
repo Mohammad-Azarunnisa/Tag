@@ -9,19 +9,13 @@ import { analyticsApi } from '../api/endpoints.js';
 import { Card, Skeleton, EmptyState } from './ui/primitives.jsx';
 import CountUp from './CountUp.jsx';
 import { formatNumber, formatDate, cn } from '../lib/utils.js';
+import { orgRank } from '../lib/organizations.js';
 
 const ICON = { LinkedIn: Linkedin, Instagram: Instagram, YouTube: Youtube, Facebook: Facebook, 'X (Twitter)': Twitter, Website: Globe };
 const COLOR = { LinkedIn: '#0A66C2', Instagram: '#E1306C', YouTube: '#FF0000', Facebook: '#1877F2', 'X (Twitter)': '#0f172a', Website: '#0ea5e9' };
 const PAGE = 12;
 
-// The group's preferred display order (grid default; column sorts override).
-// Anything not listed lands at the end, alphabetically.
-const ORG_ORDER = ['ncet', 'ncms', 'ndc', 'toriiminds', 'npuc cbpur', 'npuc yelahanka', 'educare', 'technical hub'];
-const orgRank = (name = '') => {
-  const n = name.toLowerCase();
-  const i = ORG_ORDER.findIndex((k) => n.includes(k));
-  return i === -1 ? ORG_ORDER.length : i;
-};
+
 
 // Cross-organization grid: one row per org, one column per platform. Each cell
 // shows the audience count with a strength bar (share of the column's leader),
@@ -124,7 +118,7 @@ export default function AnalyticsOverview({ onOpen }) {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4 dark:border-slate-800">
           <div className="relative w-full max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search organizations…" className="input-base h-10 pl-9" />
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search organizations…" className="input-base py-1 h-10 pl-9" />
           </div>
           <p className="text-xs text-slate-400">
             {filtered.length} organization{filtered.length === 1 ? '' : 's'} · bars show each college's share of the platform leader ·

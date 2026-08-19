@@ -123,7 +123,7 @@ export default function ProfileReviews() {
             {rejecting === r._id && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why is this rejected? (sent to the user)"
-                  className="input-base h-9 flex-1 text-sm" />
+                  className="input-base py-1 h-9 flex-1 text-sm" />
                 <Button size="sm" loading={reviewMut.isPending}
                   className={cn('bg-rose-600 hover:bg-rose-700')}
                   onClick={() => reviewMut.mutate({ id: r._id, action: 'reject', note })}>

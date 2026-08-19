@@ -118,7 +118,7 @@ export default function ActivityHeatmap({ orgId, platform }) {
           <label className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
             Metric
             <select
-              className="input-base h-9 w-auto cursor-pointer text-sm font-semibold"
+              className="input-base py-1 h-9 w-auto cursor-pointer text-sm font-semibold"
               value={data.metric || ''} onChange={(e) => setMetric(e.target.value)}
             >
               {data.metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
