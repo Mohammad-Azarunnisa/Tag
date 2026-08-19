@@ -1,7 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 import ActivityLog from '../models/ActivityLog.js';
-import { resolveOrgId } from '../utils/org.js';
+import { resolveOrgId, canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import { ROLES } from '../config/constants.js';
 
 const toUtcDateKey = (date) => new Date(date).toISOString().slice(0, 10);
@@ -40,7 +40,11 @@ const getActivityScope = (req, requestedOrganizationId) => {
     return query;
   }
 
-  const orgId = requestedOrganizationId || req.user.organization?._id || req.user.organization;
+  // Everyone else (CEO/USER) may only ever see organizations they actually
+  // hold — an unrecognized/foreign requested org falls back to their own,
+  // the same rule every other scoped endpoint in the app follows.
+  const requestedIsAllowed = requestedOrganizationId && canAccessOrg(req.user, requestedOrganizationId);
+  const orgId = requestedIsAllowed ? requestedOrganizationId : (req.user.organization?._id || req.user.organization);
   if (orgId) query.organization = orgId;
 
   if (req.user.role === ROLES.USER) {
@@ -59,9 +63,18 @@ export const getActivityLogs = asyncHandler(async (req, res) => {
   if (req.user.role === ROLES.ADMIN) {
     const orgId = resolveOrgId(req);
     if (orgId) query.organization = orgId;
+  } else if (req.user.role === ROLES.CEO) {
+    // A CEO may hold more than one institution (managedOrganizations) — show
+    // all of them by default, or the one they asked for if it's theirs.
+    const requested = req.query.organizationId;
+    if (requested && canAccessOrg(req.user, requested)) {
+      query.organization = requested;
+    } else {
+      query.organization = { $in: accessibleOrgIds(req.user) || [] };
+    }
   } else {
     query.organization = req.user.organization?._id || req.user.organization;
-    if (req.user.role !== ROLES.CEO) query.user = req.user._id;
+    query.user = req.user._id;
   }
   if (action && action !== 'All') query.action = action;
 

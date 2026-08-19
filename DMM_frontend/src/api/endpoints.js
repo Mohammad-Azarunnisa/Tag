@@ -63,6 +63,11 @@ export const linkedinApi = {
   },
 };
 
+// ---- Global search (approvals/templates/assets/users, org-scoped) ----
+export const searchApi = {
+  query: (q) => api.get('/search', { params: { q } }).then((r) => r.data),
+};
+
 // ---- Organizations (options for pickers — any authenticated user) ----
 export const organizationApi = {
   options: () => api.get('/organizations/options').then((r) => r.data),

@@ -19,6 +19,7 @@ import Website from '../models/Website.js';
 import Purchase from '../models/Purchase.js';
 import ActivityLog from '../models/ActivityLog.js';
 import { computeProgress } from '../controllers/goalController.js';
+import { accessibleOrgIds } from '../utils/org.js';
 import { PLATFORMS, ROLES, APPROVAL_STATUS } from '../config/constants.js';
 
 // Metrics that are lifetime totals (report end-of-period value, not a sum).
@@ -425,7 +426,12 @@ const handlers = {
   },
 
   async team_members(_input, user) {
-    const users = await User.find({}).populate('organization', 'name').populate('handles.organization', 'name').select('name role organization isActive jobTitle email skills tools handles').sort({ role: 1, name: 1 }).lean();
+    // Scoped like every other org-bound resource this assistant can see — an
+    // unrestricted ADMIN gets everyone, everyone else only the organizations
+    // they can actually access (their own, or their `handles`).
+    const allowed = accessibleOrgIds(user);
+    const scope = allowed === null ? {} : { $or: [{ organization: { $in: allowed } }, { 'handles.organization': { $in: allowed } }] };
+    const users = await User.find(scope).populate('organization', 'name').populate('handles.organization', 'name').select('name role organization isActive jobTitle email skills tools handles').sort({ role: 1, name: 1 }).lean();
     const privileged = [ROLES.ADMIN, ROLES.CEO].includes(user.role);
     return {
       total: users.length,

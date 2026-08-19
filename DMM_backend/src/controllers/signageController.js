@@ -6,14 +6,23 @@ import Event from '../models/Event.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { logActivity } from '../utils/logActivity.js';
 import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { escapeRegex } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, ROLES, SIGNAGE_TYPES, SIGNAGE_LOCATION_STATUS } from '../config/constants.js';
 
-// May this user edit/delete? The creator, any Admin or the org CEO — same
-// shared-workspace rule as Events.
-const canManage = (user, doc) =>
-  String(doc.createdBy) === String(user._id) ||
-  user.role === ROLES.ADMIN ||
-  user.role === ROLES.CEO;
+// May this user edit/delete? The creator, any Admin, or the CEO of the college
+// the doc belongs to (a shared/college-wide doc has no organization, so any
+// CEO may manage it). Banners don't carry an organization of their own — it's
+// resolved from the stand they're mounted on.
+const canManage = async (user, doc) => {
+  if (String(doc.createdBy) === String(user._id) || user.role === ROLES.ADMIN) return true;
+  if (user.role !== ROLES.CEO) return false;
+  let orgId = doc.organization;
+  if (orgId === undefined && doc.location) {
+    const loc = await SignageLocation.findById(doc.location).select('organization').lean();
+    orgId = loc?.organization;
+  }
+  return !orgId || canAccessOrg(user, orgId);
+};
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
 const UNITS = ['ft', 'in', 'cm', 'm'];
@@ -34,19 +43,26 @@ const resolveOrg = async (organization) => {
 export const listLocations = asyncHandler(async (req, res) => {
   const { search, standType, status, organizationId } = req.query;
   const query = {};
+  const ands = [];
   const allowed = accessibleOrgIds(req.user);
+  // A specific college sees its own stands PLUS the shared/college-wide ones
+  // (organization: null) — same convention as assets/templates/events.
+  const orgFilter = organizationId
+    ? { $or: [{ organization: organizationId }, { organization: null }] }
+    : (allowed !== null ? { $or: [{ organization: { $in: allowed } }, { organization: null }] } : null);
   if (organizationId) {
     if (allowed !== null && !allowed.includes(String(organizationId))) { res.status(403); throw new Error('Not allowed'); }
-    query.organization = organizationId;
-  } else if (allowed !== null) {
-    query.organization = { $in: allowed };
   }
+  if (orgFilter) ands.push(orgFilter);
   if (standType && standType !== 'All') query.standType = standType;
   if (status && status !== 'All') query.status = status;
-  if (search) query.$or = [
-    { code: { $regex: search, $options: 'i' } },
-    { place: { $regex: search, $options: 'i' } },
-  ];
+  if (search) ands.push({
+    $or: [
+      { code: { $regex: escapeRegex(search), $options: 'i' } },
+      { place: { $regex: escapeRegex(search), $options: 'i' } },
+    ],
+  });
+  if (ands.length) query.$and = ands;
 
   const [locations, all] = await Promise.all([
     SignageLocation.find(query)
@@ -54,7 +70,7 @@ export const listLocations = asyncHandler(async (req, res) => {
       .populate('organization', 'name color')
       .sort({ code: 1 })
       .lean(),
-    SignageLocation.find(organizationId ? { organization: organizationId } : (allowed !== null ? { organization: { $in: allowed } } : {})).select('status').lean(),
+    SignageLocation.find(orgFilter || {}).select('status').lean(),
   ]);
 
   // Attach each stand's current banner (visual + event shown on the card).
@@ -117,7 +133,7 @@ export const createLocation = asyncHandler(async (req, res) => {
 export const updateLocation = asyncHandler(async (req, res) => {
   const location = await SignageLocation.findById(req.params.id);
   if (!location) { res.status(404); throw new Error('Location not found'); }
-  if (!canManage(req.user, location)) { res.status(403); throw new Error('Not allowed to edit this location'); }
+  if (!(await canManage(req.user, location))) { res.status(403); throw new Error('Not allowed to edit this location'); }
 
   const { code, place, standType, width, height, sizeUnit, notes, organization, status } = req.body;
   if (code !== undefined) {
@@ -160,7 +176,7 @@ export const updateLocation = asyncHandler(async (req, res) => {
 export const deleteLocation = asyncHandler(async (req, res) => {
   const location = await SignageLocation.findById(req.params.id);
   if (!location) { res.status(404); throw new Error('Location not found'); }
-  if (!canManage(req.user, location)) { res.status(403); throw new Error('Not allowed to delete this location'); }
+  if (!(await canManage(req.user, location))) { res.status(403); throw new Error('Not allowed to delete this location'); }
 
   const banners = await SignageBanner.find({ location: location._id }).lean();
   const files = [location.photoPublicId];
@@ -193,12 +209,26 @@ const uploadSlot = async (file, doc, urlKey, idKey) => {
 // timeline (newest first); ?search/?status/?eventName filter across all stands.
 export const listBanners = asyncHandler(async (req, res) => {
   const { locationId, search, status } = req.query;
+  const allowed = accessibleOrgIds(req.user);
   const query = {};
-  if (locationId) query.location = locationId;
+  if (locationId) {
+    // A banner has no organization of its own — resolve it from the stand
+    // it's mounted on and refuse to hand back another college's history.
+    if (allowed !== null) {
+      const loc = await SignageLocation.findById(locationId).select('organization').lean();
+      if (loc?.organization && !allowed.includes(String(loc.organization))) {
+        res.status(403); throw new Error('Not allowed');
+      }
+    }
+    query.location = locationId;
+  } else if (allowed !== null) {
+    const locs = await SignageLocation.find({ $or: [{ organization: { $in: allowed } }, { organization: null }] }).select('_id').lean();
+    query.location = { $in: locs.map((l) => l._id) };
+  }
   if (status && status !== 'All') query.status = status;
   if (search) query.$or = [
-    { title: { $regex: search, $options: 'i' } },
-    { eventName: { $regex: search, $options: 'i' } },
+    { title: { $regex: escapeRegex(search), $options: 'i' } },
+    { eventName: { $regex: escapeRegex(search), $options: 'i' } },
   ];
   const banners = await SignageBanner.find(query)
     .populate('location', 'code place standType width height sizeUnit')
@@ -264,7 +294,7 @@ export const createBanner = asyncHandler(async (req, res) => {
 export const updateBanner = asyncHandler(async (req, res) => {
   const banner = await SignageBanner.findById(req.params.id);
   if (!banner) { res.status(404); throw new Error('Banner not found'); }
-  if (!canManage(req.user, banner)) { res.status(403); throw new Error('Not allowed to edit this banner'); }
+  if (!(await canManage(req.user, banner))) { res.status(403); throw new Error('Not allowed to edit this banner'); }
 
   const { title, eventName, event, width, height, sizeUnit, installedAt, notes } = req.body;
   if (title !== undefined) { if (!title.trim()) { res.status(400); throw new Error('A banner title is required'); } banner.title = title.trim(); }
@@ -297,7 +327,7 @@ export const updateBanner = asyncHandler(async (req, res) => {
 export const removeBanner = asyncHandler(async (req, res) => {
   const banner = await SignageBanner.findById(req.params.id);
   if (!banner) { res.status(404); throw new Error('Banner not found'); }
-  if (!canManage(req.user, banner)) { res.status(403); throw new Error('Not allowed to update this banner'); }
+  if (!(await canManage(req.user, banner))) { res.status(403); throw new Error('Not allowed to update this banner'); }
   if (banner.status !== 'ACTIVE') { res.status(400); throw new Error('This banner is already removed'); }
 
   banner.status = 'REMOVED';
@@ -321,7 +351,7 @@ export const removeBanner = asyncHandler(async (req, res) => {
 export const deleteBanner = asyncHandler(async (req, res) => {
   const banner = await SignageBanner.findById(req.params.id);
   if (!banner) { res.status(404); throw new Error('Banner not found'); }
-  if (!canManage(req.user, banner)) { res.status(403); throw new Error('Not allowed to delete this banner'); }
+  if (!(await canManage(req.user, banner))) { res.status(403); throw new Error('Not allowed to delete this banner'); }
 
   await Promise.all([banner.previewPublicId, banner.sourcePublicId, banner.photoPublicId].filter(Boolean).map((id) => deleteFile(id)));
   const wasActive = banner.status === 'ACTIVE';

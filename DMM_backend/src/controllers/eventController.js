@@ -7,12 +7,14 @@ import { canAccessOrg, resolveViewOrgId } from '../utils/org.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { createEventDriveFolder, uploadEventPhoto, deleteDriveFile, isDriveConfigured } from '../services/googleDrive.js';
 
-// May this user edit/delete the event? The creator, any Admin (CEO) or the
-// Super Admin / global Admin.
+// May this user edit/delete the event? The creator, the Super Admin / global
+// Admin, or the CEO of the college the event belongs to (a shared/college-wide
+// event has no organization, so any CEO may manage it) — a CEO must not be
+// able to touch another college's event.
 const canManage = (user, event) =>
   String(event.createdBy) === String(user._id) ||
   user.role === ROLES.ADMIN ||
-  user.role === ROLES.CEO;
+  (user.role === ROLES.CEO && (!event.organization || canAccessOrg(user, event.organization)));
 
 const requireDrive = (res) => {
   if (isDriveConfigured()) return;

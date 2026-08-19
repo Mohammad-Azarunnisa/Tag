@@ -57,7 +57,11 @@ const analyticsSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-analyticsSchema.index({ organization: 1, platform: 1, date: -1 });
+// Unique so two near-simultaneous writers (a cron sync, a manual "Sync" click,
+// a standalone script) for the same day can never both insert — one becomes
+// an insert, the other an update, instead of silently doubling that day's
+// numbers in weekly/period aggregation.
+analyticsSchema.index({ organization: 1, platform: 1, date: 1 }, { unique: true });
 
 const Analytics = mongoose.model('Analytics', analyticsSchema);
 export default Analytics;

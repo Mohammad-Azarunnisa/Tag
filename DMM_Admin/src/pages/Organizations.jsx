@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -135,10 +135,22 @@ function OrgFormModal({ org, onClose, onSaved }) {
   const [logo, setLogo] = useState(null);
   const [preview, setPreview] = useState(org?.logo || '');
   const [loading, setLoading] = useState(false);
+  // Tracks the currently-active blob URL so it can be revoked on replacement,
+  // clear, or unmount instead of leaking.
+  const objectUrlRef = useRef(null);
 
-  const onLogo = (e) => { const f = e.target.files?.[0]; if (f) { setLogo(f); setPreview(URL.createObjectURL(f)); } };
+  const revokePreview = () => {
+    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
+  };
+
+  const onLogo = (e) => {
+    const f = e.target.files?.[0];
+    if (f) { revokePreview(); const url = URL.createObjectURL(f); objectUrlRef.current = url; setLogo(f); setPreview(url); }
+  };
   // Drops the pick and goes back to whatever the organization already had.
-  const clearLogo = () => { setLogo(null); setPreview(org?.logo || ''); };
+  const clearLogo = () => { revokePreview(); setLogo(null); setPreview(org?.logo || ''); };
+
+  useEffect(() => () => revokePreview(), []);
 
   const submit = async (e) => {
     e.preventDefault();

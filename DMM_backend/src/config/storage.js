@@ -54,9 +54,13 @@ async function deleteFile(publicId) {
     await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
     return;
   }
-  // local: publicId is a path relative to uploads root
+  // local: publicId is a path relative to uploads root. A plain startsWith
+  // check would also match a sibling directory (e.g. UPLOAD_ROOT + "-backup"),
+  // so require the real path to land inside UPLOAD_ROOT via the path
+  // separator, not just share its string prefix.
   const abs = path.join(UPLOAD_ROOT, publicId);
-  if (abs.startsWith(UPLOAD_ROOT) && fs.existsSync(abs)) fs.unlinkSync(abs);
+  const withinRoot = abs === UPLOAD_ROOT || abs.startsWith(UPLOAD_ROOT + path.sep);
+  if (withinRoot && fs.existsSync(abs)) fs.unlinkSync(abs);
 }
 
 // ---------- local driver ----------

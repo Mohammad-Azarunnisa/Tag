@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { User, Lock, Palette, Sun, Moon, Camera } from 'lucide-react';
 import { userApi } from '../api/endpoints.js';
@@ -46,8 +46,22 @@ function ProfileTab() {
   const [avatar, setAvatar] = useState(null);
   const [preview, setPreview] = useState(user?.avatar || '');
   const [loading, setLoading] = useState(false);
+  // Tracks the currently-active blob URL so it can be revoked on replacement
+  // or unmount instead of leaking.
+  const objectUrlRef = useRef(null);
 
-  const onAvatar = (e) => { const f = e.target.files?.[0]; if (f) { setAvatar(f); setPreview(URL.createObjectURL(f)); } };
+  const onAvatar = (e) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      const url = URL.createObjectURL(f);
+      objectUrlRef.current = url;
+      setAvatar(f);
+      setPreview(url);
+    }
+  };
+
+  useEffect(() => () => { if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current); }, []);
 
   const save = async () => {
     setLoading(true);

@@ -10,18 +10,20 @@ export function endOfUtcDay(date = new Date()) {
 
 // Upsert a single daily snapshot. Existing values for the same day are merged
 // into the same row so repeated refreshes update the day's record instead of
-// creating duplicates.
+// creating duplicates. Uses an atomic findOneAndUpdate (not a
+// read-then-conditionally-insert) so two callers racing for the same
+// organization/platform/day — the nightly cron, a manual sync, a standalone
+// script — can never both insert and double that day's numbers.
 export async function upsertDailySnapshot(orgId, platform, metrics, date = new Date()) {
   const day = startOfUtcDay(date);
-  const dayEnd = endOfUtcDay(date);
-  let snap = await Analytics.findOne({ organization: orgId, platform, date: { $gte: day, $lt: dayEnd } });
-  if (!snap) snap = new Analytics({ organization: orgId, platform, date: day });
-
+  const set = {};
   for (const [field, raw] of Object.entries(metrics || {})) {
     const val = Number(raw);
-    if (Number.isFinite(val) && val >= 0) snap[field] = val;
+    if (Number.isFinite(val) && val >= 0) set[field] = val;
   }
-
-  await snap.save();
-  return snap;
+  return Analytics.findOneAndUpdate(
+    { organization: orgId, platform, date: day },
+    { $set: set, $setOnInsert: { organization: orgId, platform, date: day } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }

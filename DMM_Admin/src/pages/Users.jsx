@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -274,6 +274,13 @@ function UserFormModal({ editUser, onClose, onSaved }) {
   // while a new file is chosen, or the saved avatar when editing.
   const [avatar, setAvatar] = useState(null);
   const [preview, setPreview] = useState(editUser?.avatar || '');
+  // Tracks the currently-active blob URL so it can be revoked on replacement,
+  // undo, or unmount instead of leaking.
+  const objectUrlRef = useRef(null);
+  const revokePreview = () => {
+    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
+  };
+  useEffect(() => () => revokePreview(), []);
   const { data: orgData } = useQuery({ queryKey: ['organizations', 'all'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];
   const isSuper = form.role === 'SUPER';
@@ -340,8 +347,11 @@ function UserFormModal({ editUser, onClose, onSaved }) {
       toast.error('That image is over 5 MB — please pick a smaller one');
       return;
     }
+    revokePreview();
+    const url = URL.createObjectURL(file);
+    objectUrlRef.current = url;
     setAvatar(file);
-    setPreview(URL.createObjectURL(file));
+    setPreview(url);
   };
 
   // A file forces multipart; without one the JSON path is untouched. FormData
@@ -414,7 +424,7 @@ function UserFormModal({ editUser, onClose, onSaved }) {
                   onChange={(e) => { pickAvatar(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
               {avatar && (
-                <button type="button" onClick={() => { setAvatar(null); setPreview(editUser?.avatar || ''); }}
+                <button type="button" onClick={() => { revokePreview(); setAvatar(null); setPreview(editUser?.avatar || ''); }}
                   className="rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-400 transition-colors hover:text-rose-600">
                   Undo
                 </button>

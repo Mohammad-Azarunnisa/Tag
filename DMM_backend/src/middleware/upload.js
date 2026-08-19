@@ -31,55 +31,35 @@ const ALLOWED_EXTENSIONS = new Set([
   '.txt',
 ]);
 
-const ALLOWED = {
-  image: ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/svg+xml'],
-  video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/ogg', 'video/x-m4v'],
-  doc: [
-    'application/pdf',
-    'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'application/postscript', // .ai
-    'image/vnd.adobe.photoshop', // .psd
-    'application/illustrator',
-    'application/eps',
-    'application/photoshop',
-    'application/x-photoshop',
-    'image/x-photoshop',
-    'application/octet-stream', // some .psd/.ai/.xlsx come through as this
-    'application/msword', // .doc
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-  ],
-  sheet: [
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-    'application/vnd.ms-excel', // .xls
-    'text/csv', // .csv
-    'application/csv',
-    'text/plain',
-  ],
-};
-
-const allowedMimeTypes = new Set([...ALLOWED.image, ...ALLOWED.video, ...ALLOWED.doc, ...ALLOWED.sheet]);
-
 const getExtension = (filename = '') => {
   const dotIndex = filename.lastIndexOf('.');
   return dotIndex >= 0 ? filename.slice(dotIndex).toLowerCase() : '';
 };
 
+// The client controls both the declared mimetype and the filename, so neither
+// is proof of real content — but gating on the extension alone (rather than
+// mimetype-OR-extension) closes the "any file at all, labelled
+// application/octet-stream" bypass: that mimetype is only on the allowlist as
+// a fallback for a handful of real formats (.psd/.ai/.xlsx sometimes arrive
+// with it), and accepting it unconditionally accepted everything.
 const fileFilter = (req, file, cb) => {
   const extension = getExtension(file.originalname);
-  if (allowedMimeTypes.has(file.mimetype) || ALLOWED_EXTENSIONS.has(extension)) return cb(null, true);
-  cb(new Error(`Unsupported file type: ${file.mimetype}`));
+  if (ALLOWED_EXTENSIONS.has(extension)) return cb(null, true);
+  cb(new Error(`Unsupported file type: ${extension || file.mimetype}`));
 };
+
+// 500MB — generous enough for the video uploads this app allows (event
+// albums, signage banner photos/reels, brand videos) while still bounding
+// per-request memory, since files are buffered fully in memory before being
+// handed to the storage driver. Multiple concurrent uploads at this ceiling
+// still add up; if that becomes a real constraint, switch memoryStorage to
+// diskStorage streaming in this file so files never fully load into memory.
+const MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 const upload = multer({
   storage,
   fileFilter,
-  // No file-size cap — templates, assets, brand files, avatars and videos may be
-  // any size. The only practical ceiling is server RAM, because files are buffered
-  // in memory before being handed to the storage driver. If you routinely upload
-  // very large videos (multi-GB), switch memoryStorage → diskStorage streaming in
-  // this file so files never fully load into memory.
-  limits: { fileSize: Infinity },
+  limits: { fileSize: MAX_FILE_BYTES },
 });
 
 export default upload;

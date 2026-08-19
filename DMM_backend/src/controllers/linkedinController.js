@@ -150,8 +150,12 @@ const ingestDemographicGrid = async (grid, orgId, audience, det) => {
   }
   if (!rows.length) return 0;
   // Replace semantics: the latest export is the truth for this category.
-  await AudienceDemographic.deleteMany({ organization: orgId, platform: 'LinkedIn', audience, category: det.category });
+  // Insert the new rows BEFORE removing the old ones (rather than
+  // delete-then-insert) so a dashboard read racing this import sees the old
+  // data briefly doubled up at worst, never this category wiped to empty.
+  const stale = await AudienceDemographic.find({ organization: orgId, platform: 'LinkedIn', audience, category: det.category }).select('_id').lean();
   await AudienceDemographic.insertMany(rows);
+  if (stale.length) await AudienceDemographic.deleteMany({ _id: { $in: stale.map((d) => d._id) } });
   return rows.length;
 };
 

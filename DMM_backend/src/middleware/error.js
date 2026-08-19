@@ -10,10 +10,10 @@ export const errorHandler = (err, req, res, next) => {
 
   if (err.name === 'MulterError') {
     statusCode = 400;
-    // There is no configured file-size cap, so LIMIT_FILE_SIZE should not fire.
-    // If an upload still fails at a fixed threshold (~1 MB), the block is almost
-    // certainly a reverse proxy (nginx client_max_body_size) in front of Node,
-    // not this app.
+    // LIMIT_FILE_SIZE fires above the app's own cap (middleware/upload.js). If
+    // an upload instead fails at a much smaller fixed threshold (~1 MB), the
+    // block is almost certainly a reverse proxy (nginx client_max_body_size)
+    // in front of Node, not this app.
     message = `Upload error: ${err.message}`;
   }
 

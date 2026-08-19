@@ -4,7 +4,12 @@ import Organization from '../models/Organization.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { logActivity } from '../utils/logActivity.js';
 import { requireOrgId, pinnedWriteOrg, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { escapeRegex } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, ROLES } from '../config/constants.js';
+
+// A null organization is shared across every college and always visible; a
+// real one must be one of the caller's own.
+const canView = (user, asset) => !asset.organization || canAccessOrg(user, asset.organization);
 
 const extOf = (name = '') => (name.split('.').pop() || '').toUpperCase();
 
@@ -45,8 +50,8 @@ export const getAssets = asyncHandler(async (req, res) => {
   if (category && category !== 'All') query.category = category;
   if (search) ands.push({
     $or: [
-      { name: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
+      { name: { $regex: escapeRegex(search), $options: 'i' } },
+      { description: { $regex: escapeRegex(search), $options: 'i' } },
     ],
   });
   if (ands.length) query.$and = ands;
@@ -61,7 +66,7 @@ export const getAssets = asyncHandler(async (req, res) => {
 // @route GET /api/assets/:id
 export const getAsset = asyncHandler(async (req, res) => {
   const asset = await Asset.findById(req.params.id).populate('uploadedBy', 'name avatar');
-  if (!asset) { res.status(404); throw new Error('Asset not found'); }
+  if (!asset || !canView(req.user, asset)) { res.status(404); throw new Error('Asset not found'); }
   res.json({ success: true, asset });
 });
 
@@ -142,7 +147,8 @@ export const deleteAsset = asyncHandler(async (req, res) => {
 
 // @route POST /api/assets/:id/download
 export const downloadAsset = asyncHandler(async (req, res) => {
+  const existing = await Asset.findById(req.params.id).select('organization');
+  if (!existing || !canView(req.user, existing)) { res.status(404); throw new Error('Asset not found'); }
   const asset = await Asset.findByIdAndUpdate(req.params.id, { $inc: { downloads: 1 } }, { new: true });
-  if (!asset) { res.status(404); throw new Error('Asset not found'); }
   res.json({ success: true, url: asset.fileUrl, fileName: asset.fileName });
 });

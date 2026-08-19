@@ -1,5 +1,6 @@
 import asyncHandler from 'express-async-handler';
 import PostPlan from '../models/PostPlan.js';
+import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 import { createNotification } from '../utils/notify.js';
 import { logActivity } from '../utils/logActivity.js';
@@ -271,11 +272,13 @@ export const getPlan = asyncHandler(async (req, res) => {
 export const createPlan = asyncHandler(async (req, res) => {
   const { organization, title, description } = req.body;
   if (!organization) { res.status(400); throw new Error('organization is required'); }
+  const org = await Organization.findById(organization).select('_id');
+  if (!org) { res.status(400); throw new Error('Selected organization does not exist'); }
   if (!title || !title.trim()) { res.status(400); throw new Error('Give the plan a title'); }
   const { items, startDate, endDate } = parseItems(req.body.items, res);
 
   const plan = await PostPlan.create({
-    organization, title: title.trim(), description: description || '',
+    organization: org._id, title: title.trim(), description: description || '',
     items, startDate, endDate, createdBy: req.user._id,
   });
 

@@ -28,6 +28,17 @@ const metaContent = (html, prop) => {
   return (html.match(a)?.[1] || html.match(b)?.[1] || '').trim();
 };
 
+// Resolve `host` and refuse it if any A/AAAA record is private/loopback/link-
+// local. Called before the initial request AND before following each
+// redirect hop, otherwise a URL that resolves publicly once and then 302s (or
+// DNS-rebinds) to an internal address would sail straight through.
+const assertPublicHost = async (host) => {
+  const records = await dns.lookup(host, { all: true });
+  if (!records.length || records.some((r) => isPrivateIp(r.address))) {
+    throw new Error('This host is not allowed');
+  }
+};
+
 // @route GET /api/link-preview?url=  — returns { url, image, title, siteName, favicon }
 export const linkPreview = asyncHandler(async (req, res) => {
   const url = String(req.query.url || '').trim();
@@ -40,10 +51,8 @@ export const linkPreview = asyncHandler(async (req, res) => {
   let host;
   try { host = new URL(url).hostname; } catch { res.status(400); throw new Error('Invalid URL'); }
 
-  // SSRF guard — refuse private/loopback targets.
   try {
-    const records = await dns.lookup(host, { all: true });
-    if (!records.length || records.some((r) => isPrivateIp(r.address))) { res.status(400); throw new Error('This host is not allowed'); }
+    await assertPublicHost(host);
   } catch (e) {
     res.status(400);
     throw new Error(e.message === 'This host is not allowed' ? e.message : 'Could not resolve that host');
@@ -54,14 +63,28 @@ export const linkPreview = asyncHandler(async (req, res) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   try {
-    const r = await fetch(url, {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TAG-LinkPreview/1.0)', Accept: 'text/html,application/xhtml+xml' },
-    });
-    const ct = r.headers.get('content-type') || '';
-    if (r.ok && ct.includes('text/html')) html = (await r.text()).slice(0, MAX_HTML);
-  } catch { /* network/timeout — return favicon-only preview */ }
+    // Follow redirects manually so every hop is re-validated against the same
+    // private-IP guard — fetch's own `redirect: 'follow'` would resolve and
+    // chase Location headers on its own, bypassing the check above entirely.
+    let currentUrl = url;
+    for (let hop = 0; hop <= 5; hop += 1) {
+      const r = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TAG-LinkPreview/1.0)', Accept: 'text/html,application/xhtml+xml' },
+      });
+      if ([301, 302, 303, 307, 308].includes(r.status) && r.headers.get('location')) {
+        const next = new URL(r.headers.get('location'), currentUrl);
+        if (!/^https?:$/i.test(next.protocol)) break;
+        await assertPublicHost(next.hostname);
+        currentUrl = next.href;
+        continue;
+      }
+      const ct = r.headers.get('content-type') || '';
+      if (r.ok && ct.includes('text/html')) html = (await r.text()).slice(0, MAX_HTML);
+      break;
+    }
+  } catch { /* network/timeout/blocked-redirect — return favicon-only preview */ }
   finally { clearTimeout(timer); }
 
   let image = metaContent(html, 'og:image') || metaContent(html, 'twitter:image') || metaContent(html, 'twitter:image:src');

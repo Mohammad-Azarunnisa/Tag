@@ -17,14 +17,18 @@ const explain = (e) => {
 const upsertDay = async (orgId, metrics) => {
   const now = new Date();
   const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayEnd = new Date(day.getTime() + 86400000);
-  let snap = await Analytics.findOne({ organization: orgId, platform: 'YouTube', date: { $gte: day, $lt: dayEnd } });
-  if (!snap) snap = new Analytics({ organization: orgId, platform: 'YouTube', date: day });
+  const set = {};
   for (const [field, raw] of Object.entries(metrics)) {
     const val = Number(raw);
-    if (Number.isFinite(val) && val >= 0) snap[field] = val;
+    if (Number.isFinite(val) && val >= 0) set[field] = val;
   }
-  await snap.save();
+  // Atomic upsert — see metaController.js#upsertDay for why this can't be a
+  // read-then-insert.
+  await Analytics.findOneAndUpdate(
+    { organization: orgId, platform: 'YouTube', date: day },
+    { $set: set, $setOnInsert: { organization: orgId, platform: 'YouTube', date: day } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
   return day;
 };
 

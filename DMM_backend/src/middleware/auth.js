@@ -3,7 +3,7 @@ import { verifyToken } from '../utils/token.js';
 import User from '../models/User.js';
 import { ROLES, USER_TYPES } from '../config/constants.js';
 
-const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
+export const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
 
 // A coordinator runs one college. They work with the material that belongs to
 // that college — its content library, events, signage and numbers — hand work to

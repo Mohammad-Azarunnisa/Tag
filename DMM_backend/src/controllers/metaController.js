@@ -29,14 +29,20 @@ const explain = (e) => {
 const upsertDay = async (orgId, platform, metrics) => {
   const now = new Date();
   const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayEnd = new Date(day.getTime() + 86400000);
-  let snap = await Analytics.findOne({ organization: orgId, platform, date: { $gte: day, $lt: dayEnd } });
-  if (!snap) snap = new Analytics({ organization: orgId, platform, date: day });
+  const set = {};
   for (const [field, raw] of Object.entries(metrics)) {
     const val = Number(raw);
-    if (Number.isFinite(val) && val >= 0) snap[field] = val;
+    if (Number.isFinite(val) && val >= 0) set[field] = val;
   }
-  await snap.save();
+  // Atomic upsert on the unique (organization, platform, date) key — a
+  // read-then-conditionally-insert here would let two concurrent syncs (the
+  // cron, a manual click, a standalone script) both see "no row yet" and both
+  // insert, doubling the day's numbers.
+  const snap = await Analytics.findOneAndUpdate(
+    { organization: orgId, platform, date: day },
+    { $set: set, $setOnInsert: { organization: orgId, platform, date: day } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
   return { date: day, snapshot: snap };
 };
 

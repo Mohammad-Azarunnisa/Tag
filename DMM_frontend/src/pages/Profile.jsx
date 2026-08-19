@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -251,6 +251,20 @@ function ContactCard({ user, setUser }) {
   const [preview, setPreview] = useState(user?.avatar || '');
   const [loading, setLoading] = useState(false);
 
+  // Revoke the object URL we created for the preview when it's replaced or the card unmounts.
+  useEffect(() => {
+    return () => { if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview); };
+  }, [preview]);
+
+  const onAvatar = (e) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview);
+      setAvatar(f);
+      setPreview(URL.createObjectURL(f));
+    }
+  };
+
   const save = async () => {
     if (!form.name.trim()) { toast.error('Name is required'); return; }
     setLoading(true);
@@ -273,7 +287,7 @@ function ContactCard({ user, setUser }) {
           <Avatar src={preview} name={form.name} size="lg" />
           <label className="absolute -bottom-1 -right-1 cursor-pointer rounded-full bg-brand-600 p-1.5 text-white hover:bg-brand-700">
             <Camera className="h-3.5 w-3.5" />
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { setAvatar(f); setPreview(URL.createObjectURL(f)); } }} />
+            <input type="file" accept="image/*" className="hidden" onChange={onAvatar} />
           </label>
         </div>
         <div>

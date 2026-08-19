@@ -2,6 +2,7 @@
 // read at import time (e.g. CORS allowlist) sees the correct values.
 import 'dotenv/config';
 
+import mongoose from 'mongoose';
 import app from './app.js';
 import connectDB from './config/db.js';
 import { seedSuperAdmin } from './config/seedSuperAdmin.js';
@@ -17,7 +18,7 @@ const start = async () => {
   await connectDB();
   await seedSuperAdmin();
   const storage = ensureStorageReady();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 DMM backend running on http://localhost:${PORT} (${process.env.NODE_ENV})`);
     console.log(`   Storage driver: ${process.env.STORAGE_DRIVER || 'local'}${storage.root ? ` · root: ${storage.root}` : ''}`);
     // Whether Tago can answer at all, visible without having to sign in.
@@ -36,6 +37,27 @@ const start = async () => {
     startDailyAnalyticsScheduler();
     console.log(`   Daily analytics refresh scheduled at ${process.env.DAILY_ANALYTICS_REFRESH_TIME || '02:00'} UTC`);
   }
+
+  // Let in-flight requests finish and close the DB connection cleanly on
+  // deploy/restart, instead of the process being killed mid-request.
+  const shutdown = (signal) => {
+    console.log(`\n${signal} received: closing server...`);
+    server.close(async () => {
+      await mongoose.connection.close();
+      console.log('Server and MongoDB connection closed.');
+      process.exit(0);
+    });
+    // Force-exit if something keeps a connection open past a reasonable window.
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 };
 
-start();
+// A failure anywhere in start() — after connectDB's own process.exit(1) guard,
+// this covers seeding, storage setup, and the schedulers — must be logged
+// loudly and exit, not disappear as a silent unhandled rejection.
+start().catch((err) => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
+});
