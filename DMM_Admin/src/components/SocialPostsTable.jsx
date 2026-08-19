@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { ExternalLink, RefreshCw, Image as ImageIcon, Clock } from 'lucide-react';
@@ -29,13 +30,20 @@ export default function SocialPostsTable({ orgId, platform }) {
   const posts = data?.posts || [];
   const cov = data?.coverage;
 
+  // Pending follow-up refreshes scheduled after a sync — cleared on a repeat
+  // sync or unmount so they never fire against a stale/unmounted query.
+  const timersRef = useRef([]);
+  const clearTimers = () => { timersRef.current.forEach(clearTimeout); timersRef.current = []; };
+  useEffect(() => clearTimers, []);
+
   const syncMut = useMutation({
     mutationFn: () => socialPostApi.sync(platform, orgId),
     onSuccess: (r) => {
       toast.success(r.message || 'Sync started', { duration: 6000 });
       // The sync runs in the background and posts upsert as they load, so refresh
       // the table a few times over the next couple of minutes to show progress.
-      [12000, 40000, 80000, 140000].forEach((ms) => setTimeout(() => qc.invalidateQueries({ queryKey: ['social-posts', platform, orgId] }), ms));
+      clearTimers();
+      timersRef.current = [12000, 40000, 80000, 140000].map((ms) => setTimeout(() => qc.invalidateQueries({ queryKey: ['social-posts', platform, orgId] }), ms));
     },
     onError: (e) => toast.error(e.response?.data?.message || 'Sync failed'),
   });

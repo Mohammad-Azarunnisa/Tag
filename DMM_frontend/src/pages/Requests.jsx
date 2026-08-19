@@ -209,8 +209,18 @@ export default function Requests() {
     [counts]
   );
   const filteredRequests = useMemo(() => {
-    const toDayStart = (d) => new Date(new Date(d).toDateString());
-    const dayOnly = (d) => new Date(d).toISOString().slice(0, 10);
+    // Built from local date parts (same convention as PlanCalendar's isoOf/pad)
+    // rather than toISOString()/`new Date("YYYY-MM-DD")`, both of which read as
+    // UTC and can land a request a calendar day off from what the date input
+    // (a local calendar date) and the viewer's own clock show.
+    const toDayStart = (s) => {
+      const [y, mo, da] = s.split('-').map(Number);
+      return new Date(y, mo - 1, da);
+    };
+    const dayOnly = (d) => {
+      const x = new Date(d);
+      return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    };
 
     return requests.filter((r) => {
       const created = new Date(r.createdAt);

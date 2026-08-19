@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import ProfileUpdateRequest from '../models/ProfileUpdateRequest.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { accessibleOrgIds } from '../utils/org.js';
+import { escapeRegex } from '../utils/sheet.js';
 import { logActivity } from '../utils/logActivity.js';
 import { createNotification } from '../utils/notify.js';
 import { sendEmail } from '../utils/email.js';
@@ -253,8 +254,8 @@ export const getUsers = asyncHandler(async (req, res) => {
   const query = {};
   if (organization && organization !== 'All') query.organization = organization;
   if (search) query.$or = [
-    { name: { $regex: search, $options: 'i' } },
-    { email: { $regex: search, $options: 'i' } },
+    { name: { $regex: escapeRegex(search), $options: 'i' } },
+    { email: { $regex: escapeRegex(search), $options: 'i' } },
   ];
 
   // An Admin (CEO) sees the people inside the institutions they hold, and

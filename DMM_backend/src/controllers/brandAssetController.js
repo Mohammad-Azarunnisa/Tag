@@ -3,6 +3,7 @@ import BrandAsset from '../models/BrandAsset.js';
 import Organization from '../models/Organization.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { requireOrgId, pinnedWriteOrg, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { escapeRegex } from '../utils/sheet.js';
 
 export const BRAND_CATEGORIES = ['Flyer', 'Brochure', 'Branding Video', 'Image', 'Document', 'Other'];
 
@@ -46,8 +47,8 @@ export const listBrandAssets = asyncHandler(async (req, res) => {
   if (category && category !== 'All') query.category = category;
   if (search) ands.push({
     $or: [
-      { title: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
+      { title: { $regex: escapeRegex(search), $options: 'i' } },
+      { description: { $regex: escapeRegex(search), $options: 'i' } },
     ],
   });
   if (ands.length) query.$and = ands;

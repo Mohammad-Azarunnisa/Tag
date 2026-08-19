@@ -18,12 +18,22 @@ import {
   listProfileRequests,
   reviewProfileRequest,
 } from '../controllers/userController.js';
-import { protect, authorize, requireSuperAdmin } from '../middleware/auth.js';
+import { protect, authorize, requireSuperAdmin, isCoordinator } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 import { ROLES } from '../config/constants.js';
 
 const router = express.Router();
 router.use(protect);
+
+// ADMIN/CEO always; a coordinator too — middleware/auth.js's COORDINATOR_ALLOWED
+// already whitelists this path ("who is in their college, to assign work to"),
+// and getUsers itself clamps a coordinator to their own pinned organization, so
+// this only grants what that allowlist already documented as intended.
+const allowUserList = (req, res, next) => {
+  if ([ROLES.ADMIN, ROLES.CEO].includes(req.user.role) || isCoordinator(req.user)) return next();
+  res.status(403);
+  throw new Error(`Role '${req.user.role}' is not allowed to access this resource`);
+};
 
 // Self-service (any authenticated user)
 router.put('/profile', upload.single('avatar'), updateProfile);
@@ -51,7 +61,7 @@ router.put('/profile-requests/:id', authorize(ROLES.ADMIN), reviewProfileRequest
 // Create and update both accept an optional `avatar` file, so a profile picture
 // can be set when the account is made instead of waiting for the user to upload
 // one themselves.
-router.route('/').get(authorize(ROLES.ADMIN, ROLES.CEO), getUsers).post(requireSuperAdmin, upload.single('avatar'), createUser);
+router.route('/').get(allowUserList, getUsers).post(requireSuperAdmin, upload.single('avatar'), createUser);
 router.put('/:id/reset-password', requireSuperAdmin, adminResetPassword);
 router
   .route('/:id')

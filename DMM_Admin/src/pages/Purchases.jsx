@@ -16,7 +16,11 @@ const blank = { name: '', vendor: '', category: 'Design', seats: 1, cost: '', cu
 // Days until expiry → label + style
 const expiryInfo = (d) => {
   if (!d) return null;
-  const days = Math.ceil((new Date(d) - new Date()) / 86400000);
+  // Normalize both sides to local midnight so the count doesn't drift by a
+  // day depending on what time "now" happens to be.
+  const expiry = new Date(d);
+  const midnight = (dt) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const days = Math.round((midnight(expiry) - midnight(new Date())) / 86400000);
   if (days < 0) return { label: 'Expired', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300' };
   if (days <= 30) return { label: `${days}d left`, cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' };
   return { label: `${days}d left`, cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' };

@@ -22,6 +22,11 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401 && !err.config?.url?.includes('/auth/login')) {
       localStorage.removeItem('dmm_token');
+      // Also drop the zustand-persisted session (store/authStore.js persist name
+      // 'dmm-auth') so a reload can't rehydrate a stale/invalid user + token.
+      // Cleared by key directly, not by importing useAuthStore, which would
+      // create an import cycle (authStore.js -> api/endpoints.js -> this file).
+      localStorage.removeItem('dmm-auth');
       if (!window.location.pathname.startsWith('/login')) window.location.href = '/login';
     }
     // View-only (Chairman) accounts are blocked from writes server-side — surface

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { User, Lock, Palette, Bell, Sun, Moon, Camera } from 'lucide-react';
 import { userApi } from '../api/endpoints.js';
@@ -50,9 +50,18 @@ function ProfileTab() {
   const [preview, setPreview] = useState(user?.avatar || '');
   const [loading, setLoading] = useState(false);
 
+  // Revoke the object URL we created for the preview when it's replaced or the tab unmounts.
+  useEffect(() => {
+    return () => { if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview); };
+  }, [preview]);
+
   const onAvatar = (e) => {
     const f = e.target.files?.[0];
-    if (f) { setAvatar(f); setPreview(URL.createObjectURL(f)); }
+    if (f) {
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview);
+      setAvatar(f);
+      setPreview(URL.createObjectURL(f));
+    }
   };
 
   const save = async () => {

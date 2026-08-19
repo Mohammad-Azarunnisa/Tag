@@ -792,7 +792,8 @@ export const createApproval = asyncHandler(async (req, res) => {
     if (design.linkedPost) { res.status(400); throw new Error('A post request already exists for this design'); }
     const isAssignee = design.assignedTo && String(design.assignedTo) === String(req.user._id);
     const isForwarded = isForwardedHandler(design, req.user._id);
-    if (!isAssignee && !isForwarded && ![ROLES.ADMIN, ROLES.CEO].includes(req.user.role)) {
+    const isOrgBypass = req.user.role === ROLES.ADMIN || (req.user.role === ROLES.CEO && canAccessOrg(req.user, design.organization));
+    if (!isAssignee && !isForwarded && !isOrgBypass) {
       res.status(403); throw new Error('This design is not assigned to you');
     }
 

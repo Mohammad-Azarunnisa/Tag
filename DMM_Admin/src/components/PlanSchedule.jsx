@@ -20,12 +20,16 @@ const PLAN_STATUS = {
   APPROVED: { label: 'Approved', cls: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' },
 };
 
-const iso = (d) => d.toISOString().slice(0, 10);
+// Dates are built from local parts rather than toISOString(), which would shift
+// the day for anyone east or west of UTC.
+const pad = (n) => String(n).padStart(2, '0');
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const todayStr = () => iso(new Date());
 const plusDays = (dateStr, n) => {
-  const d = new Date(`${dateStr}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return iso(d);
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + n);
+  return iso(dt);
 };
 
 /**

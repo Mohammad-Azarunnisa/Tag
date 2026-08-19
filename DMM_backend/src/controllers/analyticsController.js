@@ -563,18 +563,22 @@ export const recordAnalytics = asyncHandler(async (req, res) => {
   const parsed = req.body.date ? new Date(req.body.date) : new Date();
   if (isNaN(parsed)) { res.status(400); throw new Error('Invalid date'); }
   const day = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
-  const dayEnd = new Date(day.getTime() + 24 * 60 * 60 * 1000);
 
   const allowed = flatFields(platform);
-  let snapshot = await Analytics.findOne({ organization: orgId, platform, date: { $gte: day, $lt: dayEnd } });
-  if (!snapshot) snapshot = new Analytics({ organization: orgId, platform, date: day });
+  const set = {};
   for (const field of allowed) {
     const raw = req.body[field];
     if (raw === undefined || raw === '' || raw === null) continue; // leave existing/blank untouched
     const val = Number(raw);
-    snapshot[field] = Number.isFinite(val) && val >= 0 ? val : 0;
+    set[field] = Number.isFinite(val) && val >= 0 ? val : 0;
   }
-  await snapshot.save();
+  // Atomic upsert — see metaController.js#upsertDay for why a read-then-insert
+  // isn't safe here (a sync could be running for the same org/platform/day).
+  const snapshot = await Analytics.findOneAndUpdate(
+    { organization: orgId, platform, date: day },
+    { $set: set, $setOnInsert: { organization: orgId, platform, date: day } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 
   logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.ANALYTICS_UPDATED, description: `Updated ${platform} analytics for ${day.toISOString().slice(0, 10)}`, entityType: 'Analytics', entityId: snapshot._id });
   res.status(201).json({ success: true, snapshot });
@@ -681,8 +685,18 @@ export const parseDateCell = (v) => {
   if (v instanceof Date && !isNaN(v)) return new Date(Date.UTC(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate()));
   const s = cellText(v).trim();
   if (!s) return null;
-  let m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/); // MM/DD/YYYY
-  if (m) { const y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; return new Date(Date.UTC(y, +m[1] - 1, +m[2])); }
+  let m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/); // MM/DD/YYYY (LinkedIn's own export format)
+  if (m) {
+    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    let month = +m[1];
+    let day = +m[2];
+    // A month can't exceed 12 — if the first number does, the sheet must be
+    // day-first (DD/MM/YYYY, common outside the US) and MM/DD would silently
+    // misdate it. Swap rather than guess when both are ambiguous (<=12 each);
+    // that case genuinely can't be resolved without knowing the export locale.
+    if (month > 12 && day <= 12) { [month, day] = [day, month]; }
+    return new Date(Date.UTC(y, month - 1, day));
+  }
   m = s.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/); // YYYY-MM-DD
   if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
   const d = new Date(s);
@@ -748,21 +762,17 @@ export const ingestDailyGrid = async (grid, orgId, platform) => {
   let runningFollowers = null; // cumulative roll-forward for gains-style imports
 
   for (const { date, row } of parsed) {
-    const dayEnd = new Date(date.getTime() + 86400000);
-    let snap = await Analytics.findOne({ organization: orgId, platform, date: { $gte: date, $lt: dayEnd } });
-    const isNew = !snap;
-    if (!snap) snap = new Analytics({ organization: orgId, platform, date });
-
+    const set = {};
     for (const field of metricFields) {
       let val = cellNumber(row[map[field]]);
       // LinkedIn exports rates as fractions (0.0699 = 6.99%). Store as percent.
       if (PERCENT_IMPORT.has(field) && val > 0 && val <= 1) val = +(val * 100).toFixed(2);
-      snap[field] = val;
+      set[field] = val;
     }
     // LinkedIn's Followers export has no "New followers" column — its UI sums
     // the organic + sponsored gains. Derive it so follower-gain charts work.
     if (map.newFollowers == null && (map.organicFollowers != null || map.sponsoredFollowers != null)) {
-      snap.newFollowers = (snap.organicFollowers || 0) + (snap.sponsoredFollowers || 0);
+      set.newFollowers = (set.organicFollowers || 0) + (set.sponsoredFollowers || 0);
     }
     // Gains-style import: the export never carries the audience total, so roll
     // it forward from the last known cumulative value (set once via the
@@ -775,15 +785,21 @@ export const ingestDailyGrid = async (grid, orgId, platform) => {
         runningFollowers = prevSnap?.followers || 0;
       }
       if (runningFollowers > 0) {
-        runningFollowers += snap.newFollowers || 0;
-        snap.followers = runningFollowers;
+        runningFollowers += set.newFollowers || 0;
+        set.followers = runningFollowers;
       } else {
-        snap.followers = 0; // unknown until the baseline sync — never a gain count
+        set.followers = 0; // unknown until the baseline sync — never a gain count
       }
     }
-    await snap.save();
+    // Atomic upsert on the unique (organization, platform, date) key — see
+    // metaController.js#upsertDay for why a read-then-insert isn't safe here.
+    const result = await Analytics.findOneAndUpdate(
+      { organization: orgId, platform, date },
+      { $set: set, $setOnInsert: { organization: orgId, platform, date } },
+      { upsert: true, new: true, setDefaultsOnInsert: true, rawResult: true }
+    );
 
-    if (isNew) created += 1; else updated += 1;
+    if (result.lastErrorObject?.upserted) created += 1; else updated += 1;
     if (!minDate || date < minDate) minDate = date;
     if (!maxDate || date > maxDate) maxDate = date;
   }

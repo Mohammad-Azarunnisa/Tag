@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { authApi } from '../api/endpoints.js';
 import { TOKEN_KEY } from '../api/client.js';
+import { useOrgStore } from './orgStore.js';
 
 // Raised when a non-admin tries to sign in to the admin portal.
 export class NotAdminError extends Error {
@@ -29,6 +30,9 @@ export const useAuthStore = create(
       logout: () => {
         localStorage.removeItem(TOKEN_KEY);
         set({ user: null, token: null });
+        // Don't let the next person on this machine inherit the previous
+        // admin's selected organization.
+        useOrgStore.getState().setSelectedOrg('');
       },
 
       fetchMe: async () => {

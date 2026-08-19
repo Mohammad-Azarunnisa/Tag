@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import BrandingRegisterItem, { CATEGORY_VALUES } from '../models/BrandingRegisterItem.js';
 import SignageLocation from '../models/SignageLocation.js';
+import { escapeRegex } from '../utils/sheet.js';
 
 const clean = (v) => String(v || '').trim();
 const toNumber = (v, fallback = 0) => {
@@ -119,16 +120,17 @@ export const listBrandingRegister = asyncHandler(async (req, res) => {
   const query = {};
   if (category !== 'All') query.category = category;
   if (search) {
+    const rx = { $regex: escapeRegex(search), $options: 'i' };
     query.$or = [
-      { title: { $regex: search, $options: 'i' } },
-      { size: { $regex: search, $options: 'i' } },
-      { location: { $regex: search, $options: 'i' } },
-      { organizationName: { $regex: search, $options: 'i' } },
-      { serialCodes: { $regex: search, $options: 'i' } },
-      { assignedTo: { $regex: search, $options: 'i' } },
-      { deviceType: { $regex: search, $options: 'i' } },
-      { specs: { $regex: search, $options: 'i' } },
-      { notes: { $regex: search, $options: 'i' } },
+      { title: rx },
+      { size: rx },
+      { location: rx },
+      { organizationName: rx },
+      { serialCodes: rx },
+      { assignedTo: rx },
+      { deviceType: rx },
+      { specs: rx },
+      { notes: rx },
     ];
   }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen, ImagePlus } from 'lucide-react';
@@ -189,9 +189,18 @@ function EventModal({ event, onClose, onSaved }) {
   const [coverPreview, setCoverPreview] = useState(event.coverImage || '');
   const [loading, setLoading] = useState(false);
 
+  // Revoke the object URL we created for the preview when it's replaced or the modal unmounts.
+  useEffect(() => {
+    return () => { if (coverPreview?.startsWith('blob:')) URL.revokeObjectURL(coverPreview); };
+  }, [coverPreview]);
+
   const onCover = (e) => {
     const f = e.target.files?.[0];
-    if (f) { setCover(f); setCoverPreview(URL.createObjectURL(f)); }
+    if (f) {
+      if (coverPreview?.startsWith('blob:')) URL.revokeObjectURL(coverPreview);
+      setCover(f);
+      setCoverPreview(URL.createObjectURL(f));
+    }
   };
 
   const { data: orgData } = useQuery({ queryKey: ['org-options'], queryFn: organizationApi.options });

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
+import toast from 'react-hot-toast';
 import {
   Sparkles, TrendingUp, Lightbulb, ArrowRight, RefreshCw, Loader2,
   ArrowUp, ArrowDown, Trophy, Users, Linkedin, Instagram, Youtube, Facebook,
@@ -72,7 +74,7 @@ export default function AiInsights({ orgId }) {
   const { data: status } = useQuery({ queryKey: ['ai-status'], queryFn: aiApi.status, staleTime: 5 * 60 * 1000 });
   const ready = !!status?.configured;
 
-  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['ai-insights', orgId],
     queryFn: () => aiApi.insights(orgId),
     enabled: ready && !!orgId,
@@ -80,9 +82,17 @@ export default function AiInsights({ orgId }) {
     retry: false,
   });
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   if (!ready || !orgId) return null;
 
-  const regenerate = () => aiApi.insights(orgId, true).then(() => refetch());
+  const regenerate = () => {
+    setIsRefreshing(true);
+    aiApi.insights(orgId, true)
+      .then(() => refetch())
+      .catch((e) => toast.error(e.response?.data?.message || "Couldn't refresh insights"))
+      .finally(() => setIsRefreshing(false));
+  };
   const m = data?.metrics;
   const platforms = m?.platforms || [];
   const maxAudience = platforms.reduce((mx, p) => Math.max(mx, p.audience || 0), 0);
@@ -103,10 +113,10 @@ export default function AiInsights({ orgId }) {
             </div>
           </div>
           <button
-            type="button" onClick={regenerate} disabled={isFetching}
+            type="button" onClick={regenerate} disabled={isRefreshing}
             className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} /> Refresh
+            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} /> Refresh
           </button>
         </div>
 

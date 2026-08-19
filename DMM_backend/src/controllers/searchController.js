@@ -4,6 +4,7 @@ import Template from '../models/Template.js';
 import Asset from '../models/Asset.js';
 import User from '../models/User.js';
 import { requireOrgId } from '../utils/org.js';
+import { escapeRegex } from '../utils/sheet.js';
 import { ROLES } from '../config/constants.js';
 
 // @route GET /api/search?q=...  — org-scoped global search.
@@ -13,7 +14,7 @@ export const globalSearch = asyncHandler(async (req, res) => {
   if (q.length < 2) return res.json({ success: true, results: { approvals: [], templates: [], assets: [], users: [] } });
 
   const orgId = requireOrgId(req, res);
-  const rx = { $regex: q, $options: 'i' };
+  const rx = { $regex: escapeRegex(q), $options: 'i' };
   const isCEO = [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
   const approvalScope = isCEO ? { organization: orgId } : { organization: orgId, createdBy: req.user._id };
 

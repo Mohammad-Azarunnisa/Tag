@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen, ImagePlus } from 'lucide-react';
@@ -182,11 +182,22 @@ function EventModal({ event, onClose, onSaved }) {
   const [cover, setCover] = useState(null);
   const [coverPreview, setCoverPreview] = useState(event.coverImage || '');
   const [loading, setLoading] = useState(false);
+  // Tracks the currently-active blob URL so it can be revoked on replacement
+  // or unmount instead of leaking.
+  const objectUrlRef = useRef(null);
 
   const onCover = (e) => {
     const f = e.target.files?.[0];
-    if (f) { setCover(f); setCoverPreview(URL.createObjectURL(f)); }
+    if (f) {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      const url = URL.createObjectURL(f);
+      objectUrlRef.current = url;
+      setCover(f);
+      setCoverPreview(url);
+    }
   };
+
+  useEffect(() => () => { if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current); }, []);
 
   const { data: orgData } = useQuery({ queryKey: ['orgs-list'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];

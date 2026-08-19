@@ -351,9 +351,14 @@ const paidAds = async (orgs, from, to) => {
 // ---------------------------------------------------------------------------
 // Part 5 — Team output
 // ---------------------------------------------------------------------------
-const teamOutput = async (from, to) => {
+const teamOutput = async (orgs, from, to) => {
+  // Scoped to the same organizations as the other four sections — without
+  // this, the section leaked every college's staff performance data to
+  // whoever called the report, regardless of which orgs they were allowed.
+  const orgIds = orgs.map((o) => o._id);
   const people = await User.find({
     isActive: true,
+    organization: { $in: orgIds },
     $or: [
       { role: ROLES.USER, userType: { $in: ['DESIGNER', 'SOCIAL_HANDLER'] } },
       { role: ROLES.CEO },
@@ -364,7 +369,7 @@ const teamOutput = async (from, to) => {
   let anyDueDate = false;
 
   for (const person of people) {
-    const assigned = await WorkAssignment.find({ assignee: person._id, createdAt: inWindow(from, to) })
+    const assigned = await WorkAssignment.find({ assignee: person._id, organization: { $in: orgIds }, createdAt: inWindow(from, to) })
       .select('status createdAt completedAt dueDate assigneeType platform').lean();
     if (!assigned.length) continue;
 
@@ -376,12 +381,12 @@ const teamOutput = async (from, to) => {
 
     // What they produced, split the way the report splits it.
     const designTasks = await ApprovalRequest.countDocuments({
-      designer: person._id, type: APPROVAL_TYPES.DESIGN, createdAt: inWindow(from, to),
+      designer: person._id, organization: { $in: orgIds }, type: APPROVAL_TYPES.DESIGN, createdAt: inWindow(from, to),
     });
     const socialCreatives = await ApprovalRequest.countDocuments({
-      createdBy: person._id, type: APPROVAL_TYPES.POST, createdAt: inWindow(from, to),
+      createdBy: person._id, organization: { $in: orgIds }, type: APPROVAL_TYPES.POST, createdAt: inWindow(from, to),
     });
-    const webTasks = await WebTask.countDocuments({ assignee: person._id, createdAt: inWindow(from, to) });
+    const webTasks = await WebTask.countDocuments({ assignee: person._id, organization: { $in: orgIds }, createdAt: inWindow(from, to) });
 
     rows.push({
       person: { _id: person._id, name: person.name, role: person.jobTitle || person.userType || person.role },
@@ -437,7 +442,7 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
     webDevelopment(orgs, from, to),
     socialOrganic(orgs, from, to),
     paidAds(orgs, from, to),
-    teamOutput(from, to),
+    teamOutput(orgs, from, to),
   ]);
 
   // The headline tiles, taken straight off the five parts so they can never
