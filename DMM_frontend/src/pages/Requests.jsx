@@ -674,6 +674,7 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
 // The college is implicit — the server stamps the requester's own, so there is
 // nothing to choose and nothing to get wrong.
 function AskModal({ onClose, onSaved }) {
+  const maxAttachments = 20;
   const [form, setForm] = useState(DEFAULT_BRIEF);
   const selectedDigitalItems = DIGITAL_MEDIA_OPTIONS[form.workCategory] || DIGITAL_MEDIA_OPTIONS['Social Media'];
   const selectedDigitalItem = selectedDigitalItems.includes(form.workItem) ? form.workItem : selectedDigitalItems[0];
@@ -681,7 +682,15 @@ function AskModal({ onClose, onSaved }) {
   const addAttachments = (fileList) => {
     const incoming = Array.from(fileList || []);
     if (!incoming.length) return;
-    setForm((current) => ({ ...current, attachments: [...current.attachments, ...incoming] }));
+    setForm((current) => {
+      const available = maxAttachments - current.attachments.length;
+      if (available <= 0) {
+        toast.error(`A brief can include up to ${maxAttachments} reference files`);
+        return current;
+      }
+      if (incoming.length > available) toast.error(`Only ${available} more reference file${available === 1 ? '' : 's'} can be added`);
+      return { ...current, attachments: [...current.attachments, ...incoming.slice(0, available)] };
+    });
   };
 
   const removeAttachmentAt = (idx) => {
@@ -842,7 +851,7 @@ function AskModal({ onClose, onSaved }) {
           <input
             type="file"
             multiple
-            accept="image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.psd,.ai"
+            accept="image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.psd,.ai,.zip"
             onChange={(e) => {
               addAttachments(e.target.files);
               // Allow choosing the same file again after removing it.
@@ -850,6 +859,7 @@ function AskModal({ onClose, onSaved }) {
             }}
             className="block w-full rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-brand-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:file:bg-brand-500/10 dark:file:text-brand-300"
           />
+          <p className="mt-1.5 text-xs text-slate-400">Up to {maxAttachments} images, videos, PDFs, ZIP archives, or office files.</p>
           {form.attachments.length > 0 && (
             <div className="mt-2 space-y-2">
               <div className="flex items-center justify-between">

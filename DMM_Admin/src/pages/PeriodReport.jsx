@@ -8,8 +8,9 @@ import {
 import { periodReportApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
-import { Card, Input, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
+import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { cn, formatNumber } from '../lib/utils.js';
+import { useAuthStore } from '../store/authStore.js';
 
 // The windows people actually ask for, so the common case is one click.
 const PRESETS = [
@@ -127,11 +128,14 @@ function MixList({ title, items, format = (n) => formatNumber(n) }) {
  * links here with ?from&?to so the notification opens exactly what it summarised.
  */
 export default function PeriodReport() {
+  const user = useAuthStore((state) => state.user);
   const [params, setParams] = useSearchParams();
   const [preset, setPreset] = useState(params.get('from') ? '' : 'last-fortnight');
   const [from, setFrom] = useState(params.get('from') || '');
   const [to, setTo] = useState(params.get('to') || '');
   const [downloading, setDownloading] = useState(false);
+  const [platform, setPlatform] = useState('LinkedIn');
+  const [platformDownloading, setPlatformDownloading] = useState(false);
 
   const query = preset ? { preset } : { from, to };
   const ready = !!preset || (!!from && !!to);
@@ -165,6 +169,23 @@ export default function PeriodReport() {
     } catch {
       toast.error('Could not build the workbook');
     } finally { setDownloading(false); }
+  };
+
+  const downloadPlatformAnalytics = async () => {
+    if (!data?.period) return;
+    setPlatformDownloading(true);
+    try {
+      const blob = await periodReportApi.exportPlatformAnalytics({ platform, from: data.period.from, to: data.period.to });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${platform.toLowerCase()}-analytics-${data.period.from}-to-${data.period.to}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${platform} analytics downloaded`);
+    } catch (error) {
+      toast.error(error?.response?.data?.message || 'Could not build the analytics export');
+    } finally { setPlatformDownloading(false); }
   };
 
   const h = data?.headline;
@@ -210,6 +231,26 @@ export default function PeriodReport() {
           )}
         </div>
       </Card>
+
+      {user?.isSuperAdmin && data?.period && (
+        <Card className="mb-5 flex flex-wrap items-end justify-between gap-4 p-4">
+          <div>
+            <h2 className="font-bold text-slate-800 dark:text-white">Platform Analytics Export</h2>
+            <p className="mt-1 text-sm text-slate-400">Daily account metrics and individual post performance for every active institution in this report period.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Select label="Platform" value={platform} onChange={(event) => setPlatform(event.target.value)} className="min-w-36">
+              <option value="LinkedIn">LinkedIn</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Facebook">Facebook</option>
+              <option value="YouTube">YouTube</option>
+            </Select>
+            <Button loading={platformDownloading} onClick={downloadPlatformAnalytics}>
+              <Download className="h-4 w-4" /> Download data
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {!ready ? (
         <EmptyState icon={FileBarChart} title="Pick a period" description="Choose a preset above, or set your own from and to dates." />

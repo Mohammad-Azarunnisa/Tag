@@ -78,7 +78,11 @@ export default function MetaSync({ orgId, platform, report, onSynced }) {
               : configured ? (status.message || 'Token present but not usable.')
               : 'Add META_SYSTEM_TOKEN to the backend .env to pull Instagram & Facebook automatically.'}
           </p>
-          {report?.latest?.date && (
+          {report?.displayCoverage ? (
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              Data stored: <span className="font-semibold text-slate-500 dark:text-slate-300">{formatDate(report.displayCoverage.from)} → {formatDate(report.displayCoverage.to)}</span> ({report.displayCoverage.days} days)
+            </p>
+          ) : report?.latest?.date && (
             <p className="mt-0.5 text-[11px] text-slate-400">Data through {formatDate(report.latest.date)}</p>
           )}
           {platform === 'Facebook' && (

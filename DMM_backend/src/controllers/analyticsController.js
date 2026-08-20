@@ -6,7 +6,7 @@ import SocialAccount from '../models/SocialAccount.js';
 import SocialPost from '../models/SocialPost.js';
 import Website from '../models/Website.js';
 import { logActivity } from '../utils/logActivity.js';
-import { requireOrgId, resolveViewOrgId } from '../utils/org.js';
+import { requireOrgId, resolveSharedViewOrgId } from '../utils/org.js';
 import { cellText, cellNumber, normHeader, loadGrid } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, PLATFORMS } from '../config/constants.js';
 
@@ -129,7 +129,7 @@ const computeDelta = (current, previous) => {
 
 // @route GET /api/analytics — latest snapshot per platform for one org (+ field config)
 export const getAnalytics = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const latest = {};
   for (const platform of PLATFORMS) {
     latest[platform] = await Analytics.findOne({ organization: orgId, platform }).sort({ date: -1 }).lean();
@@ -279,7 +279,7 @@ export const getAnalyticsPulse = asyncHandler(async (req, res) => {
 
 // @route GET /api/analytics/:platform/report — rich report: latest, previous, WoW deltas, series
 export const getPlatformReport = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const { platform } = req.params;
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('Invalid platform'); }
 
@@ -311,8 +311,35 @@ export const getPlatformReport = asyncHandler(async (req, res) => {
 
   // Enough daily snapshots for a full 365-day window PLUS its comparison
   // period (and headroom), so a year-long LinkedIn export aggregates fully.
-  const snapshots = await Analytics.find({ organization: orgId, platform }).sort({ date: -1 }).limit(800).lean();
+  const analyticsScope = { organization: orgId, platform };
+  const [snapshots, coverageRows, postCoverageRows] = await Promise.all([
+    Analytics.find(analyticsScope).sort({ date: -1 }).limit(800).lean(),
+    Analytics.aggregate([
+      { $match: analyticsScope },
+      { $group: { _id: null, from: { $min: '$date' }, to: { $max: '$date' }, days: { $sum: 1 }, lastImport: { $max: '$updatedAt' } } },
+    ]),
+    platform === 'LinkedIn'
+      ? Promise.resolve([])
+      : SocialPost.aggregate([
+        { $match: { organization: orgId, platform } },
+        { $group: { _id: null, from: { $min: '$publishedAt' }, to: { $max: '$publishedAt' }, posts: { $sum: 1 }, lastImport: { $max: '$lastSyncedAt' } } },
+      ]),
+  ]);
   const latest = snapshots[0] || null;
+  const coverage = coverageRows[0]
+    ? { from: coverageRows[0].from, to: coverageRows[0].to, days: coverageRows[0].days, lastImport: coverageRows[0].lastImport }
+    : null;
+  const postCoverage = postCoverageRows[0]?.from && postCoverageRows[0]?.to
+    ? { from: postCoverageRows[0].from, to: postCoverageRows[0].to, posts: postCoverageRows[0].posts, lastImport: postCoverageRows[0].lastImport }
+    : null;
+  const availableFrom = [coverage?.from, postCoverage?.from]
+    .filter(Boolean)
+    .reduce((earliest, date) => (!earliest || new Date(date) < new Date(earliest) ? date : earliest), null);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const displayCoverage = availableFrom
+    ? { from: availableFrom, to: today, days: Math.floor((today - new Date(availableFrom)) / 86400000) + 1 }
+    : null;
   // Week-over-week: compare the latest entry against the most recent entry that
   // is at least 7 days older (so daily uploads compare to ~the same day last
   // week, not just yesterday). Falls back to the immediately previous entry.
@@ -443,6 +470,9 @@ export const getPlatformReport = asyncHandler(async (req, res) => {
     stockFields: [...STOCK_FIELDS], // end-of-period values, not per-period sums
     ranges: ALLOWED_RANGES,
     rangeDays,
+    coverage,
+    postCoverage,
+    displayCoverage,
     latest,
     previous,
     deltas,
@@ -453,7 +483,7 @@ export const getPlatformReport = asyncHandler(async (req, res) => {
 
 // @route GET /api/analytics/:platform/history — recent snapshots (kept for simple trend use)
 export const getPlatformHistory = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const { platform } = req.params;
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('Invalid platform'); }
   const history = await Analytics.find({ organization: orgId, platform }).sort({ date: -1 }).limit(30).lean();
@@ -527,7 +557,7 @@ const buildPostHeatmap = async (orgId, platform, requested, days) => {
 // its heatmap from its per-post history (see buildPostHeatmap), so the map spans
 // the whole year rather than only the days we have account snapshots for.
 export const getPlatformHeatmap = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const { platform } = req.params;
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('Invalid platform'); }
   const days = Math.min(Math.max(Number(req.query.days) || 365, 30), 366);

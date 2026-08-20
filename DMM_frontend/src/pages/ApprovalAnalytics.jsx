@@ -1,14 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import { FileText, Clock, CheckCircle2, XCircle, RefreshCw, Send, TrendingUp } from 'lucide-react';
 import { reportApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Card, Badge, Avatar, Skeleton } from '../components/ui/primitives.jsx';
 import StatCard from '../components/dashboard/StatCard.jsx';
-import { formatDate, CHART_COLORS } from '../lib/utils.js';
+import { formatDate } from '../lib/utils.js';
 
 export default function ApprovalAnalytics() {
   const { data, isLoading } = useQuery({ queryKey: ['approval-analytics'], queryFn: reportApi.analytics });
@@ -23,6 +23,11 @@ export default function ApprovalAnalytics() {
     { label: 'Resubmitted', value: k.resubmitted, icon: RefreshCw, tone: 'sky' },
     { label: 'Posted', value: k.posted, icon: Send, tone: 'violet' },
   ];
+  const userPerformance = (data?.userPerformance || []).map((user) => ({
+    ...user,
+    completed: user.approved,
+    remaining: Math.max(0, user.total - user.approved),
+  }));
 
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-10 w-48" /><div className="grid grid-cols-2 gap-4 lg:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28" />)}</div></div>;
 
@@ -44,17 +49,29 @@ export default function ApprovalAnalytics() {
         </Card>
 
         <Card className="p-5 lg:col-span-2">
-          <h3 className="mb-4 font-bold text-slate-800 dark:text-white">User Performance</h3>
-          {data?.userPerformance?.length ? (
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div>
+              <h3 className="font-bold text-slate-800 dark:text-white">User Performance</h3>
+              <p className="mt-1 text-xs text-slate-400">Completed requests compared with total submitted</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Completed</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-200 dark:bg-slate-700" />Remaining</span>
+            </div>
+          </div>
+          {userPerformance.length ? (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={data.userPerformance} margin={{ left: -20 }}>
+              <BarChart data={userPerformance} layout="vertical" margin={{ left: 12, right: 28, top: 4, bottom: 4 }} barCategoryGap="28%">
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, fontSize: 13 }} cursor={{ fill: 'rgba(99,102,241,0.06)' }} />
-                <Bar dataKey="total" radius={[6, 6, 0, 0]} name="Total requests">
-                  {data.userPerformance.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                </Bar>
+                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 13, boxShadow: '0 8px 24px -8px rgba(15,23,42,0.2)' }}
+                  cursor={{ fill: 'rgba(16,185,129,0.06)' }}
+                  formatter={(value, name) => [value, name === 'completed' ? 'Completed' : 'Remaining']}
+                />
+                <Bar dataKey="completed" stackId="requests" fill="#10b981" radius={[0, 5, 5, 0]} name="Completed" />
+                <Bar dataKey="remaining" stackId="requests" fill="#e2e8f0" radius={[0, 5, 5, 0]} name="Remaining" />
               </BarChart>
             </ResponsiveContainer>
           ) : <p className="text-sm text-slate-400">No data yet.</p>}

@@ -14,11 +14,16 @@ import { Card, Input, Select, Badge, Avatar, Skeleton, EmptyState } from '../com
 import { Modal } from '../components/ui/Modal.jsx';
 import { cn, formatDate, roleLabel, roleStyle, userTypeLabel } from '../lib/utils.js';
 
-// Filter options (label → internal role value). Super Admin is seed-only.
-// Matches the tiles above the list, so the two never disagree. 'SUPER' is the
+// Filter options (label → internal role or USER sub-type). 'SUPER' is the
 // account flag rather than a role value — role ADMIN also covers view-only
 // oversight accounts, which are not the super admin.
-const ROLE_FILTERS = [{ value: 'SUPER', label: 'Super Admin' }, { value: 'CEO', label: 'Admin' }, { value: 'USER', label: 'User' }];
+const ROLE_FILTERS = [
+  { value: 'SUPER', label: 'Super Admin' },
+  { value: 'CEO', label: 'Admin' },
+  { value: 'COORDINATOR', label: 'Coordinator' },
+  { value: 'DESIGNER', label: 'Designer' },
+  { value: 'SOCIAL_HANDLER', label: 'Social Handler' },
+];
 // Roles the super admin can assign. 'SUPER' → ADMIN + isSuperAdmin (Branding
 // Director). 'CHAIRMAN' → global ADMIN + viewOnly (read-only oversight).
 const CREATE_ROLES = [

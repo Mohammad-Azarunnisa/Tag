@@ -93,6 +93,7 @@ export const institutionRequestApi = {
 export const periodReportApi = {
   get: (params) => api.get('/reports/period', { params }).then((r) => r.data),
   export: (params) => api.get('/reports/period/export', { params, responseType: 'blob' }).then((r) => r.data),
+  exportPlatformAnalytics: (params) => api.get('/reports/platform-export', { params, responseType: 'blob' }).then((r) => r.data),
 };
 
 // Website work, tracked apart from design so it doesn't distort turnaround.

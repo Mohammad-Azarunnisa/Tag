@@ -106,3 +106,10 @@ export const resolveViewOrgId = (req) => {
   if (requested && canAccessOrg(req.user, requested)) return requested;
   return resolveOrgId(req);
 };
+
+// Analytics and published-post performance are a shared, read-only workspace:
+// every signed-in person may compare colleges there. Keep that policy separate
+// from `resolveViewOrgId`, which protects private organization-scoped modules
+// and must continue to fall back to a regular user's own college.
+export const resolveSharedViewOrgId = (req) =>
+  req.query.organizationId || req.headers['x-organization-id'] || req.body?.organization || resolveOrgId(req);

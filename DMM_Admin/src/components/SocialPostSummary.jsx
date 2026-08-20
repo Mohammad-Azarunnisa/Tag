@@ -43,6 +43,7 @@ export default function SocialPostSummary({ orgId, platform }) {
   const cur = data?.current || {};
   const prev = data?.previous || {};
   const cov = data?.coverage;
+  const displayCoverage = data?.displayCoverage;
 
   return (
     <Card className="overflow-hidden">
@@ -52,7 +53,7 @@ export default function SocialPostSummary({ orgId, platform }) {
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
             <CalendarRange className="h-3 w-3" />
             {cov?.total
-              ? `${formatNumber(cov.total)} posts · ${cov.days} days of records${cov.oldest ? ` (${formatDate(cov.oldest)} → ${formatDate(cov.newest)})` : ''}`
+              ? <>Data stored: <span className="font-semibold text-slate-500 dark:text-slate-300">{formatDate(displayCoverage?.from || cov.oldest)} → {formatDate(displayCoverage?.to || cov.newest)}</span> ({displayCoverage?.days || cov.days} days) · {formatNumber(cov.total)} posts</>
               : 'No posts synced yet — use “Sync now” on the table below'}
           </p>
         </div>
