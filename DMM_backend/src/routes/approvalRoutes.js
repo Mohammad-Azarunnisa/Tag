@@ -24,7 +24,10 @@ const router = express.Router();
 router.use(protect);
 
 router.route('/').get(getApprovals).post(upload.array('images', 10), createApproval);
-router.route('/:id').get(getApproval).delete(deleteApproval);
+// Deleting is an administrator's act — see utils/permissions.js. The role gate
+// lives on the route so it cannot be forgotten; the handler adds the institution
+// scoping on top of it.
+router.route('/:id').get(getApproval).delete(authorize(ROLES.ADMIN, ROLES.CEO), deleteApproval);
 
 // The designer submits the finished design for their assigned brief.
 router.put('/:id/submit-design', upload.array('images', 10), submitDesign);

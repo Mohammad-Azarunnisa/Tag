@@ -10,7 +10,8 @@ import {
   removeBanner,
   deleteBanner,
 } from '../controllers/signageController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
 import upload from '../middleware/upload.js';
 
 const router = express.Router();
@@ -23,7 +24,10 @@ router.use(protect);
 router.get('/locations', listLocations);
 router.post('/locations', upload.single('photo'), createLocation);
 router.put('/locations/:id', upload.single('photo'), updateLocation);
-router.delete('/locations/:id', deleteLocation);
+// Deleting is an administrator's act — see utils/permissions.js. The role gate
+// lives on the route so it cannot be forgotten; the handler adds the institution
+// scoping on top of it.
+router.delete('/locations/:id', authorize(ROLES.ADMIN, ROLES.CEO), deleteLocation);
 
 // Banners — three optional file slots: preview (image shown in the UI),
 // source (print-ready PSD/PDF/AI) and photo (banner installed at the spot).
@@ -36,6 +40,6 @@ router.get('/banners', listBanners);
 router.post('/banners', bannerFiles, createBanner);
 router.put('/banners/:id', bannerFiles, updateBanner);
 router.put('/banners/:id/remove', removeBanner);
-router.delete('/banners/:id', deleteBanner);
+router.delete('/banners/:id', authorize(ROLES.ADMIN, ROLES.CEO), deleteBanner);
 
 export default router;

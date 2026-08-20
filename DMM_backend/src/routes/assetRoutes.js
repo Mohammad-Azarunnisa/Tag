@@ -7,7 +7,8 @@ import {
   deleteAsset,
   downloadAsset,
 } from '../controllers/assetController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
 import upload from '../middleware/upload.js';
 
 const router = express.Router();
@@ -20,6 +21,9 @@ const uploadFields = upload.fields([
 
 router.route('/').get(getAssets).post(uploadFields, createAsset);
 router.post('/:id/download', downloadAsset);
-router.route('/:id').get(getAsset).put(uploadFields, updateAsset).delete(deleteAsset);
+// Deleting is an administrator's act — see utils/permissions.js. The role gate
+// lives on the route so it cannot be forgotten; the handler adds the institution
+// scoping on top of it.
+router.route('/:id').get(getAsset).put(uploadFields, updateAsset).delete(authorize(ROLES.ADMIN, ROLES.CEO), deleteAsset);
 
 export default router;

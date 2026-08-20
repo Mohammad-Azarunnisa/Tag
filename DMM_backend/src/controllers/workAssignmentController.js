@@ -7,6 +7,7 @@ import InstitutionRequest from '../models/InstitutionRequest.js';
 import ApprovalRequest from '../models/ApprovalRequest.js';
 import { ROLES, USER_TYPES, PLATFORMS, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, APPROVAL_STATUS } from '../config/constants.js';
 import { logActivity } from '../utils/logActivity.js';
+import { resolvePostedAt } from '../utils/postedAt.js';
 import { createNotification } from '../utils/notify.js';
 import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
 import { uploadBuffer } from '../config/storage.js';
@@ -150,13 +151,17 @@ const notifyRequestOwnerOfAssignment = async ({
 // their assigned work — the approval is no longer in their list — so signing the
 // job off is what marks the design POSTED. Without this the content pipeline
 // would sit at APPROVED for ever, waiting on a screen nobody visits any more.
-const markSourceApprovalPosted = async (assignment, actor) => {
+const markSourceApprovalPosted = async (assignment, actor, at = new Date()) => {
   if (!assignment.sourceApproval) return;
   try {
     const design = await ApprovalRequest.findById(assignment.sourceApproval);
     if (!design || design.status !== APPROVAL_STATUS.APPROVED) return;
     design.status = APPROVAL_STATUS.POSTED;
-    design.postedAt = new Date();
+    // `at` rather than now: closing back-dated posting work has to date the
+    // design by when it went out, or the job and the design it published would
+    // disagree about the day.
+    design.postedAt = at;
+    design.scheduledAt = undefined;
     design.postedBy = assignment.assignee;
     await design.save();
     await logActivity({
@@ -545,7 +550,7 @@ export const completePostingWork = async (assignment, actor, at = new Date()) =>
   assignment.scheduledAt = undefined;
   await assignment.save();
 
-  await markSourceApprovalPosted(assignment, actor);
+  await markSourceApprovalPosted(assignment, actor, at);
   await settleSourceRequest(assignment, actor, `"${assignment.title}" has been posted`);
   await logActivity({
     user: actor._id,
@@ -583,7 +588,11 @@ export const closePostingWorkForApproval = async (approvalId, actor, at = new Da
 };
 
 // @route PUT /api/work-assignments/:id/posted — the handler says it is out, or
-// says when it will be. Body: { scheduledAt? }
+// says when it will be. Body: { scheduledAt?, postedAt? }
+//
+// `scheduledAt` books a future go-live. `postedAt` is the opposite end: work that
+// is already out, closed against the moment it actually went out rather than the
+// moment the handler got round to saying so.
 export const markAssignmentPosted = asyncHandler(async (req, res) => {
   const assignment = await loadOwnAssignment(req, res);
   if (!assignment.postingFor && !assignment.sourceApproval) {
@@ -614,7 +623,9 @@ export const markAssignmentPosted = asyncHandler(async (req, res) => {
       }
     }
   } else {
-    await completePostingWork(assignment, req.user);
+    const { when, error } = resolvePostedAt(req.body.postedAt);
+    if (error) { res.status(400); throw new Error(error); }
+    await completePostingWork(assignment, req.user, when);
   }
 
   const populated = await populateAssignment(WorkAssignment.findById(assignment._id)).lean();

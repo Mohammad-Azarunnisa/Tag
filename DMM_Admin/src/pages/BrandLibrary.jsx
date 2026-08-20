@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { Images, Plus, Trash2, ExternalLink, Download, Film, FileText, LinkIcon, Play, Globe, Search } from 'lucide-react';
 import { brandApi, linkApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
-import { youtubeThumb, cn } from '../lib/utils.js';
+import { youtubeThumb, cn, canDeleteOrgItem } from '../lib/utils.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
@@ -27,7 +27,10 @@ function Inner() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   // Only the super admin may remove items; everyone else can upload/download only.
-  const canManage = user?.role === 'ADMIN' && !!user?.isSuperAdmin;
+  // Removing a brand item is open to an institution's Admin as well as the super
+  // admin, but only for their own college's items — one shared across every
+  // college belongs to the platform, so that stays with the super admin. Asked
+  // per item for exactly that reason (lib/utils.js#canDeleteOrgItem).
   const [search, setSearch] = useState('');
   const [orgFilter, setOrgFilter] = useState(''); // '' = all, 'shared', or an org id
   const [category, setCategory] = useState('All');
@@ -88,7 +91,7 @@ function Inner() {
         )
       ) : view === 'grid' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((it) => <BrandCard key={it._id} item={it} canManage={canManage} onDelete={() => window.confirm(`Delete "${it.title}"?`) && removeMut.mutate(it._id)} />)}
+          {items.map((it) => <BrandCard key={it._id} item={it} canManage={canDeleteOrgItem(user, it.organization)} onDelete={() => window.confirm(`Delete "${it.title}"?`) && removeMut.mutate(it._id)} />)}
         </div>
       ) : (
         /* List view — compact rows for scanning a big library */
@@ -105,7 +108,7 @@ function Inner() {
             </thead>
             <tbody>
               {items.map((it) => (
-                <BrandRow key={it._id} item={it} canManage={canManage}
+                <BrandRow key={it._id} item={it} canManage={canDeleteOrgItem(user, it.organization)}
                   onDelete={() => window.confirm(`Delete "${it.title}"?`) && removeMut.mutate(it._id)} />
               ))}
             </tbody>

@@ -203,7 +203,10 @@ export const approvalApi = {
   deliver: (id) => api.put(`/approvals/${id}/deliver`).then((r) => r.data),
   forward: (id, targets) => api.put(`/approvals/${id}/forward`, { targets }).then((r) => r.data),
   // Approving does not close a request — marking it posted does.
-  markPosted: (id) => api.put(`/approvals/${id}/posted`).then((r) => r.data),
+  // `postedAt` is when it actually went out. Left off it means now; a past moment
+  // is how posts that went live before anyone logged them land on the right day.
+  markPosted: (id, postedAt) =>
+    api.put(`/approvals/${id}/posted`, postedAt ? { postedAt } : {}).then((r) => r.data),
   schedule: (id, scheduledAt) => api.put(`/approvals/${id}/schedule`, { scheduledAt }).then((r) => r.data),
   handlers: (organizationId, platform) => api.get('/users/handlers', { params: { organizationId, platform } }).then((r) => r.data),
   comment: (id, formData) =>

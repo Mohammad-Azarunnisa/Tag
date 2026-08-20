@@ -2,15 +2,28 @@ import asyncHandler from 'express-async-handler';
 import ExcelJS from 'exceljs';
 import Website from '../models/Website.js';
 import { logActivity } from '../utils/logActivity.js';
-import { cellText, cellHyperlink, loadGrid, findColumns, resolveOrganization, escapeRegex } from '../utils/sheet.js';
+import { cellText, cellDate, cellHyperlink, loadGrid, findColumns, resolveOrganization, escapeRegex } from '../utils/sheet.js';
 import { accessibleOrgIds } from '../utils/org.js';
 import { ROLES, ACTIVITY_ACTIONS } from '../config/constants.js';
 
 const FIELDS = ['institution', 'domain', 'siteType', 'hosting', 'builtWith', 'notes'];
 
+// The expiry date as sent by a form: `undefined` means "not part of this
+// request", '' clears it, and anything unparseable comes back as `false` so the
+// caller can reject it rather than silently storing a null.
+const readExpiry = (value) => {
+  if (value === undefined) return undefined;
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? false : d;
+};
+
 const apply = (doc, body) => {
   FIELDS.forEach((f) => { if (body[f] !== undefined) doc[f] = String(body[f] ?? '').trim(); });
   if (body.organization !== undefined) doc.organization = body.organization || null;
+  const expiry = readExpiry(body.expiryDate);
+  if (expiry !== undefined) doc.expiryDate = expiry;
 };
 
 // @route GET /api/websites — ADMIN sees all (or one org via filter); CEO sees the
@@ -49,6 +62,7 @@ export const listWebsites = asyncHandler(async (req, res) => {
 // @route POST /api/websites  (ADMIN)
 export const createWebsite = asyncHandler(async (req, res) => {
   if (!String(req.body.institution || '').trim()) { res.status(400); throw new Error('Institution name is required'); }
+  if (readExpiry(req.body.expiryDate) === false) { res.status(400); throw new Error('Expiry date is not a valid date'); }
   const doc = new Website();
   apply(doc, req.body);
   await doc.save();
@@ -60,6 +74,7 @@ export const createWebsite = asyncHandler(async (req, res) => {
 export const updateWebsite = asyncHandler(async (req, res) => {
   const doc = await Website.findById(req.params.id);
   if (!doc) { res.status(404); throw new Error('Website not found'); }
+  if (readExpiry(req.body.expiryDate) === false) { res.status(400); throw new Error('Expiry date is not a valid date'); }
   apply(doc, req.body);
   await doc.save();
   logActivity({ user: req.user._id, organization: doc.organization, action: ACTIVITY_ACTIONS.WEBSITE_UPDATED, description: `Updated website ${doc.institution}`, entityType: 'Website', entityId: doc._id });
@@ -91,6 +106,7 @@ export const importWebsites = asyncHandler(async (req, res) => {
     { field: 'siteType', test: (h) => /sitetype|type/.test(h) },
     { field: 'hosting', test: (h) => /hosting|host|provider|server$/.test(h) },
     { field: 'builtWith', test: (h) => /builtwith|built|stack|framework|technolog|tech|cms/.test(h) },
+    { field: 'expiryDate', test: (h) => /expiry|expires|expiration|renewal|validtill|validupto|duedate/.test(h) },
     { field: 'notes', test: (h) => /note|remark|comment|description/.test(h) },
   ];
   const { headerRow, map } = findColumns(grid, matchers, 'institution');
@@ -118,6 +134,9 @@ export const importWebsites = asyncHandler(async (req, res) => {
       builtWith: map.builtWith != null ? cellText(row[map.builtWith]).trim() : '',
       notes: map.notes != null ? cellText(row[map.notes]).trim() : '',
     };
+    // Only written when the sheet actually has an expiry column, so importing a
+    // sheet without one never wipes dates entered by hand.
+    if (map.expiryDate != null) record.expiryDate = cellDate(row[map.expiryDate]);
 
     const resolved = await resolveOrganization(institution, { create: false, cache: orgCache });
     const organization = resolved ? resolved.org._id : null;
@@ -153,13 +172,14 @@ export const websiteTemplate = asyncHandler(async (req, res) => {
     { header: 'Site Type', key: 'siteType', width: 16 },
     { header: 'Hosting', key: 'hosting', width: 16 },
     { header: 'Built With', key: 'builtWith', width: 28 },
+    { header: 'Expiry Date', key: 'expiryDate', width: 16, style: { numFmt: 'dd-mm-yyyy' } },
   ];
   const head = ws.getRow(1);
   head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B2350' } };
   head.height = 22;
-  ws.addRow({ institution: 'NCET', domain: 'https://ncet.co.in', siteType: 'Hybrid', hosting: 'CloudFlare', builtWith: 'AstroJS' });
-  ws.addRow({ institution: 'NCMS', domain: 'https://ncms.co.in/', siteType: 'Server', hosting: 'AWS', builtWith: 'NextJS With Strapi CMS' });
+  ws.addRow({ institution: 'NCET', domain: 'https://ncet.co.in', siteType: 'Hybrid', hosting: 'CloudFlare', builtWith: 'AstroJS', expiryDate: new Date(Date.UTC(2027, 2, 31)) });
+  ws.addRow({ institution: 'NCMS', domain: 'https://ncms.co.in/', siteType: 'Server', hosting: 'AWS', builtWith: 'NextJS With Strapi CMS', expiryDate: new Date(Date.UTC(2026, 10, 12)) });
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="websites-template.xlsx"');

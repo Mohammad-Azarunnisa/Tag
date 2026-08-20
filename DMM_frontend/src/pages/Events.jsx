@@ -9,7 +9,7 @@ import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Input, Select, Card, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
-import { formatDate, isCoordinatorUser } from '../lib/utils.js';
+import { formatDate, isCoordinatorUser, canDeleteOrgItem } from '../lib/utils.js';
 
 // Where "Open in Drive" goes: the link the organiser pasted, falling back to the
 // Drive folder created for the event when there isn't one.
@@ -45,7 +45,11 @@ export default function Events() {
     onError: (e) => toast.error(e.response?.data?.message || 'Delete failed'),
   });
 
+  // Editing an event stays with whoever created it. Deleting one — which takes
+  // its Drive folder and cover image with it — is an administrator's call, and
+  // for an institution's Admin only within their own colleges.
   const canManage = (ev) => ev.createdBy?._id === user?._id || user?.role === 'ADMIN' || user?.role === 'CEO';
+  const canRemove = (ev) => canDeleteOrgItem(user, ev.organization);
 
   return (
     <div>
@@ -118,10 +122,10 @@ export default function Events() {
                         <FolderOpen className="h-3.5 w-3.5" /> Photos
                       </a>
                       {canManage(ev) && (
-                        <>
-                          <button onClick={() => setEditing(ev)} aria-label={`Edit ${ev.name}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
-                          <button onClick={() => { if (window.confirm(`Delete "${ev.name}"?`)) removeMut.mutate(ev._id); }} aria-label={`Delete ${ev.name}`} className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
-                        </>
+                        <button onClick={() => setEditing(ev)} aria-label={`Edit ${ev.name}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
+                      )}
+                      {canRemove(ev) && (
+                        <button onClick={() => { if (window.confirm(`Delete "${ev.name}"?`)) removeMut.mutate(ev._id); }} aria-label={`Delete ${ev.name}`} className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
                       )}
                     </span>
                   </td>
@@ -143,10 +147,14 @@ export default function Events() {
                 {ev.organization?.name && (
                   <span className="absolute left-2 top-2 rounded-md bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold text-white">{ev.organization.name}</span>
                 )}
-                {canManage(ev) && (
+                {(canManage(ev) || canRemove(ev)) && (
                   <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button onClick={() => setEditing(ev)} aria-label="Edit event" className="rounded-lg bg-white/90 p-1.5 text-slate-600 shadow-sm hover:bg-white dark:bg-slate-900/90 dark:text-slate-300"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => { if (window.confirm(`Delete "${ev.name}"?`)) removeMut.mutate(ev._id); }} aria-label="Delete event" className="rounded-lg bg-white/90 p-1.5 text-rose-600 shadow-sm hover:bg-white dark:bg-slate-900/90"><Trash2 className="h-3.5 w-3.5" /></button>
+                    {canManage(ev) && (
+                      <button onClick={() => setEditing(ev)} aria-label="Edit event" className="rounded-lg bg-white/90 p-1.5 text-slate-600 shadow-sm hover:bg-white dark:bg-slate-900/90 dark:text-slate-300"><Pencil className="h-3.5 w-3.5" /></button>
+                    )}
+                    {canRemove(ev) && (
+                      <button onClick={() => { if (window.confirm(`Delete "${ev.name}"?`)) removeMut.mutate(ev._id); }} aria-label="Delete event" className="rounded-lg bg-white/90 p-1.5 text-rose-600 shadow-sm hover:bg-white dark:bg-slate-900/90"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
                   </div>
                 )}
               </div>

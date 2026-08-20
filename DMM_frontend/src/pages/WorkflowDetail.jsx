@@ -453,14 +453,23 @@ function PostContent({ approval, pages = [], onOpenMedia }) {
 
 /** Posted now, or booked for a date and time. */
 function MarkPostedModal({ onClose, onSubmit, saving }) {
+  const localNow = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
   const [mode, setMode] = useState('now');
   const [when, setWhen] = useState('');
+  // Already live? Then the only fact left is when — and for a handler recording
+  // posts that went out days ago, "now" is the wrong answer. Prefilled with now,
+  // editable back into the past.
+  const [postedWhen, setPostedWhen] = useState(localNow());
   return (
     <Modal open onClose={onClose} title="Mark as posted">
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           {[
-            { key: 'now', label: 'It is already posted', hint: 'Records this moment as when it went out.' },
+            { key: 'now', label: 'It is already posted', hint: 'Say which day it went out — today or earlier.' },
             { key: 'later', label: 'It is scheduled', hint: 'Keeps the date and time it will go out.' },
           ].map((o) => (
             <button key={o.key} type="button" onClick={() => setMode(o.key)}
@@ -472,6 +481,19 @@ function MarkPostedModal({ onClose, onSubmit, saving }) {
             </button>
           ))}
         </div>
+        {mode === 'now' && (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">It went out on</span>
+              <input type="datetime-local" className="input-base" value={postedWhen}
+                onChange={(e) => setPostedWhen(e.target.value)} />
+            </label>
+            <p className="-mt-1 text-xs text-slate-400">
+              Defaults to right now. Wind it back for something that went out earlier — that is
+              the day it shows on the calendar and counts towards in the reports.
+            </p>
+          </>
+        )}
         {mode === 'later' && (
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Goes out on</span>
@@ -482,7 +504,16 @@ function MarkPostedModal({ onClose, onSubmit, saving }) {
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button loading={saving} onClick={() => {
             if (mode === 'later' && !when) { toast.error('Pick the date and time'); return; }
-            onSubmit(mode === 'later' ? { scheduledFor: new Date(when).toISOString() } : {});
+            if (mode === 'now') {
+              if (!postedWhen) { toast.error('Pick when it went out'); return; }
+              if (new Date(postedWhen).getTime() > Date.now() + 60_000) {
+                toast.error('That is in the future — use “It is scheduled” for that');
+                return;
+              }
+            }
+            onSubmit(mode === 'later'
+              ? { scheduledFor: new Date(when).toISOString() }
+              : { postedAt: new Date(postedWhen).toISOString() });
           }}>
             <CheckCircle2 className="h-4 w-4" /> {mode === 'later' ? 'Save the schedule' : 'Mark as posted'}
           </Button>

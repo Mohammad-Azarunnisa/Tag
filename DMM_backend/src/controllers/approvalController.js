@@ -20,6 +20,8 @@ import {
   advanceWorkflowOnDecision, workflowHalfForApproval,
 } from './workflowController.js';
 import { requireOrgId, resolveOrgId, canAccessOrg, accessibleOrgIds } from '../utils/org.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
+import { resolvePostedAt } from '../utils/postedAt.js';
 import {
   APPROVAL_STATUS,
   APPROVAL_TYPES,
@@ -1298,7 +1300,10 @@ export const scheduleRequest = asyncHandler(async (req, res) => {
   res.json({ success: true, request });
 });
 
-// @route PUT /api/approvals/:id/posted  (owner) — mark as posted
+// @route PUT /api/approvals/:id/posted  (owner) — mark as posted.
+// Body: { postedAt? } — the moment it actually went out. Omitted means now;
+// a past moment is how already-published work gets recorded against the day it
+// really went live rather than the day someone got round to logging it.
 export const markPosted = asyncHandler(async (req, res) => {
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
@@ -1316,18 +1321,33 @@ export const markPosted = asyncHandler(async (req, res) => {
   }
   if (request.status !== APPROVAL_STATUS.APPROVED) { res.status(400); throw new Error('Only approved content can be marked as posted'); }
 
+  const { when: postedAt, error: postedAtError } = resolvePostedAt(req.body.postedAt);
+  if (postedAtError) { res.status(400); throw new Error(postedAtError); }
+  // A back-dated post is not waiting on anything any more, so a go-live time
+  // left over from an earlier plan would have the calendar showing it as still
+  // due on a date that has already passed.
+  const backdated = Boolean(req.body.postedAt);
+
   request.status = APPROVAL_STATUS.POSTED;
-  request.postedAt = new Date();
+  request.postedAt = postedAt;
   request.postedBy = req.user._id;
+  if (backdated) request.scheduledAt = undefined;
   await request.save();
 
   // The posting job in the handler's assigned work existed to get this out. It
   // is out, so it is done — leaving it open would have their list contradicting
   // the board about something they just did.
-  await closePostingWorkForApproval(request._id, req.user);
+  await closePostingWorkForApproval(request._id, req.user, postedAt);
 
   // Durable status-change marker in the request's activity feed.
-  await recordFeed({ request: request._id, kind: 'event', author: req.user._id, text: `marked as posted on ${platformsOf(request).join(", ")}` });
+  const postedOnLabel = postedAt.toISOString().slice(0, 16).replace('T', ' ');
+  await recordFeed({
+    request: request._id, kind: 'event', author: req.user._id,
+    // Say the date when it is not "just now", so the feed does not read as if the
+    // post went out at the moment someone typed it in.
+    text: `marked as posted on ${platformsOf(request).join(", ")}`
+      + (backdated ? ` — it went out on ${postedOnLabel} UTC` : ''),
+  });
 
   // Publishing the post completes its source design's lifecycle too.
   if (request.sourceDesign) {
@@ -1559,14 +1579,19 @@ export const addComment = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, comment });
 });
 
-// @route DELETE /api/approvals/:id  (owner or CEO)
+// @route DELETE /api/approvals/:id  (admin or super admin only)
+//
+// Not the owner. A design or post carries its whole history — the review thread,
+// the artwork, the day it went out and everything the reports counted from that —
+// so letting whoever raised it erase the record was the wrong default: a handler
+// could delete a post that had already gone live. The route enforces the role
+// (routes/approvalRoutes.js); this re-checks it so the rule survives the handler
+// being mounted somewhere else later.
 export const deleteApproval = asyncHandler(async (req, res) => {
   const request = await ApprovalRequest.findById(req.params.id);
   if (!request) { res.status(404); throw new Error('Request not found'); }
   assertOrgAccess(req, res, request);
-  if (String(request.createdBy) !== String(req.user._id) && ![ROLES.CEO, ROLES.ADMIN].includes(req.user.role)) {
-    res.status(403); throw new Error('Not allowed');
-  }
+  assertCanDeleteOrgItem(req, res, request.organization, 'a request');
   const images = await ApprovalImage.find({ request: request._id });
   await Promise.all(images.map((img) => deleteFile(img.publicId)));
   // Chat attachments live on comment rows — remove their files from storage too.

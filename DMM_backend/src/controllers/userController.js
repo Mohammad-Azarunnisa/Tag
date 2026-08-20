@@ -6,6 +6,7 @@ import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { accessibleOrgIds } from '../utils/org.js';
 import { escapeRegex } from '../utils/sheet.js';
 import { logActivity } from '../utils/logActivity.js';
+import { resolveJobTitle } from '../utils/jobTitle.js';
 import { createNotification } from '../utils/notify.js';
 import { sendEmail } from '../utils/email.js';
 import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
@@ -335,6 +336,10 @@ export const createUser = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Name, email and password are required');
   }
+  // No `current` to fall back on for a brand-new account, so the list is the
+  // whole rule here — a new user cannot be created with an off-list title.
+  const createTitle = resolveJobTitle(jobTitle);
+  if (createTitle.error) { res.status(400); throw new Error(createTitle.error); }
   if (password.length < 6) {
     res.status(400);
     throw new Error('Password must be at least 6 characters');
@@ -382,7 +387,7 @@ export const createUser = asyncHandler(async (req, res) => {
     userType: finalUserType,
     isSuperAdmin: wantSuper,
     viewOnly: wantViewOnly,
-    jobTitle: jobTitle || '',
+    jobTitle: createTitle.value || '',
     phone: phone || '',
     linkedinUrl: linkedinUrl || '',
     skills: parseSkills(skills),
@@ -445,7 +450,9 @@ export const updateUser = asyncHandler(async (req, res) => {
   }
 
   if (name) user.name = name;
-  if (jobTitle !== undefined) user.jobTitle = jobTitle;
+  const title = resolveJobTitle(jobTitle, user.jobTitle);
+  if (title.error) { res.status(400); throw new Error(title.error); }
+  if (title.value !== undefined) user.jobTitle = title.value;
   if (phone !== undefined) user.phone = phone;
   if (linkedinUrl !== undefined) user.linkedinUrl = linkedinUrl;
   if (skills !== undefined) user.skills = parseSkills(skills);
@@ -533,8 +540,12 @@ export const deleteUser = asyncHandler(async (req, res) => {
 export const updateProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
   const { name, jobTitle, phone, linkedinUrl } = req.body;
+  // A job title has to come off the canonical list (utils/jobTitle.js) — free
+  // text is what filled the directory with three spellings of "Coordinator".
+  const title = resolveJobTitle(jobTitle, user.jobTitle);
+  if (title.error) { res.status(400); throw new Error(title.error); }
   if (name) user.name = name;
-  if (jobTitle !== undefined) user.jobTitle = jobTitle;
+  if (title.value !== undefined) user.jobTitle = title.value;
   if (phone !== undefined) user.phone = phone;
   if (linkedinUrl !== undefined) user.linkedinUrl = linkedinUrl;
 
@@ -624,9 +635,12 @@ export const completeProfile = asyncHandler(async (req, res) => {
     res.status(400); throw new Error('Add at least one organization/page you handle');
   }
 
+  const title = resolveJobTitle(jobTitle, user.jobTitle);
+  if (title.error) { res.status(400); throw new Error(title.error); }
+
   user.name = name.trim();
   user.phone = phone.trim();
-  if (jobTitle !== undefined) user.jobTitle = jobTitle;
+  if (title.value !== undefined) user.jobTitle = title.value;
   if (linkedinUrl !== undefined) user.linkedinUrl = linkedinUrl;
   user.skills = skillList;
   user.tools = toolList;

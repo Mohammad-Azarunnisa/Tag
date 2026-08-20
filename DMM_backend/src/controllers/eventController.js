@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import { logActivity } from '../utils/logActivity.js';
 import { ACTIVITY_ACTIONS, ROLES } from '../config/constants.js';
 import { canAccessOrg, resolveViewOrgId } from '../utils/org.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { createEventDriveFolder, uploadEventPhoto, deleteDriveFile, isDriveConfigured } from '../services/googleDrive.js';
 
@@ -195,7 +196,9 @@ export const updateEvent = asyncHandler(async (req, res) => {
 export const deleteEvent = asyncHandler(async (req, res) => {
   const event = await Event.findById(req.params.id);
   if (!event) { res.status(404); throw new Error('Event not found'); }
-  if (!canManage(req.user, event)) { res.status(403); throw new Error('Not allowed to delete this event'); }
+  // Editing an event stays with whoever created it (canManage above); deleting
+  // it — and the Drive folder and cover image that go with it — does not.
+  assertCanDeleteOrgItem(req, res, event.organization, 'an event');
   if (event.driveFolderId) await deleteDriveFile(event.driveFolderId);
   if (event.coverImagePublicId) await deleteFile(event.coverImagePublicId);
   await event.deleteOne();

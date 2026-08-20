@@ -15,7 +15,7 @@ import { Input, Select, Card, Skeleton, EmptyState } from '../components/ui/prim
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
 import PlanSchedule from '../components/PlanSchedule.jsx';
 import PlanCalendar from '../components/PlanCalendar.jsx';
-import { cn, formatDate, platformsOf, isCoordinatorUser } from '../lib/utils.js';
+import { cn, formatDate, platformsOf, isCoordinatorUser, canDeleteContent } from '../lib/utils.js';
 
 const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
 const PLATFORM_ICON = { LinkedIn: Linkedin, Instagram: Instagram, YouTube: Youtube, Facebook: Facebook };
@@ -498,7 +498,9 @@ function PlanDetail({ planId, user, onClose, onChanged, onEdit }) {
                   <Pencil className="h-4 w-4" /> {plan.status === 'REJECTED' ? 'Fix & resubmit' : plan.status === 'APPROVED' ? 'Change plan' : 'Edit plan'}
                 </Button>
               )}
-              {(isOwner || user?.role === 'ADMIN') && (
+              {/* Not the plan's author: deleting one erases every planned post in
+                  it, so it is an administrator's call. */}
+              {canDeleteContent(user) && (
                 <Button variant="ghost" onClick={() => window.confirm('Delete this plan permanently?') && removeMut.mutate()}
                   className="ml-auto text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10">
                   <Trash2 className="h-4 w-4" /> Delete

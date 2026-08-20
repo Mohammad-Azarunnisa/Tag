@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { UPLOAD_ROOT } from './config/storage.js';
+import { attachmentDisposition } from './utils/contentDisposition.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
@@ -70,9 +71,22 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 
-// Serve locally-stored uploads from the configured storage root (local `uploads`
-// folder in dev, or the mounted volume like /mnt/tag-storage in production).
-app.use('/uploads', express.static(UPLOAD_ROOT));
+/**
+ * Serve locally-stored uploads from the configured storage root (local `uploads`
+ * folder in dev, or the mounted volume like /mnt/tag-storage in production).
+ *
+ * `?download=1` — or `?download=<name>` to choose the saved filename — asks for
+ * the file as an attachment rather than as something to render in a tab. The
+ * header that does it, and why only the server can send it, is in
+ * utils/contentDisposition.js.
+ */
+app.use('/uploads', express.static(UPLOAD_ROOT, {
+  setHeaders: (res, filePath) => {
+    const asked = res.req.query?.download;
+    if (!asked) return;
+    res.setHeader('Content-Disposition', attachmentDisposition(String(asked), filePath));
+  },
+}));
 
 app.get('/api/health', (req, res) =>
   res.json({ success: true, status: 'ok', service: 'dmm-backend', time: new Date().toISOString() })

@@ -8,7 +8,7 @@ import {
 import { planApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import { Card, Input, Select, Skeleton, EmptyState } from './ui/primitives.jsx';
-import { cn, formatDate, isCoordinatorUser } from '../lib/utils.js';
+import { cn, formatDate, isCoordinatorUser, canDeleteContent } from '../lib/utils.js';
 
 const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
 const PLATFORM_ICON = { LinkedIn: Linkedin, Instagram: Instagram, YouTube: Youtube, Facebook: Facebook };
@@ -42,7 +42,9 @@ export default function PlanSchedule() {
   const user = useAuthStore((s) => s.user);
   // Pulling a single booking out of someone else's plan is a super-admin
   // correction; the backend enforces this too.
-  const canRemovePost = !!user?.isSuperAdmin && !user?.viewOnly;
+  // An institution's Admin may pull a post out of their own college's plan too,
+  // not only the super admin — the server decides (utils/permissions.js).
+  const canRemovePost = canDeleteContent(user);
   const [mode, setMode] = useState('day'); // day | range
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(() => plusDays(todayStr(), 6));

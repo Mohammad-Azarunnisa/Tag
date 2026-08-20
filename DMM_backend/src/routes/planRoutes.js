@@ -2,7 +2,8 @@ import express from 'express';
 import {
   getPlans, getPlan, getPlanSchedule, createPlan, updatePlan, approvePlan, rejectPlan, deletePlan, deletePlanItem,
 } from '../controllers/postPlanController.js';
-import { protect, requireSuperAdmin } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
 
 const router = express.Router();
 router.use(protect);
@@ -11,9 +12,12 @@ router.use(protect);
 router.route('/').get(getPlans).post(createPlan);
 // Must be declared before '/:id', or 'schedule' is read as a plan id.
 router.get('/schedule', getPlanSchedule);
-router.route('/:id').get(getPlan).put(updatePlan).delete(deletePlan);
+// Deleting is an administrator's act — see utils/permissions.js. The role gate
+// lives on the route so it cannot be forgotten; the handler adds the institution
+// scoping on top of it.
+router.route('/:id').get(getPlan).put(updatePlan).delete(authorize(ROLES.ADMIN, ROLES.CEO), deletePlan);
 // Removing a single planned post is a super-admin-only correction.
-router.delete('/:id/items/:itemId', requireSuperAdmin, deletePlanItem);
+router.delete('/:id/items/:itemId', authorize(ROLES.ADMIN, ROLES.CEO), deletePlanItem);
 router.put('/:id/approve', approvePlan);
 router.put('/:id/reject', rejectPlan);
 

@@ -3,17 +3,37 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Globe, Plus, Pencil, Trash2, Upload, Download, FileSpreadsheet, ExternalLink } from 'lucide-react';
 import { websiteApi, organizationApi } from '../api/endpoints.js';
-import { downloadBlob } from '../lib/utils.js';
+import { cn, downloadBlob, formatDate } from '../lib/utils.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 
-const blank = { institution: '', organization: '', domain: '', siteType: '', hosting: '', builtWith: '', notes: '' };
+const blank = { institution: '', organization: '', domain: '', siteType: '', hosting: '', builtWith: '', expiryDate: '', notes: '' };
 
 // Subtle, consistent badge tones (kept in the brand/slate family — no rainbow).
 const Badge = ({ children }) =>
   children ? <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{children}</span> : <span className="text-slate-300 dark:text-slate-600">—</span>;
+
+// <input type="date"> speaks yyyy-MM-dd only. Dates are stored at UTC midnight,
+// so slicing the ISO string hands back the day that was picked.
+const toDateInput = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+};
+
+// A renewal that has passed — or is about to — is the whole point of holding the
+// date, so it is called out rather than left as one more grey cell.
+const DAY = 24 * 60 * 60 * 1000;
+const expiryTone = (v) => {
+  if (!v) return null;
+  const days = Math.ceil((new Date(v).getTime() - Date.now()) / DAY);
+  if (Number.isNaN(days)) return null;
+  if (days < 0) return { cls: 'text-rose-600 dark:text-rose-400 font-semibold', note: 'Expired' };
+  if (days <= 30) return { cls: 'text-amber-600 dark:text-amber-400 font-semibold', note: days === 0 ? 'Expires today' : `${days} day${days === 1 ? '' : 's'} left` };
+  return { cls: 'text-slate-600 dark:text-slate-300', note: null };
+};
 
 export default function Websites() {
   const qc = useQueryClient();
@@ -49,7 +69,7 @@ export default function Websites() {
   return (
     <div>
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onPickFile} />
-      <PageHeader title="Websites & Domains" subtitle="Every institution's live site — domain, site type, hosting and the stack it's built with."
+      <PageHeader title="Websites & Domains" subtitle="Every institution's live site — domain, site type, hosting, the stack it's built with and when it comes up for renewal."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={downloadTemplate}><Download className="h-4 w-4" /> Template</Button>
@@ -62,7 +82,7 @@ export default function Websites() {
         <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
         <span>
           <span className="font-semibold text-slate-600 dark:text-slate-300">Excel import:</span> upload your domains sheet with
-          columns like <em>Institution</em>, <em>Domain</em>, <em>Site Type</em>, <em>Hosting</em> and <em>Built With</em>.
+          columns like <em>Institution</em>, <em>Domain</em>, <em>Site Type</em>, <em>Hosting</em>, <em>Built With</em> and <em>Expiry Date</em>.
           Columns are detected automatically and re-importing updates existing rows instead of duplicating.
         </span>
       </div>
@@ -90,6 +110,7 @@ export default function Websites() {
                 <th className="px-5 py-3 font-semibold">Site Type</th>
                 <th className="px-5 py-3 font-semibold">Hosting</th>
                 <th className="px-5 py-3 font-semibold">Built With</th>
+                <th className="px-5 py-3 font-semibold">Expiry</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -107,6 +128,17 @@ export default function Websites() {
                   <td className="px-5 py-3"><Badge>{w.siteType}</Badge></td>
                   <td className="px-5 py-3"><Badge>{w.hosting}</Badge></td>
                   <td className="px-5 py-3 text-slate-600 dark:text-slate-300">{w.builtWith || <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
+                  <td className="px-5 py-3 whitespace-nowrap">
+                    {w.expiryDate ? (() => {
+                      const tone = expiryTone(w.expiryDate);
+                      return (
+                        <span className={cn('block', tone?.cls)}>
+                          {formatDate(w.expiryDate)}
+                          {tone?.note && <span className="block text-[11px] font-medium">{tone.note}</span>}
+                        </span>
+                      );
+                    })() : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                  </td>
                   <td className="px-5 py-3 text-right">
                     <div className="inline-flex gap-1">
                       <button onClick={() => setModal({ type: 'edit', item: w })} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800" title="Edit"><Pencil className="h-4 w-4" /></button>
@@ -126,9 +158,12 @@ export default function Websites() {
 }
 
 function WebsiteModal({ item, orgs, onClose, onSaved }) {
-  const [form, setForm] = useState(item ? { ...blank, ...item, organization: item.organization?._id || item.organization || '' } : blank);
+  const [form, setForm] = useState(item
+    ? { ...blank, ...item, organization: item.organization?._id || item.organization || '', expiryDate: toDateInput(item.expiryDate) }
+    : blank);
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm({ ...form, [k]: v });
+  const expiry = expiryTone(form.expiryDate);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -152,7 +187,15 @@ function WebsiteModal({ item, orgs, onClose, onSaved }) {
             {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
           </Select>
         </div>
-        <Input label="Domain" value={form.domain} onChange={(e) => set('domain', e.target.value)} placeholder="https://example.co.in" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {/* The span sits on the wrapper — Input puts className on the field
+              itself, not on the grid item. */}
+          <div className="sm:col-span-2">
+            <Input label="Domain" value={form.domain} onChange={(e) => set('domain', e.target.value)} placeholder="https://example.co.in" />
+          </div>
+          <Input label="Expiry date (optional)" type="date" value={form.expiryDate} onChange={(e) => set('expiryDate', e.target.value)} />
+        </div>
+        {expiry?.note && <p className={cn('-mt-1 text-xs', expiry.cls)}>{expiry.note} — as of today.</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input label="Site Type" value={form.siteType} onChange={(e) => set('siteType', e.target.value)} placeholder="Static / Server / Hybrid / Dynamic" />
           <Input label="Hosting" value={form.hosting} onChange={(e) => set('hosting', e.target.value)} placeholder="CloudFlare / AWS" />

@@ -91,7 +91,7 @@ export default function Directory() {
 
       {isLoading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36" />)}
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48" />)}
         </div>
       ) : people.length === 0 ? (
         <EmptyState icon={UsersIcon}
@@ -108,8 +108,10 @@ export default function Directory() {
             const isMe = String(p._id) === String(me?._id);
             return (
               <Card key={p._id} className={cn('p-5', isMe && 'ring-2 ring-brand-500/40')}>
-                <div className="flex items-start gap-3">
-                  <Avatar src={p.avatar} name={p.name} />
+                <div className="flex items-start gap-4">
+                  {/* Bigger than the app-wide 'lg' avatar — on this page the face
+                      is the thing you scan for, so it leads the card. */}
+                  <Avatar src={p.avatar} name={p.name} size="lg" className="h-20 w-20 shrink-0 text-xl" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-bold text-slate-800 dark:text-white">
                       {p.name}{isMe && <span className="ml-1.5 text-xs font-semibold text-brand-600 dark:text-brand-400">You</span>}

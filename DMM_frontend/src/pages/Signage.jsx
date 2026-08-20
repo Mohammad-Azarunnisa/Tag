@@ -11,7 +11,7 @@ import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Input, Select, Card, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
-import { formatDate, cn } from '../lib/utils.js';
+import { formatDate, cn, canDeleteOrgItem } from '../lib/utils.js';
 
 const STAND_TYPES = ['Arch banner', 'Foam board', 'Standee', 'Normal banner', 'Other'];
 const UNITS = ['ft', 'in', 'cm', 'm'];
@@ -48,6 +48,9 @@ export default function Signage() {
   });
 
   const canManage = (doc) => doc.createdBy?._id === user?._id || user?.role === 'ADMIN' || user?.role === 'CEO';
+  // Deleting a stand erases its entire banner history, so it is an
+  // administrator's call rather than the creator's.
+  const canRemove = (doc) => canDeleteOrgItem(user, doc.organization);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['signage-locations'] });
     qc.invalidateQueries({ queryKey: ['signage-banners'] });
@@ -168,10 +171,10 @@ export default function Signage() {
                         <Button size="sm" variant="outline" onClick={() => setHistoryOf(loc)}><History className="h-3.5 w-3.5" /> History</Button>
                         <Button size="sm" variant="outline" onClick={() => setPlacingOn(loc)}><Plus className="h-3.5 w-3.5" /> Place</Button>
                         {canManage(loc) && (
-                          <>
-                            <button onClick={() => setEditLocation(loc)} aria-label={`Edit ${loc.code}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
-                            <button onClick={() => { if (window.confirm(`Delete stand ${loc.code} (${loc.place}) and its entire banner history? This cannot be undone.`)) removeMut.mutate(loc._id); }} aria-label={`Delete ${loc.code}`} className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
-                          </>
+                          <button onClick={() => setEditLocation(loc)} aria-label={`Edit ${loc.code}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canRemove(loc) && (
+                          <button onClick={() => { if (window.confirm(`Delete stand ${loc.code} (${loc.place}) and its entire banner history? This cannot be undone.`)) removeMut.mutate(loc._id); }} aria-label={`Delete ${loc.code}`} className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
                         )}
                       </span>
                     </td>
@@ -219,10 +222,14 @@ export default function Signage() {
                   <div className="mt-3 flex items-center gap-1.5 border-t border-slate-100 pt-3 dark:border-slate-800">
                     <Button size="sm" variant="outline" onClick={() => setHistoryOf(loc)}><History className="h-3.5 w-3.5" /> History</Button>
                     <Button size="sm" variant="outline" onClick={() => setPlacingOn(loc)}><Plus className="h-3.5 w-3.5" /> Place</Button>
-                    {canManage(loc) && (
+                    {(canManage(loc) || canRemove(loc)) && (
                       <div className="ml-auto flex gap-1">
-                        <button onClick={() => setEditLocation(loc)} aria-label="Edit location" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => { if (window.confirm(`Delete stand ${loc.code} (${loc.place}) and its entire banner history? This cannot be undone.`)) removeMut.mutate(loc._id); }} aria-label="Delete location" className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                        {canManage(loc) && (
+                          <button onClick={() => setEditLocation(loc)} aria-label="Edit location" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canRemove(loc) && (
+                          <button onClick={() => { if (window.confirm(`Delete stand ${loc.code} (${loc.place}) and its entire banner history? This cannot be undone.`)) removeMut.mutate(loc._id); }} aria-label="Delete location" className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -235,7 +242,7 @@ export default function Signage() {
 
       {editLocation && <LocationModal location={editLocation} onClose={() => setEditLocation(null)} onSaved={() => { setEditLocation(null); invalidate(); }} />}
       {placingOn && <BannerModal preset={placingOn} locations={locations} onClose={() => setPlacingOn(null)} onSaved={() => { setPlacingOn(null); invalidate(); }} />}
-      {historyOf && <HistoryModal location={historyOf} canManage={canManage} onClose={() => setHistoryOf(null)} onChanged={invalidate} />}
+      {historyOf && <HistoryModal location={historyOf} canManage={canManage} canRemove={canRemove(historyOf)} onClose={() => setHistoryOf(null)} onChanged={invalidate} />}
     </div>
   );
 }
@@ -451,7 +458,10 @@ function BannerModal({ preset = {}, banner = null, locations = [], onClose, onSa
 }
 
 // ---- One stand's banner history (newest first) ----
-function HistoryModal({ location, canManage, onClose, onChanged }) {
+// `canRemove` is decided by the parent, which has the signed-in user: deleting a
+// banner record wipes its files, so it follows the same administrator rule as
+// deleting the stand itself rather than the looser edit rule.
+function HistoryModal({ location, canManage, canRemove, onClose, onChanged }) {
   const qc = useQueryClient();
   const [editBanner, setEditBanner] = useState(null);
 
@@ -533,7 +543,9 @@ function HistoryModal({ location, canManage, onClose, onChanged }) {
                         </Button>
                       )}
                       <button onClick={() => setEditBanner(b)} aria-label="Edit banner" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"><Pencil className="h-4 w-4" /></button>
-                      <button onClick={() => { if (window.confirm(`Delete the record of "${b.title}" from the history? Its files are removed too.`)) deleteMut.mutate(b._id); }} aria-label="Delete banner" className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                      {canRemove && (
+                        <button onClick={() => { if (window.confirm(`Delete the record of "${b.title}" from the history? Its files are removed too.`)) deleteMut.mutate(b._id); }} aria-label="Delete banner" className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                      )}
                     </span>
                   )}
                 </div>

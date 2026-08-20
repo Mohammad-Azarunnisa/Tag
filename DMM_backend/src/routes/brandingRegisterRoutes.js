@@ -17,6 +17,6 @@ router.get('/', listBrandingRegister);
 router.post('/', createBrandingRegisterItem);
 router.post('/seed', seedBrandingRegister);
 router.put('/:id', updateBrandingRegisterItem);
-router.delete('/:id', deleteBrandingRegisterItem);
+router.delete('/:id', deleteBrandingRegisterItem);   // router.use(requireSuperAdmin) above already gates this
 
 export default router;

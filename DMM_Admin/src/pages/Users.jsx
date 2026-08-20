@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   UserPlus, Search, Pencil, KeyRound, Trash2, Users as UsersIcon, ShieldCheck, Crown, User as UserIcon, MoreVertical, Power, Plus, X, Eye,
-  Camera, ImageOff,
+  Camera, ImageOff, LayoutGrid, List, Mail, CalendarDays,
 } from 'lucide-react';
 import { userApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -31,6 +31,9 @@ const USER_TYPES = [{ value: 'DESIGNER', label: 'Designer' }, { value: 'SOCIAL_H
 const PAGE_PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook', 'X (Twitter)'];
 const AZAR_HANDLE_ORGS = ['Torii Minds', 'NCET', 'NCMS', 'NDC', 'Technical Hub'];
 const roleIcon = (u) => (u?.isSuperAdmin ? ShieldCheck : u?.role === 'USER' ? UserIcon : Crown);
+// Table or cards. Remembered per browser so the choice survives a reload and
+// moving between pages, rather than resetting to list every time.
+const VIEW_KEY = 'users:view';
 
 export default function Users() {
   const qc = useQueryClient();
@@ -40,6 +43,13 @@ export default function Users() {
   const [filters, setFilters] = useState({ search: '', role: 'All', organization: 'All' });
   const [modal, setModal] = useState(null);
   const [menuFor, setMenuFor] = useState(null);
+  const [view, setView] = useState(() => (localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list'));
+
+  const pickView = (next) => {
+    setView(next);
+    setMenuFor(null); // an open row menu belongs to the layout you just left
+    localStorage.setItem(VIEW_KEY, next);
+  };
 
   const { data, isLoading } = useQuery({ queryKey: ['users', filters], queryFn: () => userApi.list(filters) });
   const users = data?.users || [];
@@ -91,6 +101,21 @@ export default function Users() {
     setFilters({ ...filters, role: s.role === 'All' || filters.role === s.role ? 'All' : s.role });
   };
 
+  // The same row menu drives both layouts, so a card offers exactly what a table
+  // row does — no second copy of the rules about who may do what.
+  const actionProps = (u) => ({
+    isSelf: u._id === me?._id,
+    canManage,
+    isActive: u.isActive,
+    open: menuFor === u._id,
+    onToggle: () => setMenuFor(menuFor === u._id ? null : u._id),
+    onClose: () => setMenuFor(null),
+    onEdit: () => { setMenuFor(null); setModal({ type: 'edit', user: u }); },
+    onReset: () => { setMenuFor(null); setModal({ type: 'reset', user: u }); },
+    onToggleActive: () => { setMenuFor(null); toggleMut.mutate({ id: u._id, isActive: !u.isActive }); },
+    onDelete: () => { setMenuFor(null); if (window.confirm(`Delete ${u.name}?`)) removeMut.mutate(u._id); },
+  });
+
   return (
     <div>
       <PageHeader title="User Management" subtitle={canManage ? 'Create and manage accounts, roles and access.' : 'View accounts and roles. Only the super admin can create or edit accounts.'}
@@ -139,13 +164,33 @@ export default function Users() {
           <option value="All">All colleges</option>
           {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
         </Select>
+        <div className="flex shrink-0 items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-700">
+          {[{ key: 'list', icon: List, label: 'List view' }, { key: 'grid', icon: LayoutGrid, label: 'Grid view' }].map((v) => (
+            <button key={v.key} type="button" onClick={() => pickView(v.key)} title={v.label} aria-label={v.label}
+              aria-pressed={view === v.key}
+              className={cn('flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+                view === v.key
+                  ? 'bg-brand-600 text-white'
+                  : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800')}>
+              <v.icon className="h-4 w-4" />
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
-        <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+        view === 'grid' ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-64" />)}</div>
+        ) : (
+          <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+        )
       ) : users.length === 0 ? (
         <EmptyState icon={UsersIcon} title="No users found" description={canManage ? 'Add a user to get started.' : 'No users to show.'}
           action={canManage && <Button onClick={() => setModal({ type: 'create' })}><UserPlus className="h-4 w-4" /> Add User</Button>} />
+      ) : view === 'grid' ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {users.map((u) => <UserCard key={u._id} user={u} {...actionProps(u)} />)}
+        </div>
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -214,24 +259,7 @@ export default function Users() {
                       </td>
                       <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{formatDate(u.createdAt)}</td>
                       <td className="px-5 py-3">
-                        {!canManage ? (
-                          <div className="flex justify-end text-xs text-slate-300 dark:text-slate-600">—</div>
-                        ) : (
-                        <div className="relative flex justify-end">
-                          <button onClick={() => setMenuFor(menuFor === u._id ? null : u._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
-                          {menuFor === u._id && (
-                            <>
-                              <div className="fixed inset-0 z-10" onClick={() => setMenuFor(null)} />
-                              <div className="absolute right-0 top-9 z-20 w-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5 shadow-card">
-                                <MenuItem icon={Pencil} label="Edit" onClick={() => { setMenuFor(null); setModal({ type: 'edit', user: u }); }} />
-                                <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setMenuFor(null); setModal({ type: 'reset', user: u }); }} />
-                                <MenuItem icon={Power} label={u.isActive ? 'Deactivate' : 'Activate'} onClick={() => { setMenuFor(null); toggleMut.mutate({ id: u._id, isActive: !u.isActive }); }} />
-                                {!isSelf && <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenuFor(null); window.confirm(`Delete ${u.name}?`) && removeMut.mutate(u._id); }} />}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        )}
+                        <RowActions {...actionProps(u)} />
                       </td>
                     </tr>
                   );
@@ -254,6 +282,111 @@ const MenuItem = ({ icon: Icon, label, onClick, danger }) => (
     <Icon className="h-4 w-4" /> {label}
   </button>
 );
+
+// The row menu, shared by the table and the cards. A Chairman (view-only) gets
+// a dash instead — the same "nothing to do here" the table has always shown.
+function RowActions({ isSelf, canManage, isActive, open, onToggle, onClose, onEdit, onReset, onToggleActive, onDelete }) {
+  if (!canManage) return <div className="flex justify-end text-xs text-slate-300 dark:text-slate-600">—</div>;
+  return (
+    <div className="relative flex justify-end">
+      <button onClick={onToggle} aria-label="Actions" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={onClose} />
+          <div className="absolute right-0 top-9 z-20 w-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5 shadow-card">
+            <MenuItem icon={Pencil} label="Edit" onClick={onEdit} />
+            <MenuItem icon={KeyRound} label="Reset password" onClick={onReset} />
+            <MenuItem icon={Power} label={isActive ? 'Deactivate' : 'Activate'} onClick={onToggleActive} />
+            {!isSelf && <MenuItem icon={Trash2} label="Delete" danger onClick={onDelete} />}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One account as a card — the grid-view counterpart of a table row.
+ *
+ * Carries every column the table does (role, organization, status, joined) plus
+ * the same handles and skills, so switching layout changes the shape of the
+ * page and nothing about what you can see or do.
+ */
+function UserCard({ user: u, ...actions }) {
+  const RoleIcon = roleIcon(u);
+  return (
+    <Card className={cn('flex flex-col p-5', !u.isActive && 'opacity-75')}>
+      <div className="flex items-start gap-4">
+        <Avatar src={u.avatar} name={u.name} size="lg" className="h-20 w-20 shrink-0 text-xl" />
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-1.5 font-bold text-slate-800 dark:text-white">
+            <span className="truncate">{u.name}</span>
+            {actions.isSelf && <span className="text-xs font-normal text-slate-400">(you)</span>}
+          </p>
+          {(u.jobTitle || (u.role === 'USER' && u.userType)) && (
+            <p className="truncate text-xs text-slate-400">
+              {[u.jobTitle, u.role === 'USER' && u.userType ? userTypeLabel(u.userType) : null].filter(Boolean).join(' · ')}
+            </p>
+          )}
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className={`inline-flex min-h-6 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold leading-none ${roleStyle(u)}`}>
+              <RoleIcon className="h-3 w-3" />{roleLabel(u)}
+            </span>
+            <Badge className={u.isActive
+              ? 'min-h-6 justify-center whitespace-nowrap leading-none bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+              : 'min-h-6 justify-center whitespace-nowrap leading-none bg-slate-100 text-slate-500 dark:bg-slate-800'}>
+              {u.isActive ? 'Active' : 'Inactive'}
+            </Badge>
+            {u.viewOnly && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                <Eye className="h-3 w-3" /> View-only
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="-mr-1 -mt-1 shrink-0"><RowActions {...actions} /></div>
+      </div>
+
+      <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
+        <a href={`mailto:${u.email}`} className="flex items-center gap-2 text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400">
+          <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <span className="min-w-0 truncate">{u.email}</span>
+        </a>
+        <p className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+          {u.organization ? (
+            <>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: u.organization.color || '#6366f1' }} />
+              <span className="min-w-0 truncate">{u.organization.name}</span>
+            </>
+          ) : (
+            <>
+              <span className="h-2 w-2 shrink-0 rounded-full bg-slate-300 dark:bg-slate-600" />
+              <span className="text-slate-400">— Global —</span>
+            </>
+          )}
+        </p>
+        <p className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+          <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          Joined {formatDate(u.createdAt)}
+        </p>
+      </div>
+
+      {u.handles?.length > 0 && (
+        <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+          Handles {u.handles.map((h) => `${h.organization?.name || 'Org'}: ${(h.platforms || []).join(', ')}`).join(' · ')}
+        </p>
+      )}
+      {u.skills?.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {u.skills.slice(0, 4).map((s, i) => (
+            <span key={i} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">{s}</span>
+          ))}
+          {u.skills.length > 4 && <span className="text-[10px] text-slate-400">+{u.skills.length - 4}</span>}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function UserFormModal({ editUser, onClose, onSaved }) {
   const [form, setForm] = useState({

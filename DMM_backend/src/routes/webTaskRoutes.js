@@ -13,6 +13,6 @@ router.use(protect);
 router.route('/').get(listWebTasks).post(authorize(ROLES.ADMIN, ROLES.CEO), createWebTask);
 router.route('/:id')
   .put(authorize(ROLES.ADMIN, ROLES.CEO), updateWebTask)
-  .delete(deleteWebTask);
+  .delete(authorize(ROLES.ADMIN, ROLES.CEO), deleteWebTask);
 
 export default router;
