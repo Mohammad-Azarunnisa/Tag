@@ -71,7 +71,12 @@ export default function Notifications() {
   const open = (n) => {
     if (!n.isRead) readMut.mutate(n._id);
     const to = targetOf(n);
-    if (to) navigate(to);
+    // Tag where this came from so the destination can offer a way back. The
+    // destination's own back link goes to its list, and the destinations that
+    // ARE lists have no back link at all, so without this a notification was a
+    // one-way trip and you had to find the bell again to read the next one.
+    // The strip that reads the tag is in components/layout/AppLayout.jsx.
+    if (to) navigate(to, { state: { from: '/notifications' } });
   };
 
   return (

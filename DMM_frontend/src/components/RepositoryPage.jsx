@@ -10,7 +10,7 @@ import { Button } from './ui/Button.jsx';
 import { Card, Input, Select, Badge, Avatar, Skeleton, EmptyState } from './ui/primitives.jsx';
 import { Modal } from './ui/Modal.jsx';
 import FileDropzone from './ui/FileDropzone.jsx';
-import { formatDate, formatBytes, cn, isCoordinatorUser } from '../lib/utils.js';
+import { formatDate, formatBytes, cn, isCoordinatorUser, canDeleteOrgItem, triggerDownload } from '../lib/utils.js';
 import { useAuthStore } from '../store/authStore.js';
 import { organizationApi } from '../api/endpoints.js';
 
@@ -55,14 +55,22 @@ export default function RepositoryPage({ cfg }) {
 
   const handleDownload = async (item) => {
     try {
-      await cfg.api.download(item._id);
-      window.open(item.fileUrl, '_blank');
+      // The counter bump answers with the url and filename to use, so the server
+      // stays the authority on both rather than the row this page happens to hold.
+      const res = await cfg.api.download(item._id);
+      triggerDownload(res?.url || item.fileUrl, res?.fileName || item.fileName || item.name);
       qc.invalidateQueries({ queryKey: [cfg.key] });
     } catch { toast.error('Download failed'); }
   };
 
-  // Only the super admin can edit or remove items; everyone else uploads/downloads only.
+  // Editing an item — retitling it, recategorising it, swapping the file — is
+  // curation, and stays with the super admin.
   const canManage = () => user?.role === 'ADMIN' && !!user?.isSuperAdmin;
+  // Removing one is a separate question with a wider answer: an institution's
+  // Admin may clear out their own college's items too. Shared items (no
+  // organization) belong to the platform, so those stay with the super admin —
+  // which is why this is asked per item rather than once for the page.
+  const canRemove = (item) => canDeleteOrgItem(user, item.organization);
 
   const openEdit = (item) => { setEditItem(item); setModalOpen(true); };
   const confirmDelete = (item) => window.confirm(`Delete "${item.name}"?`) && removeMut.mutate(item._id);
@@ -144,10 +152,14 @@ export default function RepositoryPage({ cfg }) {
                         <Avatar src={item.uploadedBy?.avatar} name={item.uploadedBy?.name} size="sm" />
                         <span className="text-xs text-slate-400">{formatDate(item.createdAt)}</span>
                       </div>
-                      {canManage() && (
+                      {(canManage() || canRemove(item)) && (
                         <div className="flex gap-1">
-                          <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
-                          <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                          {canManage() && (
+                            <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
+                          )}
+                          {canRemove(item) && (
+                            <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -204,10 +216,10 @@ export default function RepositoryPage({ cfg }) {
                       <span className="flex justify-end gap-1">
                         <button onClick={() => handleDownload(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800" title="Download"><Download className="h-4 w-4" /></button>
                         {canManage() && (
-                          <>
-                            <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" title="Edit"><Pencil className="h-4 w-4" /></button>
-                            <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" title="Delete"><Trash2 className="h-4 w-4" /></button>
-                          </>
+                          <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" title="Edit"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canRemove(item) && (
+                          <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" title="Delete"><Trash2 className="h-4 w-4" /></button>
                         )}
                       </span>
                     </td>

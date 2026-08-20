@@ -9,7 +9,7 @@ import ViewToggle, { useViewMode } from './ui/ViewToggle.jsx';
 import { Modal } from './ui/Modal.jsx';
 import { organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
-import { formatDate, formatBytes, cn } from '../lib/utils.js';
+import { formatDate, formatBytes, cn, canDeleteOrgItem, triggerDownload } from '../lib/utils.js';
 
 // Static /uploads are proxied through the same origin as the API (see vite.config.js / nginx).
 const fileUrl = (u) => u;
@@ -22,7 +22,11 @@ const fileUrl = (u) => u;
 export default function RepositoryPage({ cfg }) {
   const qc = useQueryClient();
   const { user } = useAuthStore();
+  // Editing is curation and stays with the super admin; removing is open to an
+  // institution's Admin for their own college's items, so it is asked per item
+  // (a shared item belongs to the platform — see lib/utils.js#canDeleteOrgItem).
   const canManage = user?.role === 'ADMIN' && !!user?.isSuperAdmin; // super admin only
+  const canRemove = (item) => canDeleteOrgItem(user, item.organization);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [orgFilter, setOrgFilter] = useState('');
@@ -49,8 +53,10 @@ export default function RepositoryPage({ cfg }) {
 
   const handleDownload = async (item) => {
     try {
-      await cfg.api.download(item._id);
-      window.open(fileUrl(item.fileUrl), '_blank');
+      // The counter bump answers with the url and filename to use, so the server
+      // stays the authority on both rather than the row this page happens to hold.
+      const res = await cfg.api.download(item._id);
+      triggerDownload(fileUrl(res?.url || item.fileUrl), res?.fileName || item.fileName || item.name);
       qc.invalidateQueries({ queryKey: [cfg.key] });
     } catch { toast.error('Download failed'); }
   };
@@ -142,10 +148,10 @@ export default function RepositoryPage({ cfg }) {
                       <span className="flex justify-end gap-1">
                         <button onClick={() => handleDownload(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800" title="Download"><Download className="h-4 w-4" /></button>
                         {canManage && (
-                          <>
-                            <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" title="Edit"><Pencil className="h-4 w-4" /></button>
-                            <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" title="Delete"><Trash2 className="h-4 w-4" /></button>
-                          </>
+                          <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" title="Edit"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canRemove(item) && (
+                          <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" title="Delete"><Trash2 className="h-4 w-4" /></button>
                         )}
                       </span>
                     </td>
@@ -182,10 +188,14 @@ export default function RepositoryPage({ cfg }) {
                       <Avatar src={item.uploadedBy?.avatar} name={item.uploadedBy?.name} size="sm" />
                       <span className="text-xs text-slate-400">{formatDate(item.createdAt)}</span>
                     </div>
-                    {canManage && (
+                    {(canManage || canRemove(item)) && (
                       <div className="flex gap-1">
-                        <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                        {canManage && (
+                          <button onClick={() => openEdit(item)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canRemove(item) && (
+                          <button onClick={() => confirmDelete(item)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                        )}
                       </div>
                     )}
                   </div>

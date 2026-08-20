@@ -6,6 +6,7 @@ import Event from '../models/Event.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { logActivity } from '../utils/logActivity.js';
 import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { escapeRegex } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, ROLES, SIGNAGE_TYPES, SIGNAGE_LOCATION_STATUS } from '../config/constants.js';
 
@@ -176,7 +177,9 @@ export const updateLocation = asyncHandler(async (req, res) => {
 export const deleteLocation = asyncHandler(async (req, res) => {
   const location = await SignageLocation.findById(req.params.id);
   if (!location) { res.status(404); throw new Error('Location not found'); }
-  if (!(await canManage(req.user, location))) { res.status(403); throw new Error('Not allowed to delete this location'); }
+  // Deleting a stand takes its entire banner history with it, so it is an
+  // administrator's call rather than the creator's.
+  assertCanDeleteOrgItem(req, res, location.organization, 'a signage location');
 
   const banners = await SignageBanner.find({ location: location._id }).lean();
   const files = [location.photoPublicId];
@@ -351,7 +354,9 @@ export const removeBanner = asyncHandler(async (req, res) => {
 export const deleteBanner = asyncHandler(async (req, res) => {
   const banner = await SignageBanner.findById(req.params.id);
   if (!banner) { res.status(404); throw new Error('Banner not found'); }
-  if (!(await canManage(req.user, banner))) { res.status(403); throw new Error('Not allowed to delete this banner'); }
+  const bannerOrg = banner.organization
+    || (await SignageLocation.findById(banner.location).select('organization').lean())?.organization;
+  assertCanDeleteOrgItem(req, res, bannerOrg, 'a banner record');
 
   await Promise.all([banner.previewPublicId, banner.sourcePublicId, banner.photoPublicId].filter(Boolean).map((id) => deleteFile(id)));
   const wasActive = banner.status === 'ACTIVE';

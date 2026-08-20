@@ -8,6 +8,7 @@ import User from '../models/User.js';
 import { uploadBuffer } from '../config/storage.js';
 import { createNotification } from '../utils/notify.js';
 import { logActivity } from '../utils/logActivity.js';
+import { resolvePostedAt } from '../utils/postedAt.js';
 import { canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import { platformsForOrganization } from '../utils/platforms.js';
 import {
@@ -956,6 +957,9 @@ export const confirmWorkflowItem = asyncHandler(async (req, res) => {
  *
  * The handler says it is out, or booked. A scheduled time is kept as such so the
  * calendar and the reports can tell "goes out on Friday" from "went out today".
+ *
+ * `postedAt` may be in the past — that is how a handler records posts that went
+ * out before anyone logged them, against the day they actually went out.
  */
 export const markWorkflowPosted = asyncHandler(async (req, res) => {
   const item = await loadItem(req, res, { populate: false });
@@ -969,10 +973,22 @@ export const markWorkflowPosted = asyncHandler(async (req, res) => {
       : 'The coordinator has not released this for posting yet');
   }
 
-  const raw = req.body.scheduledFor || req.body.postedAt;
-  const when = raw ? new Date(raw) : new Date();
-  if (Number.isNaN(when.getTime())) { res.status(400); throw new Error('That is not a valid date and time'); }
-  const scheduled = !!req.body.scheduledFor && when.getTime() > Date.now();
+  // A booking is only a booking while it is still ahead of us; a `scheduledFor`
+  // that has already passed describes something that went out, so it falls
+  // through to the posted branch and is validated as a back-date.
+  const rawScheduled = req.body.scheduledFor;
+  const scheduledMs = rawScheduled ? new Date(rawScheduled).getTime() : NaN;
+  const scheduled = !Number.isNaN(scheduledMs) && scheduledMs > Date.now();
+
+  let when;
+  const backdated = !scheduled && Boolean(rawScheduled || req.body.postedAt);
+  if (scheduled) {
+    when = new Date(scheduledMs);
+  } else {
+    const { when: postedAt, error } = resolvePostedAt(rawScheduled || req.body.postedAt);
+    if (error) { res.status(400); throw new Error(error); }
+    when = postedAt;
+  }
 
   item.workflowStage = 'POSTED';
   item.postedAt = scheduled ? undefined : when;
@@ -984,11 +1000,16 @@ export const markWorkflowPosted = asyncHandler(async (req, res) => {
 
   if (item.postApproval) {
     await ApprovalRequest.findByIdAndUpdate(item.postApproval, scheduled
-      ? { scheduledAt: when, scheduledBy: req.user._id }
-      : { status: APPROVAL_STATUS.POSTED, postedAt: when, postedBy: req.user._id });
+      ? { $set: { scheduledAt: when, scheduledBy: req.user._id } }
+      // Out means out: a go-live time left behind from an earlier plan would keep
+      // reading as "due on" a date the post has already passed.
+      : { $set: { status: APPROVAL_STATUS.POSTED, postedAt: when, postedBy: req.user._id },
+          $unset: { scheduledAt: '' } });
     await ApprovalComment.create({
       request: item.postApproval, kind: 'event', author: req.user._id,
-      text: scheduled ? `scheduled to go out on ${when.toISOString()}` : 'marked as posted',
+      text: scheduled
+        ? `scheduled to go out on ${when.toISOString()}`
+        : `marked as posted${backdated ? ` — it went out on ${when.toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}`,
     });
   }
 

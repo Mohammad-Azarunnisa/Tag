@@ -167,9 +167,14 @@ export default function Sidebar({ open, onClose }) {
 
         <div className="border-t border-white/10 p-4">
           <div className="flex items-center gap-2.5 rounded-xl bg-white/5 p-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/20 text-xs font-bold text-brand-300">
-              {user?.name?.[0]}
-            </div>
+            {user?.avatar ? (
+              <img src={user.avatar} alt={user?.name || ''}
+                className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+            ) : (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/20 text-xs font-bold text-brand-300">
+                {user?.name?.[0]}
+              </div>
+            )}
             <div className="min-w-0">
               <p className="truncate text-xs font-semibold text-white">{user?.name}</p>
               <p className="text-[11px] text-slate-400">{roleLabel(user)}</p>

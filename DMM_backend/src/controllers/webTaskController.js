@@ -5,7 +5,8 @@ import User from '../models/User.js';
 import { logActivity } from '../utils/logActivity.js';
 import { createNotification } from '../utils/notify.js';
 import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
-import { ACTIVITY_ACTIONS, NOTIFICATION_TYPES, ROLES } from '../config/constants.js';
+import { ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 
 const populate = (q) => q
   .populate('organization', 'name color code')
@@ -162,9 +163,7 @@ export const updateWebTask = asyncHandler(async (req, res) => {
 export const deleteWebTask = asyncHandler(async (req, res) => {
   const task = await WebTask.findById(req.params.id);
   if (!task) { res.status(404); throw new Error('Task not found'); }
-  if (req.user.role !== ROLES.ADMIN || !req.user.isSuperAdmin) {
-    res.status(403); throw new Error('Only the super admin can delete a web task');
-  }
+  assertCanDeleteOrgItem(req, res, task.organization, 'a web task');
   await task.deleteOne();
   res.json({ success: true, message: 'Task removed' });
 });

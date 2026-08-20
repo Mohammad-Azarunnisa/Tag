@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 import { createNotification } from '../utils/notify.js';
 import { logActivity } from '../utils/logActivity.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { requireOrgId, resolveOrgId, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
 import { APPROVAL_STATUS, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, ROLES, PLATFORMS } from '../config/constants.js';
 
@@ -403,6 +404,10 @@ export const rejectPlan = asyncHandler(async (req, res) => {
 export const deletePlanItem = asyncHandler(async (req, res) => {
   const plan = await PostPlan.findById(req.params.id);
   if (!plan) { res.status(404); throw new Error('Plan not found'); }
+  // The route allows an institution's Admin as well as the super admin, so the
+  // institution has to be checked here — otherwise one college's Admin could
+  // pull posts out of another college's plan.
+  assertCanDeleteOrgItem(req, res, plan.organization, 'a planned post');
   const item = plan.items.id(req.params.itemId);
   if (!item) { res.status(404); throw new Error('Planned post not found in this plan'); }
   // A plan must keep at least one post — emptying it should be an explicit
@@ -429,13 +434,11 @@ export const deletePlanItem = asyncHandler(async (req, res) => {
   res.json({ success: true, plan, removed });
 });
 
-// @route DELETE /api/plans/:id — creator or ADMIN.
+// @route DELETE /api/plans/:id — admin or super admin.
 export const deletePlan = asyncHandler(async (req, res) => {
   const plan = await PostPlan.findById(req.params.id);
   if (!plan) { res.status(404); throw new Error('Plan not found'); }
-  if (req.user.role !== ROLES.ADMIN && String(plan.createdBy) !== String(req.user._id)) {
-    res.status(403); throw new Error('Only the plan creator or an admin can delete it');
-  }
+  assertCanDeleteOrgItem(req, res, plan.organization, 'a plan');
   await plan.deleteOne();
   res.json({ success: true, message: 'Plan deleted' });
 });

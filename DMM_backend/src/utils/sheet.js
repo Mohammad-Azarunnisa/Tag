@@ -31,6 +31,19 @@ export const cellNumber = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
+// A date cell. Real date cells arrive as JS Dates from both readers; typed text
+// is parsed as a fallback, reading d/m/y the way it is written here rather than
+// the m/d/y that Date() would assume. Returns null when there is no usable date.
+export const cellDate = (v) => {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (v && typeof v === 'object' && v.result instanceof Date) return cellDate(v.result);
+  const text = cellText(v).trim();
+  if (!text) return null;
+  const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  const d = dmy ? new Date(Date.UTC(+dmy[3], +dmy[2] - 1, +dmy[1])) : new Date(text);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
 // Normalize a header for comparison: lowercase, alphanumerics only.
 export const normHeader = (s) => cellText(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 

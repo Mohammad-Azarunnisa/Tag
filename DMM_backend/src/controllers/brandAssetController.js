@@ -2,6 +2,7 @@ import asyncHandler from 'express-async-handler';
 import BrandAsset from '../models/BrandAsset.js';
 import Organization from '../models/Organization.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { requireOrgId, pinnedWriteOrg, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
 import { escapeRegex } from '../utils/sheet.js';
 
@@ -89,10 +90,15 @@ export const updateBrandAsset = asyncHandler(async (req, res) => {
   res.json({ success: true, asset });
 });
 
-// @route DELETE /api/brand/:id  (super admin)
+// @route DELETE /api/brand/:id  (admin or super admin)
+//
+// An institution's Admin may now clear out their own college's brand items, not
+// only the super admin — but an item shared across every institution is the
+// platform's, so that one stays with the super admin.
 export const deleteBrandAsset = asyncHandler(async (req, res) => {
   const asset = await BrandAsset.findById(req.params.id);
   if (!asset) { res.status(404); throw new Error('Item not found'); }
+  assertCanDeleteOrgItem(req, res, asset.organization, 'a brand item');
   if (asset.kind === 'file' && asset.publicId) await deleteFile(asset.publicId);
   await asset.deleteOne();
   res.json({ success: true, id: req.params.id });

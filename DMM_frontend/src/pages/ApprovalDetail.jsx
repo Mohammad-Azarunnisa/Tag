@@ -14,7 +14,7 @@ import { Card, Badge, Avatar, Skeleton, Input } from '../components/ui/primitive
 import { Modal } from '../components/ui/Modal.jsx';
 import FileDropzone from '../components/ui/FileDropzone.jsx';
 import ReviewAssist from '../components/approvals/ReviewAssist.jsx';
-import { cn, formatDate, formatDateTime, timeAgo, isVideo, isDoc, fileLabel, statusLabel, platformsOf } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo, isVideo, isDoc, fileLabel, statusLabel, platformsOf, canDeleteContent } from '../lib/utils.js';
 import { UPLOAD_ACCEPT } from '../lib/uploads.js';
 
 const fileName = (u = '') => u.split('/').pop() || 'download';
@@ -128,7 +128,12 @@ export default function ApprovalDetail() {
   // handing it back to the author just to schedule it.
   const canSchedule = !isDesign && r.status === 'APPROVED' && (isOwner || canDecide);
   const canDownloadFinal = finalImages.length > 0 && ['APPROVED', 'POSTED', 'DELIVERED'].includes(r.status) && (isOwner || canDecide || isDesigner || isHandler);
-  const canDelete = !isViewer && (isOwner || ['ADMIN', 'CEO'].includes(user?.role));
+  // Not the author. A request carries its review thread, its artwork and — once
+  // posted — the day it went out and everything the reports counted from it, so
+  // erasing one is an administrator's call. The server refuses anyone else
+  // (DMM_backend/src/utils/permissions.js); this keeps the button off screens
+  // where it would only fail.
+  const canDelete = !isViewer && canDeleteContent(user);
 
   return (
     <div>
@@ -973,6 +978,11 @@ function ScheduleModal({ request, onClose, onDone }) {
   // out — so start on the timed option.
   const [mode, setMode] = useState(request.scheduledAt ? 'later' : 'now');
   const [when, setWhen] = useState(toLocalInput(request.scheduledAt));
+  // When it went out, for content that is already live. Prefilled with now, which
+  // is the common answer, but editable back into the past: a handler catching up
+  // on a week of posts needs each one dated the day it actually went out, or the
+  // calendar and the reports file the whole set under the day of the data entry.
+  const [postedWhen, setPostedWhen] = useState(toLocalInput(new Date()));
 
   const scheduleMut = useMutation({
     mutationFn: () => approvalApi.schedule(request._id, new Date(when).toISOString()),
@@ -980,14 +990,14 @@ function ScheduleModal({ request, onClose, onDone }) {
     onError: (e) => toast.error(e.response?.data?.message || 'Could not set that time'),
   });
   const nowMut = useMutation({
-    mutationFn: () => approvalApi.markPosted(request._id),
+    mutationFn: () => approvalApi.markPosted(request._id, new Date(postedWhen).toISOString()),
     onSuccess: () => { toast.success('Marked as posted'); onDone(); },
     onError: (e) => toast.error(e.response?.data?.message || 'Could not mark it posted'),
   });
   const saving = scheduleMut.isPending || nowMut.isPending;
 
   const OPTIONS = [
-    { key: 'now', label: 'It is already posted', hint: 'Close it now, with this moment as the time it went out.' },
+    { key: 'now', label: 'It is already posted', hint: 'Close it, and say which day it went out — today or earlier.' },
     { key: 'later', label: 'It goes out at a set time', hint: 'Pick the time — it is marked posted then, on its own.' },
   ];
 
@@ -996,7 +1006,15 @@ function ScheduleModal({ request, onClose, onDone }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (mode === 'now') { nowMut.mutate(); return; }
+          if (mode === 'now') {
+            if (!postedWhen) { toast.error('Pick when it went out'); return; }
+            if (new Date(postedWhen).getTime() > Date.now() + 60_000) {
+              toast.error('That is in the future — use “It goes out at a set time” for that');
+              return;
+            }
+            nowMut.mutate();
+            return;
+          }
           if (!when) { toast.error('Pick the date and time'); return; }
           scheduleMut.mutate();
         }}
@@ -1022,6 +1040,20 @@ function ScheduleModal({ request, onClose, onDone }) {
             </button>
           ))}
         </div>
+
+        {mode === 'now' && (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">It went out on</span>
+              <input type="datetime-local" className="input-base" value={postedWhen}
+                onChange={(e) => setPostedWhen(e.target.value)} />
+            </label>
+            <p className="-mt-2 text-xs text-slate-400">
+              Defaults to right now. Wind it back for something that went out earlier — that is
+              the day it shows on the calendar and counts towards in the reports.
+            </p>
+          </>
+        )}
 
         {mode === 'later' && (
           <>

@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { logActivity } from '../utils/logActivity.js';
 import { requireOrgId, pinnedWriteOrg, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { escapeRegex } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, ROLES } from '../config/constants.js';
 
@@ -137,9 +138,11 @@ export const updateTemplate = asyncHandler(async (req, res) => {
 export const deleteTemplate = asyncHandler(async (req, res) => {
   const tpl = await Template.findById(req.params.id);
   if (!tpl) { res.status(404); throw new Error('Template not found'); }
-  if (!canManage(req.user)) {
-    res.status(403); throw new Error('Only the super admin can delete templates');
-  }
+  // Removing is open to an institution's Admin as well as the super admin, but
+  // only within their own institutions; a template shared across all of them
+  // (organization: null) stays with the super admin who curates the library.
+  // Editing is a separate question and is still the curator's alone (canManage).
+  assertCanDeleteOrgItem(req, res, tpl.organization, 'a template');
   if (tpl.filePublicId) await deleteFile(tpl.filePublicId);
   if (tpl.thumbnailPublicId && tpl.thumbnailPublicId !== tpl.filePublicId) await deleteFile(tpl.thumbnailPublicId);
   await tpl.deleteOne();

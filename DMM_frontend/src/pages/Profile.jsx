@@ -10,6 +10,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Avatar } from '../components/ui/primitives.jsx';
+import JobTitleSelect from '../components/ui/JobTitleSelect.jsx';
 import { formatDate, cn } from '../lib/utils.js';
 
 const PAGE_PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook', 'X (Twitter)'];
@@ -229,7 +230,8 @@ function FirstTimeForm({ user, orgs, onDone }) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input label="Phone number" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+91 …" />
-            <Input label="Job title" value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="e.g. Content Designer" />
+            <JobTitleSelect value={form.jobTitle} current={user?.jobTitle}
+              onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
           </div>
           <Input label="LinkedIn profile (optional)" value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} placeholder="https://linkedin.com/in/…" />
           <TagInput label="Skill set" values={skills} onChange={setSkills} placeholder="e.g. Video Editing, Poster Design — press Enter to add" />
@@ -298,7 +300,8 @@ function ContactCard({ user, setUser }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input label="Phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <Input label="Job title" value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
+        <JobTitleSelect value={form.jobTitle} current={user?.jobTitle}
+          onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
         <Input label="LinkedIn profile" value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} />
       </div>
       <Button className="mt-5" loading={loading} onClick={save}>Save contact details</Button>

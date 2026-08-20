@@ -4,6 +4,7 @@ import Organization from '../models/Organization.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { logActivity } from '../utils/logActivity.js';
 import { requireOrgId, pinnedWriteOrg, accessibleOrgIds, canAccessOrg } from '../utils/org.js';
+import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { escapeRegex } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS, ROLES } from '../config/constants.js';
 
@@ -136,9 +137,10 @@ export const updateAsset = asyncHandler(async (req, res) => {
 export const deleteAsset = asyncHandler(async (req, res) => {
   const asset = await Asset.findById(req.params.id);
   if (!asset) { res.status(404); throw new Error('Asset not found'); }
-  if (!canManage(req.user)) {
-    res.status(403); throw new Error('Only the super admin can delete assets');
-  }
+  // As with templates: an institution's Admin may clear out their own college's
+  // assets, the super admin curates the ones shared across all of them, and
+  // editing stays with the curator (canManage).
+  assertCanDeleteOrgItem(req, res, asset.organization, 'an asset');
   if (asset.filePublicId) await deleteFile(asset.filePublicId);
   if (asset.previewPublicId && asset.previewPublicId !== asset.filePublicId) await deleteFile(asset.previewPublicId);
   await asset.deleteOne();

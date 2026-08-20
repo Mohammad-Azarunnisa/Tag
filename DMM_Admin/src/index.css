@@ -51,13 +51,71 @@
       hover:border-slate-300 dark:hover:border-slate-600
       focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 placeholder:text-slate-400;
   }
-  /* A native <select> paints its dropdown arrow inside the box's own right
-     padding, so the symmetric px-3.5 above left a long value ("Impressions")
-     running underneath the arrow. Reserve room for it on selects only — text
-     inputs have no arrow and want the tighter padding. Applies to every control
-     built on .input-base, including the shared Select primitive. */
-  select.input-base {
-    @apply pr-9;
+  /* ---- Dropdowns ----
+     A native <select> draws the operating system's arrow: a different shape on
+     every machine, sized for the OS rather than for this UI, and blind to the
+     theme — a dark page still got a pale Windows triangle sitting in the corner.
+     So the native arrow is switched off and one chevron is drawn here instead.
+     It is identical on every machine, it follows light and dark, and it sharpens
+     on hover and focus the way the rest of the form controls do.
+
+     `pr-9` is what keeps a long value ("Impressions") from running underneath
+     the chevron; text inputs have no arrow and keep the tighter padding. All of
+     this hangs off .input-base, which every dropdown in the app is built on
+     (including the shared Select primitive), so they match without any page
+     having to say so.
+
+     [multiple] and [size] are excluded: those render as list boxes, which have
+     no arrow to replace and would only get a chevron stranded in the corner. */
+  select.input-base:not([multiple]):not([size]) {
+    @apply cursor-pointer pr-9;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 1.1rem 1.1rem;
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  }
+  select.input-base:not([multiple]):not([size]):hover,
+  select.input-base:not([multiple]):not([size]):focus {
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23334155' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  }
+  /* Dark rules come last, and the dark hover rule outranks the light one, so a
+     hovered dropdown on a dark page cannot fall back to the light chevron. */
+  .dark select.input-base:not([multiple]):not([size]) {
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  }
+  .dark select.input-base:not([multiple]):not([size]):hover,
+  .dark select.input-base:not([multiple]):not([size]):focus {
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e2e8f0' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  }
+  select.input-base:disabled {
+    @apply cursor-not-allowed bg-slate-50 text-slate-400 opacity-90
+      hover:border-slate-200 dark:bg-slate-900/60 dark:text-slate-500 dark:hover:border-slate-700;
+  }
+  /* The open list is painted by the browser, not by us, and it honours only a
+     few properties on <option> — but background and colour are among them, and
+     without them a dark page opens a glaring white list with unreadable rows. */
+  select.input-base option,
+  select.input-base optgroup {
+    @apply bg-white text-slate-800;
+  }
+  select.input-base optgroup {
+    @apply font-semibold text-slate-500;
+  }
+  select.input-base option:disabled {
+    @apply text-slate-400;
+  }
+  .dark select.input-base option,
+  .dark select.input-base optgroup {
+    @apply bg-slate-900 text-slate-100;
+  }
+  .dark select.input-base optgroup {
+    @apply text-slate-400;
+  }
+  .dark select.input-base option:disabled {
+    @apply text-slate-600;
   }
   /* Sidebar is navy in both themes — links are light, active is orange. */
   .sidebar-link {

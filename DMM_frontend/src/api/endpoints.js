@@ -159,7 +159,10 @@ export const approvalApi = {
   reject: (id, feedbackPoints) => api.put(`/approvals/${id}/reject`, { feedbackPoints }).then((r) => r.data),
   resubmit: (id, formData) =>
     api.put(`/approvals/${id}/resubmit`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
-  markPosted: (id) => api.put(`/approvals/${id}/posted`).then((r) => r.data),
+  // `postedAt` is when it actually went out. Left off it means now; a past moment
+  // is how posts that went live before anyone logged them land on the right day.
+  markPosted: (id, postedAt) =>
+    api.put(`/approvals/${id}/posted`, postedAt ? { postedAt } : {}).then((r) => r.data),
   // Approved content: book the go-live moment; a server sweep posts it then.
   schedule: (id, scheduledAt) => api.put(`/approvals/${id}/schedule`, { scheduledAt }).then((r) => r.data),
   // Post route: allocate an approved design to a social handler who will post it.
@@ -228,10 +231,12 @@ export const workAssignmentApi = {
   list: (params) => api.get('/work-assignments', { params }).then((r) => r.data),
   // Assignee moves their own work along: accept it, then ask for sign-off.
   acknowledge: (id) => api.put(`/work-assignments/${id}/acknowledge`).then((r) => r.data),
-  // Publishing work closes itself: no note, no second sign-off. Pass a time and
-  // it closes at that moment instead of now.
-  markPosted: (id, scheduledAt) =>
-    api.put(`/work-assignments/${id}/posted`, scheduledAt ? { scheduledAt } : {}).then((r) => r.data),
+  // Publishing work closes itself: no note, no second sign-off. `scheduledAt`
+  // books a future go-live; `postedAt` closes it against a moment that has already
+  // passed, for work that was out before anyone got round to saying so.
+  markPosted: (id, { scheduledAt, postedAt } = {}) =>
+    api.put(`/work-assignments/${id}/posted`, scheduledAt ? { scheduledAt } : (postedAt ? { postedAt } : {}))
+      .then((r) => r.data),
   // The finished files go up with the note — whoever signs it off and whoever
   // publishes it both need the actual work, not a description of it.
   submit: (id, note, files = []) => {

@@ -1,18 +1,20 @@
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { User, Lock, Palette, Bell, Sun, Moon, Camera } from 'lucide-react';
+import { User, Lock, Bell, Camera } from 'lucide-react';
 import { userApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
-import { useThemeStore } from '../store/themeStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Card, Input, Avatar } from '../components/ui/primitives.jsx';
+import JobTitleSelect from '../components/ui/JobTitleSelect.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { cn } from '../lib/utils.js';
 
+// No Appearance tab. Light/dark is one toggle in the top bar, on every page —
+// a second control for the same setting, three clicks deeper, was only ever a
+// duplicate. The store behind it (useThemeStore) is unchanged.
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'password', label: 'Password', icon: Lock },
-  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
@@ -35,7 +37,6 @@ export default function Settings() {
         <div>
           {tab === 'profile' && <ProfileTab />}
           {tab === 'password' && <PasswordTab />}
-          {tab === 'appearance' && <AppearanceTab />}
           {tab === 'notifications' && <NotificationsTab />}
         </div>
       </div>
@@ -96,7 +97,8 @@ function ProfileTab() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <Input label="Job title" value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
+        <JobTitleSelect value={form.jobTitle} current={user?.jobTitle}
+          onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
       </div>
       <Button className="mt-5" loading={loading} onClick={save}>Save changes</Button>
     </Card>
@@ -127,26 +129,6 @@ function PasswordTab() {
         <Input label="New password" type="password" value={form.newPassword} onChange={(e) => setForm({ ...form, newPassword: e.target.value })} />
         <Input label="Confirm new password" type="password" value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} />
         <Button loading={loading} onClick={save}>Update password</Button>
-      </div>
-    </Card>
-  );
-}
-
-function AppearanceTab() {
-  const { theme, setTheme } = useThemeStore();
-  return (
-    <Card className="p-6">
-      <h3 className="mb-5 font-bold text-slate-800 dark:text-white">Appearance</h3>
-      <p className="mb-4 text-sm text-slate-400">Choose your preferred theme.</p>
-      <div className="grid max-w-md grid-cols-2 gap-4">
-        {[{ id: 'light', label: 'Light', icon: Sun }, { id: 'dark', label: 'Dark', icon: Moon }].map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => setTheme(id)}
-            className={cn('flex flex-col items-center gap-3 rounded-xl border-2 p-6 transition',
-              theme === id ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-700 hover:border-brand-300')}>
-            <Icon className={cn('h-8 w-8', theme === id ? 'text-brand-600' : 'text-slate-400')} />
-            <span className={cn('font-medium', theme === id ? 'text-brand-700 dark:text-brand-300' : 'text-slate-500')}>{label}</span>
-          </button>
-        ))}
       </div>
     </Card>
   );

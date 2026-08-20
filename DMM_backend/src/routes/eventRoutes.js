@@ -6,7 +6,8 @@ import {
   updateEvent,
   deleteEvent,
 } from '../controllers/eventController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
 import upload from '../middleware/upload.js';
 
 const router = express.Router();
@@ -22,6 +23,9 @@ router.get('/', listEvents);
 router.post('/', eventFiles, createEvent);
 router.post('/:id/files', upload.array('photos', 25), addEventFiles);
 router.put('/:id', eventFiles, updateEvent);
-router.delete('/:id', deleteEvent);
+// Deleting is an administrator's act — see utils/permissions.js. The role gate
+// lives on the route so it cannot be forgotten; the handler adds the institution
+// scoping on top of it.
+router.delete('/:id', authorize(ROLES.ADMIN, ROLES.CEO), deleteEvent);
 
 export default router;

@@ -87,6 +87,50 @@ export const ASSET_CATEGORIES = [
   'Center of Excellence',
 ];
 
+/**
+ * The job titles people may hold. A fixed list, not free text.
+ *
+ * Free text produced exactly what a shared directory cannot afford: the same job
+ * spelled several ways ("Co-Ordinator", "Coordinator for NCET", "Torii
+ * Coordinator"), and at least one person who typed their own name into it. Every
+ * screen that groups or searches by title — the directory, the handler pickers,
+ * the assignment lists — treats those as different jobs.
+ *
+ * One canonical name per job, so add to this list rather than inventing a
+ * variant. It is the single definition: the two portals mirror it in their
+ * lib/utils.js, the same way TEMPLATE_CATEGORIES and ASSET_CATEGORIES are
+ * mirrored, and utils/jobTitle.js validates against it.
+ *
+ * NOT a Mongoose enum, deliberately. Titles already stored predate the list, and
+ * an enum would refuse to save a legacy row for an unrelated edit — someone with
+ * "Co-Ordinator" could not change their phone number. The check lives in the
+ * controllers instead, where "unchanged" can be allowed through.
+ */
+export const JOB_TITLES = [
+  // Leadership and platform administration
+  'CEO',
+  'Super Administrator',
+  'Administrator',
+  'Manager',
+  'Branding Manager',
+  // Design and production
+  'Graphic Designer',
+  'Senior Graphic Designer',
+  'Motion Graphics Designer',
+  'Video Editor',
+  'Photographer',
+  'Videographer',
+  // Social and content
+  'Social Media Manager',
+  'Social Media Handler',
+  'Content Writer',
+  // Web
+  'Web Developer',
+  // Institution side
+  'Coordinator',
+  'Admissions Coordinator',
+];
+
 export const NOTIFICATION_TYPES = {
   CONTENT_APPROVED: 'CONTENT_APPROVED',
   CONTENT_REJECTED: 'CONTENT_REJECTED',

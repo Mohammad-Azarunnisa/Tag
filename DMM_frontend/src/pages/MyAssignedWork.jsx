@@ -661,11 +661,17 @@ function MarkPostedModal({ assignment, onClose, onSaved }) {
   };
   const [mode, setMode] = useState(assignment.scheduledAt ? 'later' : 'now');
   const [when, setWhen] = useState(toLocalInput(assignment.scheduledAt));
+  // When it went out, for work that is already published. Prefilled with now and
+  // editable back into the past, so a handler recording last week's posts dates
+  // each one by the day it actually went live rather than the day they logged it.
+  const [postedWhen, setPostedWhen] = useState(toLocalInput(new Date()));
 
   const mut = useMutation({
     mutationFn: () => workAssignmentApi.markPosted(
       assignment._id,
-      mode === 'later' ? new Date(when).toISOString() : undefined
+      mode === 'later'
+        ? { scheduledAt: new Date(when).toISOString() }
+        : { postedAt: new Date(postedWhen).toISOString() }
     ),
     onSuccess: () => {
       toast.success(mode === 'later' ? 'Booked in — it closes itself at that time' : 'Marked as posted');
@@ -675,7 +681,7 @@ function MarkPostedModal({ assignment, onClose, onSaved }) {
   });
 
   const OPTIONS = [
-    { key: 'now', label: 'It is already posted', hint: 'Close it now, with this moment as the time it went out.' },
+    { key: 'now', label: 'It is already posted', hint: 'Close it, and say which day it went out — today or earlier.' },
     { key: 'later', label: 'It goes out at a set time', hint: 'Pick the time — it is marked posted then, on its own.' },
   ];
 
@@ -685,6 +691,13 @@ function MarkPostedModal({ assignment, onClose, onSaved }) {
         onSubmit={(e) => {
           e.preventDefault();
           if (mode === 'later' && !when) { toast.error('Pick the date and time'); return; }
+          if (mode === 'now') {
+            if (!postedWhen) { toast.error('Pick when it went out'); return; }
+            if (new Date(postedWhen).getTime() > Date.now() + 60_000) {
+              toast.error('That is in the future — use “It goes out at a set time” for that');
+              return;
+            }
+          }
           mut.mutate();
         }}
         className="space-y-4"
@@ -709,6 +722,20 @@ function MarkPostedModal({ assignment, onClose, onSaved }) {
             </button>
           ))}
         </div>
+
+        {mode === 'now' && (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">It went out on</span>
+              <input type="datetime-local" className="input-base" value={postedWhen}
+                onChange={(e) => setPostedWhen(e.target.value)} />
+            </label>
+            <p className="-mt-1 text-xs text-slate-400">
+              Defaults to right now. Wind it back for something that went out earlier — that is
+              the day it shows on the calendar and counts towards in the reports.
+            </p>
+          </>
+        )}
 
         {mode === 'later' && (
           <label className="block">

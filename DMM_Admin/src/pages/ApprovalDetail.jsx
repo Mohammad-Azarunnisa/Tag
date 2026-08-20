@@ -48,9 +48,11 @@ export default function ApprovalDetail() {
     onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
   });
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [postedOpen, setPostedOpen] = useState(false);
   const postedMut = useMutation({
-    mutationFn: () => approvalApi.markPosted(id),
-    onSuccess: () => { toast.success('Marked as posted — the request is now closed'); invalidate(); },
+    // The moment it went out, which is not always this moment — see MarkPostedModal.
+    mutationFn: (postedAt) => approvalApi.markPosted(id, postedAt),
+    onSuccess: () => { toast.success('Marked as posted — the request is now closed'); setPostedOpen(false); invalidate(); },
     onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
   });
   const deleteMut = useMutation({
@@ -152,7 +154,7 @@ export default function ApprovalDetail() {
             </Button>
           )}
           {canMarkPosted && (
-            <Button variant={needsSchedule ? 'outline' : 'default'} loading={postedMut.isPending} onClick={() => postedMut.mutate()}>
+            <Button variant={needsSchedule ? 'outline' : 'default'} loading={postedMut.isPending} onClick={() => setPostedOpen(true)}>
               <Send className="h-4 w-4" /> {r.scheduledAt ? 'Already posted' : 'Mark as Posted'}
             </Button>
           )}
@@ -221,6 +223,10 @@ export default function ApprovalDetail() {
       {approveRouteOpen && <ApproveRoutingModal request={r} onClose={() => setApproveRouteOpen(false)} onApprove={(data) => approveMut.mutate(data)} saving={approveMut.isPending} />}
 
       {scheduleOpen && <ScheduleModal request={r} onClose={() => setScheduleOpen(false)} onDone={() => { setScheduleOpen(false); invalidate(); }} />}
+      {postedOpen && (
+        <MarkPostedModal request={r} saving={postedMut.isPending}
+          onClose={() => setPostedOpen(false)} onSubmit={(postedAt) => postedMut.mutate(postedAt)} />
+      )}
     </div>
   );
 }
@@ -998,6 +1004,63 @@ function RejectModal({ id, onClose, onDone }) {
 
 // An approved post gets a go-live time; the server marks it POSTED when that
 // moment arrives, so nobody has to remember to come back and do it.
+/**
+ * "Mark as posted" is really the question "when did it go out?".
+ *
+ * It used to assume the answer was this second, which is right for something
+ * just published and wrong for everything else: recording a set of posts that
+ * went out last week would date every one of them to the afternoon of the data
+ * entry, putting the whole set in the wrong place on the calendar and in the
+ * wrong period in the reports. So it asks, prefilled with now.
+ */
+function MarkPostedModal({ request, onClose, onSubmit, saving }) {
+  const localNow = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [when, setWhen] = useState(localNow());
+  const channels = request.platforms?.length ? request.platforms : (request.platform ? [request.platform] : []);
+
+  return (
+    <Modal open onClose={onClose} title="Mark as posted">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!when) { toast.error('Pick when it went out'); return; }
+          if (new Date(when).getTime() > Date.now() + 60_000) {
+            toast.error('That is in the future — use Schedule post for that');
+            return;
+          }
+          onSubmit(new Date(when).toISOString());
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+          <p className="text-sm font-bold text-slate-800 dark:text-white">{request.title}</p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {channels.join(', ') || 'No channel set'}
+            {request.organization?.name ? ` · ${request.organization.name}` : ''}
+          </p>
+        </div>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">It went out on</span>
+          <input type="datetime-local" className="input-base" value={when}
+            onChange={(e) => setWhen(e.target.value)} />
+        </label>
+        <p className="-mt-2 text-xs text-slate-400">
+          Uses your local time, and defaults to right now. Wind it back for a post that already
+          went out — that is the day it lands on in the calendar and the reports.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button type="submit" loading={saving}><Send className="h-4 w-4" /> Mark as posted</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function ScheduleModal({ request, onClose, onDone }) {
   const toLocalInput = (d) => {
     const dt = d ? new Date(d) : new Date(Date.now() + 60 * 60 * 1000);

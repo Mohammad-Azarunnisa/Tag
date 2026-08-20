@@ -426,6 +426,145 @@ test('a handler’s post is approved outright and posted by them', async () => {
   assert.equal(posted.body.request.status, APPROVAL_STATUS.POSTED);
 });
 
+// Deleting is an administrator's act, not the author's. A design carries its
+// review thread, its artwork and — once posted — the day it went out and
+// everything the reports counted from that, so "I made it, I can erase it" was
+// the wrong default: a handler could delete a post that had already gone live.
+test('the author cannot delete their own work — only an admin can', async () => {
+  const { default: ApprovalRequest } = await import('../models/ApprovalRequest.js');
+  const org = await Organization.findOne({ slug: 'test-college' });
+  const designer = await User.create({
+    name: 'Owner', email: 'owner-del@t.com', password: 'Passw0rd!',
+    role: ROLES.USER, userType: USER_TYPES.DESIGNER, organization: org._id,
+  });
+  const admin = await User.create({
+    name: 'DelAdmin', email: 'del-admin@t.com', password: 'Passw0rd!',
+    role: ROLES.CEO, organization: org._id,
+  });
+  const designerTok = generateToken(designer._id);
+
+  const mine = await create(designerTok, {
+    title: 'My own design', type: APPROVAL_TYPES.DESIGN, organization: orgId, platforms: 'Instagram',
+  });
+  assert.equal(mine.status, 201);
+  const id = mine.body.request._id;
+
+  const del = (token) => fetch(`${origin}/api/approvals/${id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  // Its author is refused, even though they raised it and nobody has acted on it.
+  const refused = await del(designerTok);
+  assert.equal(refused.status, 403);
+  assert.ok(await ApprovalRequest.findById(id), 'still there');
+
+  // An Admin over the same college can.
+  const allowed = await del(generateToken(admin._id));
+  assert.equal(allowed.status, 200);
+  assert.equal(await ApprovalRequest.findById(id), null, 'gone');
+});
+
+// An Admin holds particular institutions, and deleting is confined to them —
+// otherwise one college's Admin could clear out another college's board.
+test("an admin cannot delete another institution’s work", async () => {
+  const { default: ApprovalRequest } = await import('../models/ApprovalRequest.js');
+  const other = await Organization.create({ name: 'Delete Scope College', slug: 'delete-scope-college' });
+  const outsider = await User.create({
+    name: 'OtherAdmin', email: 'other-admin-del@t.com', password: 'Passw0rd!',
+    role: ROLES.CEO, organization: other._id,
+  });
+  const handler = await User.create({
+    name: 'HandlerX', email: 'handler-del@t.com', password: 'Passw0rd!',
+    role: ROLES.USER, userType: USER_TYPES.DESIGNER, organization: (await Organization.findOne({ slug: 'test-college' }))._id,
+  });
+
+  const made = await create(generateToken(handler._id), {
+    title: 'Ours not theirs', type: APPROVAL_TYPES.DESIGN, organization: orgId, platforms: 'Instagram',
+  });
+  const id = made.body.request._id;
+
+  const refused = await fetch(`${origin}/api/approvals/${id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${generateToken(outsider._id)}` },
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  // 404 rather than 403: the org check runs first and deliberately does not
+  // confirm that a request they cannot reach exists at all. Either refusal is
+  // correct — what matters is that the row survives.
+  assert.ok([403, 404].includes(refused.status), `refused, got ${refused.status}`);
+  assert.ok(await ApprovalRequest.findById(id), "another college’s request is untouched");
+});
+
+// The other half of that question: work that went out before anybody logged it.
+// Stamping the moment of the data entry would file a fortnight of catch-up posts
+// under one afternoon, which is the wrong day on the calendar and the wrong
+// period in the reports — so the handler names the day it actually went out.
+test('a post that went out earlier is recorded against the day it went out', async () => {
+  const { default: ApprovalRequest } = await import('../models/ApprovalRequest.js');
+  const org = await Organization.findOne({ slug: 'test-college' });
+  const handler = await User.create({
+    name: 'Catchup', email: 'catchup@t.com', password: 'Passw0rd!',
+    role: ROLES.USER, userType: USER_TYPES.SOCIAL_HANDLER, organization: org._id,
+    handles: [{ organization: org._id, platforms: ['LinkedIn'] }],
+  });
+  const handlerTok = generateToken(handler._id);
+  const put = (path, token, body) => fetch(`${origin}${path}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  const submitted = await create(handlerTok, {
+    title: 'Went out last week', type: APPROVAL_TYPES.POST, organization: orgId,
+    platforms: 'LinkedIn', caption: 'already live',
+  });
+  const id = submitted.body.request._id;
+  await put(`/api/approvals/${id}/approve`, tok.super, {});
+
+  const wentOut = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+  const posted = await put(`/api/approvals/${id}/posted`, handlerTok, { postedAt: wentOut.toISOString() });
+  assert.equal(posted.status, 200);
+  assert.equal(posted.body.request.status, APPROVAL_STATUS.POSTED);
+
+  const closed = await ApprovalRequest.findById(id);
+  assert.equal(closed.postedAt.toISOString(), wentOut.toISOString(), 'dated when it went out, not when it was logged');
+  // The calendar and the reports read postedAt, so the day is the whole point.
+  assert.equal(closed.postedAt.toISOString().slice(0, 10), wentOut.toISOString().slice(0, 10));
+});
+
+// The past is for recording, the future is for scheduling. Letting a future
+// "it is already posted" through would close a request for something that has
+// not happened, and the scheduled sweep would never come back for it.
+test('a future moment is refused by mark-as-posted', async () => {
+  const org = await Organization.findOne({ slug: 'test-college' });
+  const handler = await User.create({
+    name: 'TooEager', email: 'eager@t.com', password: 'Passw0rd!',
+    role: ROLES.USER, userType: USER_TYPES.SOCIAL_HANDLER, organization: org._id,
+    handles: [{ organization: org._id, platforms: ['LinkedIn'] }],
+  });
+  const handlerTok = generateToken(handler._id);
+  const put = (path, token, body) => fetch(`${origin}${path}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  const submitted = await create(handlerTok, {
+    title: 'Not out yet', type: APPROVAL_TYPES.POST, organization: orgId,
+    platforms: 'LinkedIn', caption: 'later',
+  });
+  const id = submitted.body.request._id;
+  await put(`/api/approvals/${id}/approve`, tok.super, {});
+
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const refused = await put(`/api/approvals/${id}/posted`, handlerTok, { postedAt: tomorrow.toISOString() });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.message, /future/i);
+
+  // And a mistyped year is caught rather than stored.
+  const ancient = await put(`/api/approvals/${id}/posted`, handlerTok, { postedAt: '1999-01-01T10:00:00.000Z' });
+  assert.equal(ancient.status, 400);
+  assert.match(ancient.body.message, /five years/i);
+});
+
 // "Mark as posted" is really the question "when did/does this go out?". A handler
 // can answer "at this time", and the sweep closes it then without anyone
 // coming back to click.
