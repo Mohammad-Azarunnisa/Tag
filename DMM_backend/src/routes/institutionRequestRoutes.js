@@ -16,7 +16,7 @@ router.use(protect);
 // There is deliberately no decision endpoint. A request is not approved by
 // anyone: it goes straight to the designers on "Designs to be Done" when it is
 // raised, and the Admin and super admin only read it.
-router.route('/').get(listInstitutionRequests).post(upload.array('attachments', 6), createInstitutionRequest);
+router.route('/').get(listInstitutionRequests).post(upload.array('attachments', 20), createInstitutionRequest);
 
 // Withdrawing: the person who raised it, while it is still open.
 router.delete('/:id', deleteInstitutionRequest);

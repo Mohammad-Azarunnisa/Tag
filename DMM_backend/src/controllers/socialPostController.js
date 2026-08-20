@@ -6,7 +6,7 @@ import { hasToken as hasMetaToken } from '../services/metaService.js';
 import { hasKey as hasYtKey } from '../services/youtubeService.js';
 import { syncOrgPlatform, SOCIAL_PLATFORMS as PLATFORMS } from '../services/socialSync.js';
 import { logActivity } from '../utils/logActivity.js';
-import { resolveViewOrgId } from '../utils/org.js';
+import { resolveSharedViewOrgId } from '../utils/org.js';
 import { ACTIVITY_ACTIONS } from '../config/constants.js';
 
 // Guards against a second sync for the same org+platform running concurrently.
@@ -65,7 +65,7 @@ export const syncSocialPosts = asyncHandler(async (req, res) => {
 // `range` days (so we can show 7 / 15 / 30 / 90 / 365-day comparisons), plus how
 // many days of records we actually hold. Computed on the fly from SocialPost.
 export const getSocialPostSummary = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const { platform } = req.query;
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('platform must be Instagram, Facebook or YouTube'); }
   const range = Math.min(Math.max(Number(req.query.range) || 30, 1), 365);
@@ -103,13 +103,18 @@ export const getSocialPostSummary = asyncHandler(async (req, res) => {
   const coverage = c
     ? { total: c.total, oldest: c.oldest, newest: c.newest, lastSync: c.lastSync, days: (c.oldest && c.newest) ? Math.round((c.newest - c.oldest) / dayMs) + 1 : 0 }
     : { total: 0, days: 0 };
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const displayCoverage = c?.oldest
+    ? { from: c.oldest, to: today, days: Math.floor((today - c.oldest) / dayMs) + 1 }
+    : null;
 
-  res.json({ success: true, platform, range, coverage, current, previous });
+  res.json({ success: true, platform, range, coverage, displayCoverage, current, previous });
 });
 
 // @route GET /api/social-posts?organizationId=&platform=&days=  — the post table.
 export const getSocialPosts = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const { platform } = req.query;
   if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('platform must be Instagram, Facebook or YouTube'); }
   const days = Math.min(Math.max(Number(req.query.days) || 365, 7), 730);

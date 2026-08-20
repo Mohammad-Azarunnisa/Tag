@@ -70,7 +70,7 @@ export const searchApi = {
 
 // ---- Organizations (options for pickers — any authenticated user) ----
 export const organizationApi = {
-  options: () => api.get('/organizations/options').then((r) => r.data),
+  options: (params) => api.get('/organizations/options', { params }).then((r) => r.data),
   // Only the institutions the caller may act in — their own college, plus
   // anything an Admin was granted.
   myOptions: () => api.get('/organizations/options', { params: { scope: 'mine' } }).then((r) => r.data),
@@ -274,7 +274,10 @@ export const activityApi = {
 // ---- Reports / Analytics ----
 export const reportApi = {
   analytics: () => api.get('/reports/summary/approval-analytics').then((r) => r.data),
-  downloadUrl: (type, format) => `/api/reports/${type}?format=${format}`,
+  downloadUrl: (type, format, from, to) => {
+    const params = new URLSearchParams({ format, from, to });
+    return `/api/reports/${type}?${params}`;
+  },
 };
 
 // ---- Workflow: the design → post pipeline a college request travels through.

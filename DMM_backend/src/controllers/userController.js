@@ -292,6 +292,7 @@ export const getUsers = asyncHandler(async (req, res) => {
   let listQuery = query;
   if (role && role !== 'All') {
     if (role === 'SUPER') listQuery = viewerIsSuperAdmin ? { ...query, isSuperAdmin: true } : null;
+    else if (Object.values(USER_TYPES).includes(role)) listQuery = { ...query, role: ROLES.USER, userType: role };
     else listQuery = { ...query, role };
   }
 

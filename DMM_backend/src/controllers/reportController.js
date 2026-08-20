@@ -6,15 +6,34 @@ import ApprovalRequest from '../models/ApprovalRequest.js';
 import Template from '../models/Template.js';
 import Asset from '../models/Asset.js';
 import ActivityLog from '../models/ActivityLog.js';
+import Analytics from '../models/Analytics.js';
+import SocialPost from '../models/SocialPost.js';
+import LinkedInPost from '../models/LinkedInPost.js';
+import Organization from '../models/Organization.js';
 import { requireOrgId } from '../utils/org.js';
-import { ROLES } from '../config/constants.js';
+import { PLATFORMS, ROLES } from '../config/constants.js';
+
+const resolveDateRange = (req, res) => {
+  const { from, to } = req.query;
+  if (!from && !to) return null;
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    res.status(400); throw new Error('Provide both "from" and "to" dates as YYYY-MM-DD');
+  }
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(`${to}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    res.status(400); throw new Error('The "to" date cannot be before the "from" date');
+  }
+  return { from, to, filter: { $gte: start, $lte: end } };
+};
 
 // Build the row data for a given report type. `scope` always includes organization
 // (and createdBy for non-privileged users); `orgId` scopes library reports.
-const buildRows = async (type, scope, orgId) => {
+const buildRows = async (type, scope, orgId, dateRange) => {
+  const dated = (query, field) => (dateRange ? { ...query, [field]: dateRange.filter } : query);
   switch (type) {
     case 'approval': {
-      const docs = await ApprovalRequest.find(scope).populate('createdBy', 'name').sort({ createdAt: -1 });
+      const docs = await ApprovalRequest.find(dated(scope, 'createdAt')).populate('createdBy', 'name').sort({ createdAt: -1 });
       return {
         columns: ['Title', 'Platform', 'Status', 'Created By', 'Created', 'Posted'],
         rows: docs.map((d) => [
@@ -25,28 +44,28 @@ const buildRows = async (type, scope, orgId) => {
       };
     }
     case 'posting': {
-      const docs = await ApprovalRequest.find({ ...scope, status: 'POSTED' }).populate('postedBy', 'name').sort({ postedAt: -1 });
+      const docs = await ApprovalRequest.find(dated({ ...scope, status: 'POSTED' }, 'postedAt')).populate('postedBy', 'name').sort({ postedAt: -1 });
       return {
         columns: ['Title', 'Platform', 'Posted By', 'Posted Date'],
         rows: docs.map((d) => [d.title, d.platform, d.postedBy?.name || '-', d.postedAt?.toISOString().slice(0, 10) || '-']),
       };
     }
     case 'template': {
-      const docs = await Template.find({ organization: orgId }).populate('uploadedBy', 'name').sort({ createdAt: -1 });
+      const docs = await Template.find(dated({ organization: orgId }, 'createdAt')).populate('uploadedBy', 'name').sort({ createdAt: -1 });
       return {
         columns: ['Name', 'Category', 'Type', 'Downloads', 'Uploaded By', 'Created'],
         rows: docs.map((d) => [d.name, d.category, d.fileType, d.downloads, d.uploadedBy?.name || '-', d.createdAt.toISOString().slice(0, 10)]),
       };
     }
     case 'asset': {
-      const docs = await Asset.find({ organization: orgId }).populate('uploadedBy', 'name').sort({ createdAt: -1 });
+      const docs = await Asset.find(dated({ organization: orgId }, 'createdAt')).populate('uploadedBy', 'name').sort({ createdAt: -1 });
       return {
         columns: ['Name', 'Category', 'Type', 'Downloads', 'Uploaded By', 'Created'],
         rows: docs.map((d) => [d.name, d.category, d.fileType, d.downloads, d.uploadedBy?.name || '-', d.createdAt.toISOString().slice(0, 10)]),
       };
     }
     case 'activity': {
-      const actQuery = { organization: orgId, ...(scope.createdBy ? { user: scope.createdBy } : {}) };
+      const actQuery = dated({ organization: orgId, ...(scope.createdBy ? { user: scope.createdBy } : {}) }, 'createdAt');
       const docs = await ActivityLog.find(actQuery).populate('user', 'name').sort({ createdAt: -1 }).limit(500);
       return {
         columns: ['User', 'Action', 'Description', 'Timestamp'],
@@ -73,8 +92,10 @@ export const exportReport = asyncHandler(async (req, res) => {
   const orgId = requireOrgId(req, res);
   const privileged = [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
   const scope = privileged ? { organization: orgId } : { organization: orgId, createdBy: req.user._id };
-  const { columns, rows } = await buildRows(type, scope, orgId);
+  const dateRange = resolveDateRange(req, res);
+  const { columns, rows } = await buildRows(type, scope, orgId, dateRange);
   const title = titleFor[type] || 'Report';
+  const period = dateRange ? `${dateRange.from} to ${dateRange.to}` : 'All dates';
 
   if (format === 'pdf') {
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
@@ -84,7 +105,7 @@ export const exportReport = asyncHandler(async (req, res) => {
 
     doc.fontSize(18).fillColor('#4f46e5').text(title, { align: 'left' });
     doc.moveDown(0.3);
-    doc.fontSize(9).fillColor('#666').text(`Generated: ${new Date().toUTCString()}  •  ${rows.length} records`);
+    doc.fontSize(9).fillColor('#666').text(`Period: ${period}  •  Generated: ${new Date().toUTCString()}  •  ${rows.length} records`);
     doc.moveDown(0.8);
 
     const startX = 40;
@@ -117,6 +138,74 @@ export const exportReport = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${type}-report.xlsx"`);
   await wb.xlsx.write(res);
+  res.end();
+});
+
+const metricColumns = [
+  ['profilesManaged', 'Profiles managed'], ['followers', 'Followers'], ['newFollowers', 'New followers'],
+  ['followersLast30Days', 'Followers (30d)'], ['organicFollowers', 'Organic followers'], ['sponsoredFollowers', 'Sponsored followers'],
+  ['subscribers', 'Subscribers'], ['videoCount', 'Videos'], ['impressions', 'Impressions'],
+  ['uniqueImpressions', 'Unique impressions'], ['reach', 'Reach'], ['searchAppearances', 'Search appearances'],
+  ['views', 'Views'], ['watchHours', 'Watch hours'], ['postsPublished', 'Posts published'],
+  ['clicks', 'Clicks'], ['clickThroughRate', 'CTR %'], ['engagementRate', 'Engagement rate %'],
+  ['reactions', 'Reactions'], ['comments', 'Comments'], ['reposts', 'Reposts'], ['interactions', 'Interactions'],
+  ['pageViews', 'Page views'], ['uniqueVisitors', 'Unique visitors'], ['visits', 'Visits'], ['linkClicks', 'Link clicks'],
+  ['desktopPageViews', 'Desktop page views'], ['mobilePageViews', 'Mobile page views'],
+  ['customButtonClicks', 'CTA clicks'], ['leads', 'Leads'], ['leadFormViews', 'Lead form views'], ['leadConversionRate', 'Lead conversion %'],
+];
+
+const addExportSheet = (workbook, name, columns, rows) => {
+  const sheet = workbook.addWorksheet(name);
+  sheet.columns = columns.map((header) => ({ header, width: Math.max(16, Math.min(34, header.length + 5)) }));
+  sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+  rows.forEach((row) => sheet.addRow(row));
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+};
+
+// @route GET /api/reports/platform-export?platform=&from=&to=
+// A cross-organization export is reserved for the super admin.
+export const exportPlatformAnalytics = asyncHandler(async (req, res) => {
+  const platform = String(req.query.platform || 'LinkedIn');
+  if (!PLATFORMS.includes(platform)) { res.status(400); throw new Error('Invalid platform'); }
+  const dateRange = resolveDateRange(req, res);
+  if (!dateRange) { res.status(400); throw new Error('Choose both "from" and "to" dates'); }
+
+  const organizations = await Organization.find({ isActive: true }).select('name').lean();
+  const organizationIds = organizations.map((organization) => organization._id);
+  const organizationNames = new Map(organizations.map((organization) => [String(organization._id), organization.name]));
+  const snapshots = await Analytics.find({ organization: { $in: organizationIds }, platform, date: dateRange.filter }).sort({ date: 1, organization: 1 }).lean();
+  const posts = platform === 'LinkedIn'
+    ? await LinkedInPost.find({ organization: { $in: organizationIds }, createdDate: dateRange.filter }).sort({ createdDate: -1 }).lean()
+    : await SocialPost.find({ organization: { $in: organizationIds }, platform, publishedAt: dateRange.filter }).sort({ publishedAt: -1 }).lean();
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Branding & Marketing';
+  const overview = workbook.addWorksheet('Overview');
+  overview.addRow([`${platform} Analytics Export`]).font = { bold: true, size: 14 };
+  overview.addRow([`Period: ${dateRange.from} to ${dateRange.to}`]);
+  overview.addRow([`Organizations: ${organizations.length}`]);
+  overview.addRow([`Metric snapshots: ${snapshots.length}`]);
+  overview.addRow([`Posts: ${posts.length}`]);
+  overview.columns[0].width = 52;
+
+  addExportSheet(workbook, 'Daily metrics', ['Organization', 'Date', ...metricColumns.map(([, label]) => label)], snapshots.map((snapshot) => [
+    organizationNames.get(String(snapshot.organization)) || 'Unknown organization',
+    snapshot.date?.toISOString().slice(0, 10) || '',
+    ...metricColumns.map(([key]) => snapshot[key] || 0),
+  ]));
+
+  const linkedInColumns = ['Organization', 'Published', 'Title', 'URL', 'Post type', 'Content type', 'Posted by', 'Impressions', 'Views', 'Clicks', 'CTR %', 'Reactions', 'Comments', 'Reposts', 'Follows', 'Engagement rate %'];
+  const socialColumns = ['Organization', 'Published', 'Caption', 'URL', 'Media type', 'Impressions', 'Reach', 'Views', 'Likes', 'Comments', 'Shares', 'Saved', 'Engagement rate %'];
+  addExportSheet(workbook, 'Posts', platform === 'LinkedIn' ? linkedInColumns : socialColumns, posts.map((post) => (platform === 'LinkedIn'
+    ? [organizationNames.get(String(post.organization)) || 'Unknown organization', post.createdDate?.toISOString().slice(0, 10) || '', post.title, post.url, post.postType, post.contentType, post.postedBy, post.impressions, post.views, post.clicks, post.clickThroughRate, post.reactions, post.comments, post.reposts, post.follows, post.engagementRate]
+    : [organizationNames.get(String(post.organization)) || 'Unknown organization', post.publishedAt?.toISOString().slice(0, 10) || '', post.caption, post.url, post.mediaType, post.impressions, post.reach, post.views, post.likes, post.comments, post.shares, post.saved, post.engagementRate]
+  )));
+
+  const filename = `${platform.toLowerCase()}-analytics-${dateRange.from}-to-${dateRange.to}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  await workbook.xlsx.write(res);
   res.end();
 });
 

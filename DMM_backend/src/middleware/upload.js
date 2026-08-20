@@ -29,6 +29,7 @@ const ALLOWED_EXTENSIONS = new Set([
   '.doc',
   '.docx',
   '.txt',
+  '.zip',
 ]);
 
 const getExtension = (filename = '') => {

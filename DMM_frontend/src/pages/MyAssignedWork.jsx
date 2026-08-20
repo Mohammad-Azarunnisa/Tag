@@ -41,6 +41,22 @@ const STATUS_META = {
   DONE: { label: 'Completed', icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' },
 };
 
+// Workflow items appear in this page alongside direct assignments, so their
+// state must contribute to the top totals too. Otherwise a handler could see
+// active posts below while every summary card misleadingly reads zero.
+const WORKFLOW_STATUS_BUCKET = {
+  POST_OPEN: 'OPEN',
+  DESIGN_IN_PROGRESS: 'ACKNOWLEDGED',
+  POST_IN_PROGRESS: 'ACKNOWLEDGED',
+  DESIGN_ADMIN_REVIEW: 'SUBMITTED',
+  DESIGN_COORDINATOR_REVIEW: 'SUBMITTED',
+  POST_ADMIN_REVIEW: 'SUBMITTED',
+  POST_COORDINATOR_REVIEW: 'SUBMITTED',
+  POST_APPROVED: 'ACKNOWLEDGED',
+  POSTED: 'DONE',
+  COMPLETED: 'DONE',
+};
+
 // What to pick up first. NORMAL is the default, so it carries no badge - only
 // the ones that change your order are called out.
 const URGENCY_META = {
@@ -263,8 +279,12 @@ export default function MyAssignedWork() {
     assignments.forEach((a) => {
       if (counts[a.status] !== undefined) counts[a.status] += 1;
     });
+    workflowItems.forEach((item) => {
+      const bucket = WORKFLOW_STATUS_BUCKET[item.workflowStage];
+      if (bucket) counts[bucket] += 1;
+    });
     return counts;
-  }, [assignments]);
+  }, [assignments, workflowItems]);
 
   const tiles = [
     { key: 'OPEN', label: 'Open' },
@@ -296,6 +316,9 @@ export default function MyAssignedWork() {
           </Card>
         ))}
       </div>
+      {workflowItems.length > 0 && (
+        <p className="-mt-3 mb-5 text-xs text-slate-400">Summary includes your design and posting workflow work.</p>
+      )}
 
       <div className="mb-5 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">

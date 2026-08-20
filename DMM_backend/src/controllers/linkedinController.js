@@ -7,7 +7,7 @@ import AudienceDemographic from '../models/AudienceDemographic.js';
 import Competitor from '../models/Competitor.js';
 import { ingestDailyGrid, parseDateCell } from './analyticsController.js';
 import { logActivity } from '../utils/logActivity.js';
-import { requireOrgId, resolveViewOrgId } from '../utils/org.js';
+import { requireOrgId, resolveSharedViewOrgId } from '../utils/org.js';
 import { cellText, cellNumber, cellHyperlink, normHeader, loadAllGrids } from '../utils/sheet.js';
 import { ACTIVITY_ACTIONS } from '../config/constants.js';
 
@@ -335,7 +335,7 @@ export const setFollowersBaseline = asyncHandler(async (req, res) => {
 // Everything the LinkedIn-style view needs beyond the daily report: the post
 // performance table, follower/visitor demographics, and competitors.
 export const linkedinDashboard = asyncHandler(async (req, res) => {
-  const orgId = resolveViewOrgId(req); // any user may view any org
+  const orgId = resolveSharedViewOrgId(req); // any user may view any org
   const days = Math.min(Math.max(Number(req.query.days) || 365, 7), 730);
   const since = new Date(Date.now() - days * 86400000);
 

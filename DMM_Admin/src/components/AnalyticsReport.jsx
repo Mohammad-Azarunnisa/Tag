@@ -12,6 +12,7 @@ import { cn, formatNumber } from '../lib/utils.js';
 const HIGHLIGHT_PRIORITY = ['followers', 'interactions', 'visits', 'subscribers', 'impressions', 'engagementRate', 'newFollowers', 'reach', 'views', 'videoCount', 'pageViews'];
 const fmt = (v, isPct) => (isPct ? `${Number(v || 0).toFixed(2)}%` : formatNumber(v || 0));
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const fmtStoredDate = (d) => new Date(d).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 
 // Platform-aware guidance for the empty state — each platform has a different
 // fastest path to its first data point.
@@ -62,6 +63,9 @@ export default function AnalyticsReport({ report, isLoading }) {
   }
 
   const { latest, previous, deltas, groups, labels, percentFields, series } = report;
+  const coverage = report.coverage;
+  const postCoverage = report.postCoverage;
+  const displayCoverage = report.displayCoverage;
   const pct = new Set(percentFields || []);
   const fields = Object.values(groups || {}).flat();
 
@@ -116,20 +120,27 @@ export default function AnalyticsReport({ report, isLoading }) {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {useWeekly ? (
-          weekly.currentRange && (
+        <div className="space-y-1">
+          {displayCoverage && (
+            <p className="text-xs text-slate-400">
+              Data stored: <span className="font-semibold text-slate-500 dark:text-slate-300">{fmtStoredDate(displayCoverage.from)} → {fmtStoredDate(displayCoverage.to)}</span> ({displayCoverage.days} days)
+            </p>
+          )}
+          {useWeekly ? (
+            weekly.currentRange && (
             <p className="text-xs text-slate-400">
               This period ({fmtDate(weekly.currentRange.from)} – {fmtDate(weekly.currentRange.to)}, {weekly.currentRange.days} days){' '}
               {weekly.hasPrevious
                 ? <>vs the previous {rangeDays} days ({fmtDate(weekly.previousRange.from)} – {fmtDate(weekly.previousRange.to)})</>
                 : <span>— no previous period to compare yet</span>}
             </p>
-          )
-        ) : (
-          previous && (
+            )
+          ) : (
+            previous && (
             <p className="text-xs text-slate-400">Comparing {fmtDate(latest.date)} with {weekApart ? 'a week earlier' : 'the previous entry'} ({fmtDate(previous.date)})</p>
-          )
-        )}
+            )
+          )}
+        </div>
         {canWeekly && (
           <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-1 text-xs font-semibold">
             <button onClick={() => setView('weekly')} className={cn('rounded-md px-3 py-1', useWeekly ? 'bg-white dark:bg-slate-900 text-brand-700 dark:text-brand-300 shadow-soft' : 'text-slate-500')}>{periodLabel}</button>
