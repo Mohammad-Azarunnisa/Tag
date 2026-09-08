@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Images, ExternalLink, Download, FileText, Link as LinkIcon, Play, Globe, Film, Search } from 'lucide-react';
+import { Images, ExternalLink, Download, FileText, Link as LinkIcon, Play, Globe, Film, Search, AlertTriangle } from 'lucide-react';
 import { libraryApi, linkApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import { youtubeThumb, cn, isCoordinatorUser } from '../lib/utils.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
+import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
 
@@ -160,7 +161,7 @@ export default function BrandLibrary() {
   });
   const orgs = orgData?.organizations || [];
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['brand', { search, category, orgFilter }],
     queryFn: () => libraryApi.brand({ search, category, organizationId: orgFilter || undefined }),
   });
@@ -197,6 +198,11 @@ export default function BrandLibrary() {
         ) : (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
         )
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle}
+          title="Couldn't load this"
+          description="There was a problem loading the brand library — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : items.length === 0 ? (
         filtered ? (
           <EmptyState icon={Images} title="Nothing matches these filters" description="Try another college or category, or clear the search." />

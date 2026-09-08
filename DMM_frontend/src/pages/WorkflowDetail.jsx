@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Check, X, Send, ThumbsUp, Upload, Plus, Trash2, MessageSquareWarning,
-  CheckCircle2, UserCheck, CalendarClock, FileText, Paperclip, Clock3,
+  CheckCircle2, UserCheck, CalendarClock, FileText, Paperclip, Clock3, Sparkles,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import { Button } from '../components/ui/Button.jsx';
@@ -586,6 +586,12 @@ export default function WorkflowDetail() {
               {item.workType === 'DIGITAL_MEDIA' ? 'Digital' : 'Print'}
             </Badge>
             <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{STAGE_LABEL[stage] || stage}</Badge>
+            {/* Already had the creative — this never touched a designer. */}
+            {item.postOnly && (
+              <Badge className="inline-flex items-center gap-1 bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+                <Sparkles className="h-3 w-3" /> Social Media Posting
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-slate-400">
             Raised {timeAgo(item.createdAt)}{item.raisedBy?.name ? ` by ${item.raisedBy.name}` : ''} · Updated {formatDateTime(item.updatedAt)}

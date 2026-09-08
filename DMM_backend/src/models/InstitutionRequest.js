@@ -40,6 +40,10 @@ const REQUEST_PRIORITY = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
  * _ITEMS). Print, and digital work with no page to go on — LED screens, web
  * banners, email art — are finished when the coordinator accepts the design, so
  * they end at COMPLETED.
+ *
+ * `postOnly` requests (see below) skip the design half entirely: the creative
+ * already exists, so there is nothing for a designer to make. They land straight
+ * on POST_OPEN and carry on through the same post half as everything else.
  */
 const WORKFLOW_STAGES = [
   'DESIGN_OPEN',                // waiting for a designer to acknowledge
@@ -75,6 +79,11 @@ const institutionRequestSchema = new mongoose.Schema(
     workType: { type: String, enum: ['PRINT_MEDIA', 'DIGITAL_MEDIA'], default: 'PRINT_MEDIA', index: true },
     workCategory: { type: String, default: '', trim: true },
     workItem: { type: String, default: '', trim: true },
+    // Content that is already designed and only needs to be posted — a college
+    // asking for its own ready-made creative to go out, not for one to be made.
+    // Set at creation and never changed afterwards: it decides whether the
+    // request starts on "Designs to be Done" or straight on "To Be Posted".
+    postOnly: { type: Boolean, default: false, index: true },
     event: { type: Boolean, default: false, index: true },
     department: { type: String, default: '', trim: true },
     eventName: { type: String, default: '', trim: true },

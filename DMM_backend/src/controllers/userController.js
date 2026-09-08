@@ -251,7 +251,7 @@ export const listDirectory = asyncHandler(async (req, res) => {
 // @route GET /api/users  (ADMIN, or an Admin/CEO within their own institutions)
 // — list with search + role + organization filter
 export const getUsers = asyncHandler(async (req, res) => {
-  const { search, role, organization } = req.query;
+  const { search, role, organization, page, limit = 25 } = req.query;
   const query = {};
   if (organization && organization !== 'All') query.organization = organization;
   if (search) query.$or = [
@@ -296,10 +296,25 @@ export const getUsers = asyncHandler(async (req, res) => {
     else listQuery = { ...query, role };
   }
 
-  const [users, total, ceoCount, userCount, superAdminCount] = await Promise.all([
+  // Pagination is opt-in and, when active, applies only to the page of rows
+  // returned — the role-tile counts above are deliberately counted against
+  // the full `query` (or `{...query, role:...}`), never the paginated slice,
+  // or every tile but the current page would read wrong the moment you paged
+  // past page 1. Opt-in because this endpoint also feeds pickers elsewhere
+  // (TeamWork, AssignedWork, WorkAssignmentModal, the SocialAccounts handler
+  // picker) that call it with no `page` and expect every matching user back.
+  const paging = page !== undefined;
+  const skip = paging ? (Number(page) - 1) * Number(limit) : 0;
+
+  const [users, matched, total, ceoCount, userCount, superAdminCount] = await Promise.all([
     listQuery
-      ? User.find(listQuery).populate('organization', 'name slug color').sort({ createdAt: -1 })
+      ? (() => {
+          let find = User.find(listQuery).populate('organization', 'name slug color').sort({ createdAt: -1 });
+          if (paging) find = find.skip(skip).limit(Number(limit));
+          return find;
+        })()
       : [],
+    listQuery ? User.countDocuments(listQuery) : 0,
     User.countDocuments(query),
     User.countDocuments({ ...query, role: ROLES.CEO }),
     User.countDocuments({ ...query, role: ROLES.USER }),
@@ -309,6 +324,9 @@ export const getUsers = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     count: users.length,
+    matched,
+    page: paging ? Number(page) : 1,
+    pages: paging ? (Math.ceil(matched / Number(limit)) || 1) : 1,
     superAdminCount,
     roleCounts: { total, SUPER: superAdminCount, CEO: ceoCount, USER: userCount },
     users: users.map(sanitize),

@@ -22,9 +22,22 @@ export default function Organizations() {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [menuFor, setMenuFor] = useState(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  // A new search restarts from page 1 so pagination never points past the
+  // (now smaller) results.
+  const updateSearch = (value) => { setSearch(value); setPage(1); };
 
-  const { data, isLoading } = useQuery({ queryKey: ['organizations', search, 'with-disabled'], queryFn: () => organizationApi.list({ search, includeDisabled: 1 }) });
+  const { data, isLoading } = useQuery({
+    queryKey: ['organizations', search, page, limit, 'with-disabled'],
+    queryFn: () => organizationApi.list({ search, includeDisabled: 1, page, limit }),
+    placeholderData: (prev) => prev,
+  });
   const orgs = sortOrganizations(data?.organizations);
+  const matched = data?.matched ?? orgs.length;
+  const pages = data?.pages || 1;
+  const firstRow = matched === 0 ? 0 : (page - 1) * limit + 1;
+  const lastRow = Math.min(page * limit, matched);
 
   const removeMut = useMutation({
     mutationFn: (id) => organizationApi.remove(id),
@@ -59,8 +72,11 @@ export default function Organizations() {
     toggleMut.mutate({ id: org._id, isActive: !org.isActive });
   };
 
-  const totalMembers = orgs.reduce((a, o) => a + (o.memberCount || 0), 0);
-  const totalPosts = orgs.reduce((a, o) => a + (o.postCount || 0), 0);
+  // The server totals every matching organization, not just the page on
+  // screen — summing only `orgs` here would silently under-report these once
+  // there's more than one page of results.
+  const totalMembers = data?.totalMembers ?? orgs.reduce((a, o) => a + (o.memberCount || 0), 0);
+  const totalPosts = data?.totalPosts ?? orgs.reduce((a, o) => a + (o.postCount || 0), 0);
 
   return (
     <div>
@@ -68,14 +84,14 @@ export default function Organizations() {
         actions={canManage && <Button onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> New Organization</Button>} />
 
       <div className="mb-6 grid grid-cols-3 gap-4">
-        <Stat icon={Building2} label="Organizations" value={orgs.length} cls="text-brand-600 bg-brand-50 dark:bg-brand-500/10" />
+        <Stat icon={Building2} label="Organizations" value={matched} cls="text-brand-600 bg-brand-50 dark:bg-brand-500/10" />
         <Stat icon={UsersIcon} label="Total Members" value={totalMembers} cls="text-sky-600 bg-sky-50 dark:bg-sky-500/10" />
         <Stat icon={Send} label="Total Posts" value={totalPosts} cls="text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10" />
       </div>
 
       <div className="mb-5 relative max-w-md">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        <Input placeholder="Search organizations..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input placeholder="Search organizations..." className="pl-9" value={search} onChange={(e) => updateSearch(e.target.value)} />
       </div>
 
       {isLoading ? (
@@ -136,6 +152,24 @@ export default function Organizations() {
               </Card>
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {!isLoading && orgs.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs text-slate-400">Viewing {firstRow}–{lastRow} of {matched}</p>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+            <span className="whitespace-nowrap text-xs font-medium text-slate-500 dark:text-slate-400">Page {data?.page || page} of {pages}</span>
+            <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            Rows per page
+            <select className="input-base h-9 w-auto cursor-pointer py-0 text-xs" value={limit}
+              onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}>
+              {[10, 25, 50].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
         </div>
       )}
 

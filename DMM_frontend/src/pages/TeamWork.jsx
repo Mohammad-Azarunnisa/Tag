@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   BriefcaseBusiness, Search, Circle, Clock3, Send, CheckCircle2, ThumbsUp, Plus, Flame,
-  Palette, MessageSquareWarning,
+  Palette, MessageSquareWarning, AlertTriangle,
 } from 'lucide-react';
 import { workAssignmentApi, userApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -87,7 +87,7 @@ export default function TeamWork() {
   // The status tile is deliberately NOT sent to the server: the tiles count out
   // of this response, so asking the server for one status would leave the other
   // three tiles reading zero. Status is applied below, after the counts.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['team-work', { search, orgFilter, urgencyFilter }],
     queryFn: () => workAssignmentApi.list({
       search: search || undefined,
@@ -182,6 +182,10 @@ export default function TeamWork() {
 
       {isLoading ? (
         <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load team work"
+          description="There was a problem loading the work you've handed out — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : assignments.length === 0 ? (
         <EmptyState icon={BriefcaseBusiness}
           title={filtering ? 'No work matches these filters' : 'No work assigned yet'}

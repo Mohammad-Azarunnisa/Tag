@@ -53,7 +53,9 @@ const populateRequest = (q) => q
   .populate('raisedBy', 'name avatar email userType')
   .populate('designer', 'name avatar email')
   .populate('handler', 'name avatar email')
-  .populate('reviewedBy', 'name')
+  // Also who cancelled it, if it was — the only other thing this field is set
+  // for now that nobody actually reviews a request any more (see cancelWorkflowItem).
+  .populate('reviewedBy', 'name avatar')
   .populate('designAcceptedBy', 'name avatar')
   .populate('postAcceptedBy', 'name avatar')
   // Who signed each half off, so the trail names the admin rather than just the time.
@@ -483,6 +485,10 @@ export const getWorkflowItem = asyncHandler(async (req, res) => {
   // What this viewer can actually do here, decided server-side so neither app has
   // to re-derive the pipeline rules.
   const can = {
+    // The one intervention point before either half has really started: an
+    // Admin can pull the request back while nobody has acknowledged it yet.
+    // Once a designer or handler has it, this is gone — talk to whoever holds it.
+    cancel: admin && ['DESIGN_OPEN', 'POST_OPEN'].includes(stage),
     acknowledgeDesign: !req.user.viewOnly && isDesigner(req.user) && stage === 'DESIGN_OPEN',
     submitDesign: !req.user.viewOnly && amDesigner && stage === 'DESIGN_IN_PROGRESS',
     reviewDesign: admin && stage === 'DESIGN_ADMIN_REVIEW',
@@ -1030,5 +1036,63 @@ export const markWorkflowPosted = asyncHandler(async (req, res) => {
   });
 
   const fresh = await populateRequest(InstitutionRequest.findById(item._id)).lean();
+  res.json({ success: true, item: fresh });
+});
+
+// ---------------------------------------------------------------------------
+// Cancel — the Admin's one intervention point, before anyone has taken it on
+// ---------------------------------------------------------------------------
+
+/**
+ * @route PUT /api/workflow/:id/cancel   body: { reason? }
+ *
+ * An Admin (or the super admin) can pull a request back, but only while it is
+ * still unclaimed — DESIGN_OPEN or POST_OPEN, with nobody acknowledged. Once a
+ * designer or handler has taken it on, this is gone; from there it is a
+ * conversation with whoever is holding it, not something to be cancelled out
+ * from under them.
+ *
+ * Reuses the `status`/`response`/`reviewedBy`/`reviewedAt` fields the old
+ * pre-designer-review flow left on the model, so to the coordinator this reads
+ * exactly like any other declined request, with the reason (if one was given)
+ * in the reply — no new UI needed on their side.
+ */
+export const cancelWorkflowItem = asyncHandler(async (req, res) => {
+  const item = await loadItem(req, res, { populate: false });
+  if (!isAdministrator(req.user)) { res.status(403); throw new Error('Only an Admin or the super admin can cancel this'); }
+  if (!canAccessOrg(req.user, idOf(item.organization))) { res.status(404); throw new Error('Workflow item not found'); }
+  if (!['DESIGN_OPEN', 'POST_OPEN'].includes(item.workflowStage)) {
+    res.status(409); throw new Error('This has already been picked up and can no longer be cancelled');
+  }
+
+  const reason = String(req.body.reason || '').trim();
+  // Same optimistic lock acknowledgeWorkflowItem races against: the stage plus a
+  // clear designer/handler, so a designer or handler claiming this at the same
+  // instant cannot be silently overridden by a cancel that started a moment earlier.
+  const won = await InstitutionRequest.findOneAndUpdate(
+    { _id: item._id, workflowStage: item.workflowStage, designer: null, handler: null },
+    { $set: {
+      workflowStage: 'CANCELLED',
+      status: 'DECLINED',
+      response: reason || 'Cancelled before it was picked up.',
+      reviewedBy: req.user._id,
+      reviewedAt: new Date(),
+    } },
+    { new: true }
+  );
+  if (!won) { res.status(409); throw new Error('Someone has already acknowledged this — it can no longer be cancelled'); }
+
+  await logActivity({
+    user: req.user._id, organization: idOf(won.organization), action: ACTIVITY_ACTIONS.REQUEST_REVIEWED,
+    description: `Cancelled "${won.title}"${reason ? `: ${reason}` : ''}`,
+    entityType: 'InstitutionRequest', entityId: won._id,
+  });
+  await notifyUser(won.raisedBy, won, {
+    type: NOTIFICATION_TYPES.REQUEST_DECLINED,
+    title: 'Your request was cancelled',
+    message: `${req.user.name} cancelled "${won.title}"${reason ? ` — ${reason}` : ''}`,
+  });
+
+  const fresh = await populateRequest(InstitutionRequest.findById(won._id)).lean();
   res.json({ success: true, item: fresh });
 });

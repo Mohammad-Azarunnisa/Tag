@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell, CheckCheck, Check, XCircle, RefreshCw, Send, FileText, Trash2, ClipboardList, UserCog,
-  MessageSquarePlus, CheckCircle2, MessageSquare, Palette,
+  MessageSquarePlus, CheckCircle2, MessageSquare, Palette, AlertTriangle,
 } from 'lucide-react';
 import { notificationApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -60,7 +60,7 @@ const targetOf = (n) => {
 export default function Notifications() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { data, isLoading } = useQuery({ queryKey: ['notifications', 'all'], queryFn: () => notificationApi.list() });
+  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ['notifications', 'all'], queryFn: () => notificationApi.list() });
   const notifications = data?.notifications || [];
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['notifications'] });
@@ -89,6 +89,10 @@ export default function Notifications() {
 
       {isLoading ? (
         <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load notifications"
+          description="There was a problem loading your notifications — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No notifications" description="You're all caught up!" />
       ) : (

@@ -58,10 +58,13 @@ function ProfileGate({ children }) {
 // own asks. The approvals pipeline itself is the admins' and the makers'.
 // Team Work is absent for the same reason: allocating work to a designer or a
 // handler is the Admin's call, never the coordinator's.
+// Signage, the Post Planner, and the posting Calendar are absent too: scheduling
+// what goes out and where is the Branding/Social Media Team's call, not the
+// coordinator's — direct URL access is blocked here too, not just the nav link.
 const COORDINATOR_ROUTES = [
   /^\/dashboard/, /^\/notifications/, /^\/profile/, /^\/settings/,
-  /^\/templates/, /^\/assets/, /^\/brand-library/, /^\/events/, /^\/signage/,
-  /^\/social-analytics/, /^\/calendar/, /^\/planner/, /^\/requests/,
+  /^\/templates/, /^\/assets/, /^\/brand-library/, /^\/events/,
+  /^\/social-analytics/, /^\/requests/,
   /^\/people/, /^\/workflow/,
 ];
 

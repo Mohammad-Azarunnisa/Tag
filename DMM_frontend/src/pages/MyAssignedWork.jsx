@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BriefcaseBusiness, CheckCircle2, Circle, Search, Clock3, Send, MessageSquareWarning, ThumbsUp, Flame, Eye, X,
-  Paperclip, ExternalLink, FileImage, CalendarClock, ClipboardList,
+  Paperclip, ExternalLink, FileImage, CalendarClock, ClipboardList, AlertTriangle,
 } from 'lucide-react';
 import { workAssignmentApi, workflowApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -231,7 +231,7 @@ export default function MyAssignedWork() {
   // The whole list comes down once and the status picker narrows it here — the
   // tiles count out of this response, so filtering it server-side would leave
   // every tile but the chosen one reading zero.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['my-assigned-work'],
     queryFn: () => workAssignmentApi.list(),
   });
@@ -410,6 +410,13 @@ export default function MyAssignedWork() {
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
         </div>
+      ) : isError ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="Couldn't load this"
+          description="There was a problem loading your assigned work — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>}
+        />
       ) : filtered.length === 0 && workflowShown.length === 0 ? (
         <EmptyState
           icon={BriefcaseBusiness}

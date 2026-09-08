@@ -9,6 +9,7 @@ import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { APPROVAL_STATUS, PLATFORMS, ROLES } from '../config/constants.js';
 import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
 import { platformsByOrganization } from '../utils/platforms.js';
+import { escapeRegex } from '../utils/sheet.js';
 
 // @route GET /api/organizations/options — minimal active-org list for pickers
 // (approval target, analytics view). Available to ANY authenticated user so the
@@ -35,9 +36,9 @@ export const listOrgOptions = asyncHandler(async (req, res) => {
 
 // @route GET /api/organizations  — list all (ADMIN). Includes quick member/post counts.
 export const getOrganizations = asyncHandler(async (req, res) => {
-  const { search } = req.query;
+  const { search, page, limit = 25 } = req.query;
   const query = {};
-  if (search) query.name = { $regex: search, $options: 'i' };
+  if (search) query.name = { $regex: escapeRegex(String(search)), $options: 'i' };
   // A disabled organization is meant to disappear from the product, and this one
   // endpoint feeds most of the console's org pickers, counts and roll-ups — so
   // hiding it here hides it everywhere at once, rather than each caller having to
@@ -50,7 +51,30 @@ export const getOrganizations = asyncHandler(async (req, res) => {
   // enforced by requireSuperAdmin on those routes.
   const allowed = accessibleOrgIds(req.user);
   if (allowed !== null) query._id = { $in: allowed };
-  const orgs = await Organization.find(query).sort({ createdAt: -1 }).lean();
+
+  // Pagination is opt-in: this one endpoint also feeds every organization
+  // *picker* in both apps (assignment modals, filters, the Websites/Events/
+  // SocialAccounts org selects), all of which call it with no `page` at all
+  // and expect the full list back. Only the Organizations management screen
+  // sends `page`, so only it gets a slice — every picker's behaviour is
+  // unchanged.
+  const paging = page !== undefined;
+  const skip = paging ? (Number(page) - 1) * Number(limit) : 0;
+  let find = Organization.find(query).sort({ createdAt: -1 });
+  if (paging) find = find.skip(skip).limit(Number(limit));
+  const matchingIds = paging ? await Organization.find(query).select('_id').lean() : null;
+  const [orgs, matched, totalMembers, totalPosts] = await Promise.all([
+    find.lean(),
+    paging ? matchingIds.length : null,
+    // Grand totals across every matching organization, not just the page on
+    // screen — the management page's summary tiles need the true total, and
+    // summing only the loaded page would silently under-report it once a page
+    // holds fewer than all organizations.
+    paging ? User.countDocuments({ organization: { $in: matchingIds.map((o) => o._id) } }) : null,
+    paging ? ApprovalRequest.countDocuments({
+      organization: { $in: matchingIds.map((o) => o._id) }, status: APPROVAL_STATUS.POSTED,
+    }) : null,
+  ]);
 
   // Attach lightweight stats per org
   const withStats = await Promise.all(
@@ -62,7 +86,18 @@ export const getOrganizations = asyncHandler(async (req, res) => {
       return { ...o, memberCount: members, postCount: posts };
     })
   );
-  res.json({ success: true, count: withStats.length, organizations: withStats });
+  res.json({
+    success: true,
+    count: withStats.length,
+    matched: paging ? matched : withStats.length,
+    page: paging ? Number(page) : 1,
+    pages: paging ? (Math.ceil(matched / Number(limit)) || 1) : 1,
+    // Only meaningful (and only computed) when paging — unpaginated picker
+    // calls already have every org's own memberCount/postCount to sum client-side.
+    totalMembers: paging ? totalMembers : undefined,
+    totalPosts: paging ? totalPosts : undefined,
+    organizations: withStats,
+  });
 });
 
 // @route GET /api/organizations/:id

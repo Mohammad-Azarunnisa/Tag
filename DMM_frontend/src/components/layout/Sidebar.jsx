@@ -84,10 +84,13 @@ const NAV_SECTIONS = [
 // requests and confirm it or ask for changes. The approvals pages are not theirs.
 // Team Work is absent by design: a coordinator does not assign work to anyone
 // directly — they raise a request and the Admin allocates it.
+// Signage, the Post Planner, and the posting Calendar are absent too: scheduling
+// what goes out and where is the Branding/Social Media Team's call, not the
+// coordinator's — they raise a request instead of managing the calendar directly.
 const COORDINATOR_PATHS = [
   '/dashboard', '/notifications', '/profile', '/settings',
-  '/templates', '/assets', '/brand-library', '/events', '/signage',
-  '/social-analytics', '/calendar', '/planner', '/requests',
+  '/templates', '/assets', '/brand-library', '/events',
+  '/social-analytics', '/requests',
   '/people', '/workflow/designs', '/workflow/to-be-posted',
 ];
 

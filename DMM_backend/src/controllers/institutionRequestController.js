@@ -12,6 +12,7 @@ import { logActivity } from '../utils/logActivity.js';
 import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
 import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
 import { uploadBuffer } from '../config/storage.js';
+import { platformsForOrganization } from '../utils/platforms.js';
 
 const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
 
@@ -91,6 +92,34 @@ const notifyDesignPool = async ({ request, orgName, raisedBy }) => {
   })));
 };
 
+// A postOnly ask has nothing for a designer to do — it starts life already on
+// "To Be Posted" — so it is the handlers who need telling, and only the ones who
+// actually run the pages the coordinator picked. Mirrors the scoping
+// workflowController uses when a design is accepted and handed to posting.
+const notifyPostPool = async ({ request, orgName, raisedBy }) => {
+  const orgId = request.organization?._id || request.organization;
+  const handlers = await User.find({
+    isActive: true,
+    role: ROLES.USER,
+    userType: USER_TYPES.SOCIAL_HANDLER,
+    handles: { $elemMatch: { organization: orgId, platforms: { $in: request.postPlatforms } } },
+  }).select('_id');
+
+  const pages = (request.postPlatforms || []).join(', ');
+  const rushed = request.priority === 'URGENT' || request.priority === 'HIGH';
+  await Promise.all(handlers.map((h) => createNotification({
+    recipient: h._id,
+    organization: orgId,
+    type: NOTIFICATION_TYPES.WORK_ASSIGNED,
+    title: rushed
+      ? `New work to post on ${pages} — ${request.priority.toLowerCase()}-priority`
+      : `New work to post on ${pages}`,
+    message: `${raisedBy.name} raised a ready-to-post request for ${orgName}: "${request.title}"`,
+    link: '/workflow/to-be-posted',
+    relatedRequest: request._id,
+  })));
+};
+
 // @route GET /api/requests — scoped by who is asking.
 // A coordinator sees their own college's requests; an Admin sees the
 // institutions they hold; the super admin sees everything.
@@ -157,18 +186,43 @@ export const listInstitutionRequests = asyncHandler(async (req, res) => {
 // @route POST /api/requests — a college asks for something. It is not sent to
 // anyone for approval first: workflowStage defaults to DESIGN_OPEN, so it is on
 // "Designs to be Done" as soon as it is saved and a designer can take it.
+//
+// A `postOnly` ask is the exception: the creative already exists — the college
+// just needs it published — so there is nothing for a designer to do. It skips
+// DESIGN_OPEN entirely and is saved straight onto "To Be Posted" instead.
 export const createInstitutionRequest = asyncHandler(async (req, res) => {
-  const { title, details, category = 'Other', priority = 'NORMAL', neededBy } = req.body;
+  const { title, details, category = 'Other', priority = 'NORMAL', neededBy, postOnly, platforms } = req.body;
   const { workType = 'PRINT_MEDIA', workCategory = '', workItem = '', event = 'false', department = '', eventName = '', eventDate = '', place = '', eventCoordinatorName = '' } = req.body;
-  if (!workCategory || !workItem) { res.status(400); throw new Error('Pick the work category and specific work item'); }
+  const isPostOnly = postOnly === true || postOnly === 'true';
+  // Ready-to-post content is always digital and always "Social Media" — that is
+  // what makes needsPosting() (elsewhere in the pipeline) agree that this is
+  // social work, and it is the only kind of ask with nothing left to design.
+  const finalWorkType = isPostOnly ? 'DIGITAL_MEDIA' : (workType === 'DIGITAL_MEDIA' ? 'DIGITAL_MEDIA' : 'PRINT_MEDIA');
+  const finalWorkCategory = isPostOnly ? 'Social Media' : workCategory;
+  if (!finalWorkCategory || !workItem) { res.status(400); throw new Error('Pick the work category and specific work item'); }
   if (!department) { res.status(400); throw new Error('Department is required'); }
   const hasEvent = event === true || event === 'true';
   if (hasEvent) {
     if (!eventName || !place || !eventCoordinatorName || !eventDate) { res.status(400); throw new Error('Fill in the event details'); }
   }
-  const finalTitle = String(title || `${workType === 'DIGITAL_MEDIA' ? 'Digital' : 'Print'} · ${workCategory} · ${workItem}`).trim();
+  const finalTitle = String(title || `${finalWorkType === 'DIGITAL_MEDIA' ? 'Digital' : 'Print'} · ${finalWorkCategory} · ${workItem}`).trim();
   if (!CATEGORIES.includes(category)) { res.status(400); throw new Error(`category must be one of ${CATEGORIES.join(', ')}`); }
   if (!PRIORITIES.includes(priority)) { res.status(400); throw new Error(`priority must be one of ${PRIORITIES.join(', ')}`); }
+
+  // There is no design step to produce the file here, so the coordinator has to
+  // bring it, and has to say where it goes — a handler picking this up needs
+  // both before there is anything for them to do.
+  let chosenPlatforms = [];
+  if (isPostOnly) {
+    const attachmentCount = Array.isArray(req.files) ? req.files.length : 0;
+    if (!attachmentCount) { res.status(400); throw new Error('Attach the ready-to-post file(s) before sending this to a handler'); }
+    chosenPlatforms = [...new Set(
+      (Array.isArray(platforms) ? platforms : String(platforms ?? '').split(','))
+        .map((p) => String(p).trim())
+        .filter(Boolean)
+    )];
+    if (!chosenPlatforms.length) { res.status(400); throw new Error('Choose at least one page for this to be posted on'); }
+  }
 
   // A request is raised on behalf of a college, so it is always the requester's
   // own — resolveOrgId gives a USER their organization and cannot be overridden.
@@ -177,6 +231,12 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   if (!canAccessOrg(req.user, orgId)) { res.status(403); throw new Error('You cannot raise a request for that college'); }
   const org = await Organization.findById(orgId).select('_id name isActive');
   if (!org || !org.isActive) { res.status(400); throw new Error('That college does not exist'); }
+
+  if (isPostOnly) {
+    const available = await platformsForOrganization(org._id);
+    const unknown = chosenPlatforms.filter((p) => !available.includes(p));
+    if (unknown.length) { res.status(400); throw new Error(`Your college does not have ${unknown.join(', ')} set up`); }
+  }
 
   let due;
   if (neededBy) {
@@ -188,8 +248,8 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     organization: org._id,
     title: finalTitle,
     details: String(details || '').trim(),
-    workType: workType === 'DIGITAL_MEDIA' ? 'DIGITAL_MEDIA' : 'PRINT_MEDIA',
-    workCategory: String(workCategory).trim(),
+    workType: finalWorkType,
+    workCategory: String(finalWorkCategory).trim(),
     workItem: String(workItem).trim(),
     event: hasEvent,
     department: String(department).trim(),
@@ -201,6 +261,13 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     priority,
     neededBy: due,
     raisedBy: req.user._id,
+    postOnly: isPostOnly,
+    // Everything else starts on Designs to be Done, untouched. A postOnly ask
+    // skips straight to the post half — the same stage and status a design
+    // reaches once its coordinator has accepted it and handed it to posting.
+    workflowStage: isPostOnly ? 'POST_OPEN' : 'DESIGN_OPEN',
+    status: isPostOnly ? 'WITH_SOCIAL_HANDLER' : 'OPEN',
+    postPlatforms: isPostOnly ? chosenPlatforms : [],
   });
 
   const attachments = Array.isArray(req.files) ? req.files : [];
@@ -225,7 +292,11 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     description: `Raised a ${category.toLowerCase()} request: "${created.title}"`,
     entityType: 'InstitutionRequest', entityId: created._id,
   });
-  await notifyDesignPool({ request: created, orgName: org.name, raisedBy: req.user });
+  if (isPostOnly) {
+    await notifyPostPool({ request: created, orgName: org.name, raisedBy: req.user });
+  } else {
+    await notifyDesignPool({ request: created, orgName: org.name, raisedBy: req.user });
+  }
 
   const [request] = await attachAssignedUsers([await populate(InstitutionRequest.findById(created._id)).lean()]);
   res.status(201).json({ success: true, request });
@@ -247,7 +318,12 @@ export const deleteInstitutionRequest = asyncHandler(async (req, res) => {
   if (!req.user.isSuperAdmin && !mine) {
     res.status(403); throw new Error('Only the person who raised this can withdraw it');
   }
-  if (mine && !req.user.isSuperAdmin && request.status !== 'OPEN') {
+  // A postOnly request starts at status WITH_SOCIAL_HANDLER — it has no design
+  // half to sit OPEN through — so `status !== 'OPEN'` alone would block it from
+  // ever being withdrawn, even the instant after it was raised. Its equivalent of
+  // "still open" is workflowStage POST_OPEN: nobody has acknowledged it yet.
+  const stillOpen = request.status === 'OPEN' || (request.postOnly && request.workflowStage === 'POST_OPEN');
+  if (mine && !req.user.isSuperAdmin && !stillOpen) {
     res.status(400); throw new Error('It has already been picked up — talk to the admin instead of withdrawing it');
   }
   await request.deleteOne();

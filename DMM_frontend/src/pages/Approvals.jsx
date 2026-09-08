@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   Plus, Search, Inbox, Images as ImagesIcon, Play, Layers, Clock, RefreshCw,
-  CheckCircle2, Send, ChevronLeft, ChevronRight, Palette, UserCheck, FileText, MessageSquarePlus,
+  CheckCircle2, Send, ChevronLeft, ChevronRight, Palette, UserCheck, FileText, MessageSquarePlus, AlertTriangle,
 } from 'lucide-react';
 import { approvalApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -106,7 +106,7 @@ export default function Approvals() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.type, filters.status, isDesigner]);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['approvals', filters, page, rows],
     queryFn: () => approvalApi.list({ ...filters, page, limit: rows }),
     placeholderData: (prev) => prev,
@@ -279,7 +279,18 @@ export default function Approvals() {
           </table>
         </div>
 
-        {!isLoading && requests.length === 0 && (
+        {!isLoading && isError && (
+          <div className="p-4">
+            <EmptyState
+              icon={AlertTriangle}
+              title="Couldn't load this"
+              description="There was a problem loading your approvals — check your connection and try again."
+              action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>}
+            />
+          </div>
+        )}
+
+        {!isLoading && !isError && requests.length === 0 && (
           <div className="p-4">
             <EmptyState
               icon={Inbox}

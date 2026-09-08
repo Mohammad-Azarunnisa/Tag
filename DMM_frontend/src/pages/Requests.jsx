@@ -4,9 +4,9 @@ import toast from 'react-hot-toast';
 import {
   MessageSquarePlus, Plus, Clock3, Eye, CheckCircle2, XCircle, Trash2, Flame, BriefcaseBusiness,
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
-  Paperclip, ExternalLink, List, LayoutGrid, Send,
+  Paperclip, ExternalLink, List, LayoutGrid, Send, Palette, Sparkles,
 } from 'lucide-react';
-import { institutionRequestApi } from '../api/endpoints.js';
+import { institutionRequestApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
@@ -42,6 +42,14 @@ const StatusChip = ({ status }) => {
     </span>
   );
 };
+
+// Flags a Social Media Posting request — the college already had the
+// creative and only asked for it to be posted, so it skipped design entirely.
+const PostOnlyBadge = () => (
+  <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-teal-100 px-2.5 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+    <Sparkles className="h-3.5 w-3.5" /> Social Media Posting
+  </span>
+);
 
 // What the college is asking for. The icon does the explaining, so the form stays short.
 const CATEGORIES = [
@@ -148,11 +156,25 @@ const DIGITAL_MEDIA_OPTIONS = {
   ],
 };
 
+// A Social Media Posting request means "I already have the creative, just
+// publish it" — unlike a Design Request, there's nothing to design, so this
+// is always a ready-made social post. Deliberately not the fuller
+// DIGITAL_MEDIA_OPTIONS['Social Media'] list (WhatsApp Creatives, Story
+// Designs, etc.) — those are things to ask a designer to *create*, not what
+// a college already has in hand.
+const POST_ONLY_ITEM = 'Social Media Posts';
+
 const DEFAULT_BRIEF = {
+  // 'DESIGN' goes to Designs to be Done, like every request always has.
+  // 'POST_ONLY' is for a creative the college already has — nothing to design,
+  // it should just go straight to a social media handler to publish.
+  requestKind: 'DESIGN',
   title: '',
   workType: 'PRINT_MEDIA',
   workCategory: 'Print Media',
   workItem: PRINT_MEDIA_OPTIONS[0],
+  postItem: POST_ONLY_ITEM,
+  platforms: [],
   department: '',
   details: '',
   event: false,
@@ -246,7 +268,7 @@ export default function Requests() {
     <div>
       <PageHeader
         title="Raise a Request"
-        subtitle={`Ask for what ${user?.organization?.name || 'your college'} needs. Every request goes straight to the designers on Designs to be Done — you will be notified as it moves.`}
+        subtitle={`Ask for what ${user?.organization?.name || 'your college'} needs — raise a Design Request for something to be made, or a Social Media Posting request for a creative you already have. You will be notified as it moves.`}
         actions={canRaise && <Button onClick={() => setAsking(true)}><Plus className="h-4 w-4" /> New request</Button>}
       />
 
@@ -349,7 +371,7 @@ export default function Requests() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredRequests.map((r) => {
-                  const canWithdraw = canRaise && r.status === 'OPEN' && String(r.raisedBy?._id) === String(user?._id);
+                  const canWithdraw = canRaise && stillOpen(r) && String(r.raisedBy?._id) === String(user?._id);
                   return (
                     <tr key={r._id} className="hover:bg-slate-50/70 dark:hover:bg-slate-900/40">
                       <td className="px-4 py-3">
@@ -366,7 +388,10 @@ export default function Requests() {
                         {formatDate(r.createdAt)}
                       </td>
                       <td className="px-4 py-3">
-                        <StatusChip status={r.status} />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusChip status={r.status} />
+                          {r.postOnly && <PostOnlyBadge />}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {PRIORITY_CLS[r.priority] ? (
@@ -418,7 +443,7 @@ export default function Requests() {
           {filteredRequests.map((r) => {
             const Icon = categoryIcon(r.category);
             const overdue = r.neededBy && new Date(r.neededBy) < new Date() && inFlight(r.status);
-            const canWithdraw = canRaise && r.status === 'OPEN' && String(r.raisedBy?._id) === String(user?._id);
+            const canWithdraw = canRaise && stillOpen(r) && String(r.raisedBy?._id) === String(user?._id);
             return (
               <Card key={r._id} className="p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -453,6 +478,7 @@ export default function Requests() {
                       </span>
                     )}
                     <StatusChip status={r.status} />
+                    {r.postOnly && <PostOnlyBadge />}
                   </div>
                 </div>
 
@@ -509,7 +535,7 @@ export default function Requests() {
       {viewing && (
         <RequestDetailModal
           request={viewing}
-          canWithdraw={canRaise && viewing.status === 'OPEN' && String(viewing.raisedBy?._id) === String(user?._id)}
+          canWithdraw={canRaise && stillOpen(viewing) && String(viewing.raisedBy?._id) === String(user?._id)}
           withdrawing={withdrawMut.isPending}
           onWithdraw={() => {
             if (!window.confirm(`Withdraw "${viewing.title}"?`)) return;
@@ -529,6 +555,11 @@ export default function Requests() {
 // is left undefined rather than empty when nothing was uploaded.
 const attachmentsOf = (r) => (Array.isArray(r?.attachments) ? r.attachments : []);
 const assignedUsersOf = (r) => (Array.isArray(r?.assignedUsers) ? r.assignedUsers : []);
+// Still withdrawable — nobody has picked it up yet. A postOnly request starts
+// at status WITH_SOCIAL_HANDLER (it has no design half to sit OPEN through), so
+// its equivalent of "still open" is workflowStage POST_OPEN. Mirrors the same
+// check the server makes before it allows a withdrawal.
+const stillOpen = (r) => r.status === 'OPEN' || (r.postOnly && r.workflowStage === 'POST_OPEN');
 
 // An attachment previews inline when it is an image; anything else (a PDF, a
 // spreadsheet) gets a labelled tile that opens in a new tab.
@@ -562,6 +593,7 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
       <div className="space-y-5">
         <div className="flex flex-wrap items-center gap-2">
           <StatusChip status={r.status} />
+          {r.postOnly && <PostOnlyBadge />}
           {PRIORITY_CLS[r.priority] && (
             <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold', PRIORITY_CLS[r.priority])}>
               {r.priority === 'URGENT' && <Flame className="h-3 w-3" />} {r.priority.charAt(0) + r.priority.slice(1).toLowerCase()}
@@ -584,6 +616,7 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
           {brief && <Detail label="Work">{brief}</Detail>}
           {r.department && <Detail label="Department">{r.department}</Detail>}
           {r.neededBy && <Detail label="Needed by">{formatDate(r.neededBy)}</Detail>}
+          {(r.postPlatforms?.length || 0) > 0 && <Detail label="Pages to post on">{r.postPlatforms.join(', ')}</Detail>}
           {assignedUsersOf(r).length > 0 && <Detail label="Assigned to">{assignedUsersOf(r).map((u) => u.name).join(', ')}</Detail>}
         </div>
 
@@ -678,6 +711,23 @@ function AskModal({ onClose, onSaved }) {
   const [form, setForm] = useState(DEFAULT_BRIEF);
   const selectedDigitalItems = DIGITAL_MEDIA_OPTIONS[form.workCategory] || DIGITAL_MEDIA_OPTIONS['Social Media'];
   const selectedDigitalItem = selectedDigitalItems.includes(form.workItem) ? form.workItem : selectedDigitalItems[0];
+  const postOnly = form.requestKind === 'POST_ONLY';
+
+  // The pages this college actually runs, for "where should this go?" — only
+  // needed for a postOnly request, which has no design-acceptance step to ask at.
+  const { data: orgOptions } = useQuery({
+    queryKey: ['org-options-mine'],
+    queryFn: () => organizationApi.myOptions(),
+    enabled: postOnly,
+    staleTime: 5 * 60 * 1000,
+  });
+  const availablePlatforms = orgOptions?.organizations?.[0]?.platforms || [];
+
+  const setRequestKind = (requestKind) => setForm((current) => ({ ...current, requestKind, platforms: [] }));
+  const togglePlatform = (p) => setForm((current) => ({
+    ...current,
+    platforms: current.platforms.includes(p) ? current.platforms.filter((x) => x !== p) : [...current.platforms, p],
+  }));
 
   const addAttachments = (fileList) => {
     const incoming = Array.from(fileList || []);
@@ -732,9 +782,19 @@ function AskModal({ onClose, onSaved }) {
     mutationFn: () => {
       const payload = new FormData();
       payload.append('title', form.title.trim());
-      payload.append('workType', form.workType);
-      payload.append('workCategory', form.workCategory);
-      payload.append('workItem', form.workItem);
+      if (postOnly) {
+        // Forced to digital/Social Media server-side too — sent here only so the
+        // brief preview and any validation error read consistently before that.
+        payload.append('postOnly', 'true');
+        payload.append('workType', 'DIGITAL_MEDIA');
+        payload.append('workCategory', 'Social Media');
+        payload.append('workItem', form.postItem);
+        form.platforms.forEach((p) => payload.append('platforms', p));
+      } else {
+        payload.append('workType', form.workType);
+        payload.append('workCategory', form.workCategory);
+        payload.append('workItem', form.workItem);
+      }
       payload.append('department', form.department);
       payload.append('details', form.details);
       payload.append('event', String(form.event));
@@ -748,13 +808,15 @@ function AskModal({ onClose, onSaved }) {
       form.attachments.forEach((file) => payload.append('attachments', file));
       return institutionRequestApi.create(payload);
     },
-    onSuccess: () => { toast.success('Sent to Designs to be Done'); onSaved(); },
+    onSuccess: () => { toast.success(postOnly ? 'Sent to To Be Posted' : 'Sent to Designs to be Done'); onSaved(); },
     onError: (e) => toast.error(e.response?.data?.message || 'Could not send that'),
   });
 
-  const summary = form.workType === 'PRINT_MEDIA'
-    ? `Print media · ${form.workItem}`
-    : `Digital media · ${form.workCategory} · ${selectedDigitalItem}`;
+  const summary = postOnly
+    ? `Social Media Posting · ${form.postItem}`
+    : form.workType === 'PRINT_MEDIA'
+      ? `Print media · ${form.workItem}`
+      : `Digital media · ${form.workCategory} · ${selectedDigitalItem}`;
 
   const submit = (e) => {
     e.preventDefault();
@@ -764,6 +826,10 @@ function AskModal({ onClose, onSaved }) {
       toast.error('Fill in the event details');
       return;
     }
+    if (postOnly) {
+      if (!form.attachments.length) { toast.error('Attach the ready-to-post file(s)'); return; }
+      if (!form.platforms.length) { toast.error('Pick at least one page to post it on'); return; }
+    }
     mutation.mutate();
   };
 
@@ -771,31 +837,88 @@ function AskModal({ onClose, onSaved }) {
     <Modal open onClose={onClose} title="Raise a request" size="lg">
       <form onSubmit={submit} className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Select label="Work type" value={form.workType} onChange={(e) => setWorkType(e.target.value)}>
-            <option value="PRINT_MEDIA">Print media</option>
-            <option value="DIGITAL_MEDIA">Digital media</option>
-          </Select>
-          {form.workType === 'PRINT_MEDIA' ? (
-            <Select label="Print media option" value={form.workItem} onChange={(e) => setForm({ ...form, workCategory: 'Print Media', workItem: e.target.value })}>
-              {PRINT_MEDIA_OPTIONS.map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </Select>
-          ) : (
-            <Select label="Digital category" value={form.workCategory} onChange={(e) => setDigitalCategory(e.target.value)}>
-              {Object.keys(DIGITAL_MEDIA_OPTIONS).map((category) => (
-                <option key={category} value={category}>{category}</option>
-              ))}
-            </Select>
-          )}
+          <button type="button" onClick={() => setRequestKind('DESIGN')}
+            className={cn('rounded-2xl border-2 p-3 text-left transition',
+              !postOnly ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 hover:border-brand-300 dark:border-slate-700')}>
+            <p className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-white">
+              <Palette className="h-4 w-4" /> Design Request
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">Goes to Designs to be Done for a designer to make.</p>
+          </button>
+          <button type="button" onClick={() => setRequestKind('POST_ONLY')}
+            className={cn('rounded-2xl border-2 p-3 text-left transition',
+              postOnly ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 hover:border-brand-300 dark:border-slate-700')}>
+            <p className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-white">
+              <Sparkles className="h-4 w-4" /> Social Media Posting
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">Already have the creative? Skips design, straight to a social media handler.</p>
+          </button>
         </div>
 
-        {form.workType === 'DIGITAL_MEDIA' && (
-          <Select label="Digital media option" value={selectedDigitalItem} onChange={(e) => setForm({ ...form, workItem: e.target.value })}>
-            {selectedDigitalItems.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </Select>
+        {postOnly ? (
+          <>
+            {/* Not a real choice — Social Media Posting only ever means a
+                ready-made social post, so this just states that rather than
+                asking the coordinator to pick from a dropdown of one. */}
+            <div>
+              <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">What kind of post is it?</span>
+              <div className="input-base flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+                <Sparkles className="h-3.5 w-3.5 text-brand-500" /> {POST_ONLY_ITEM}
+              </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Which pages should this go out on?</label>
+              {availablePlatforms.length === 0 ? (
+                <p className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                  Your college has no social pages set up yet — ask the admin to add them before sending this.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {availablePlatforms.map((p) => {
+                    const on = form.platforms.includes(p);
+                    return (
+                      <button key={p} type="button" onClick={() => togglePlatform(p)}
+                        className={cn('inline-flex items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-sm font-semibold transition',
+                          on ? 'border-brand-500 bg-brand-50/60 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                            : 'border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-700 dark:text-slate-300')}>
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select label="Work type" value={form.workType} onChange={(e) => setWorkType(e.target.value)}>
+                <option value="PRINT_MEDIA">Print media</option>
+                <option value="DIGITAL_MEDIA">Digital media</option>
+              </Select>
+              {form.workType === 'PRINT_MEDIA' ? (
+                <Select label="Print media option" value={form.workItem} onChange={(e) => setForm({ ...form, workCategory: 'Print Media', workItem: e.target.value })}>
+                  {PRINT_MEDIA_OPTIONS.map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </Select>
+              ) : (
+                <Select label="Digital category" value={form.workCategory} onChange={(e) => setDigitalCategory(e.target.value)}>
+                  {Object.keys(DIGITAL_MEDIA_OPTIONS).map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </Select>
+              )}
+            </div>
+
+            {form.workType === 'DIGITAL_MEDIA' && (
+              <Select label="Digital media option" value={selectedDigitalItem} onChange={(e) => setForm({ ...form, workItem: e.target.value })}>
+                {selectedDigitalItems.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </Select>
+            )}
+          </>
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -837,16 +960,19 @@ function AskModal({ onClose, onSaved }) {
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
-            Notes for the designer <span className="font-normal text-slate-400">· optional</span>
+            {postOnly ? 'Notes for the handler' : 'Notes for the designer'} <span className="font-normal text-slate-400">· optional</span>
           </label>
           <textarea className="input-base min-h-[110px]" value={form.details}
             onChange={(e) => setForm({ ...form, details: e.target.value })}
-            placeholder="Add anything that matters to the brief — quantities, audience, branding notes, deadlines." />
+            placeholder={postOnly
+              ? 'Add anything the handler should know — a caption idea, hashtags, timing.'
+              : 'Add anything that matters to the brief — quantities, audience, branding notes, deadlines.'} />
         </div>
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
-            Attach reference files <span className="font-normal text-slate-400">· optional</span>
+            {postOnly ? 'Attach the ready-to-post file(s)' : 'Attach reference files'}{' '}
+            <span className="font-normal text-slate-400">{postOnly ? '· required' : '· optional'}</span>
           </label>
           <input
             type="file"
@@ -859,7 +985,11 @@ function AskModal({ onClose, onSaved }) {
             }}
             className="block w-full rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-brand-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:file:bg-brand-500/10 dark:file:text-brand-300"
           />
-          <p className="mt-1.5 text-xs text-slate-400">Up to {maxAttachments} images, videos, PDFs, ZIP archives, or office files.</p>
+          <p className="mt-1.5 text-xs text-slate-400">
+            {postOnly
+              ? `Up to ${maxAttachments} files — this is exactly what goes out, so send the finished creative.`
+              : `Up to ${maxAttachments} images, videos, PDFs, ZIP archives, or office files.`}
+          </p>
           {form.attachments.length > 0 && (
             <div className="mt-2 space-y-2">
               <div className="flex items-center justify-between">
@@ -902,7 +1032,9 @@ function AskModal({ onClose, onSaved }) {
         </div>
 
         <p className="text-xs text-slate-400">
-          This goes straight onto Designs to be Done for a designer to pick up. You will get a notification as it moves.
+          {postOnly
+            ? 'This goes straight to a social media handler for the pages you picked — no design step in between. You will get a notification as it moves.'
+            : 'This goes straight onto Designs to be Done for a designer to pick up. You will get a notification as it moves.'}
         </p>
 
         <div className="flex justify-end gap-2 pt-2">

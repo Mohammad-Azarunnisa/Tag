@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  Flag, Plus, MapPin, Pencil, Trash2, History, Download, Camera, CalendarDays, ExternalLink,
+  Flag, Plus, MapPin, Pencil, Trash2, History, Download, Camera, CalendarDays, ExternalLink, AlertTriangle,
 } from 'lucide-react';
 import { signageApi, eventApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -37,7 +37,7 @@ export default function Signage() {
   const [placingOn, setPlacingOn] = useState(null); // null | {} (pick stand) | location (preset)
   const [historyOf, setHistoryOf] = useState(null); // null | location
 
-  const { data, isLoading } = useQuery({ queryKey: ['signage-locations', filters], queryFn: () => signageApi.locations(filters) });
+  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ['signage-locations', filters], queryFn: () => signageApi.locations(filters) });
   const locations = data?.locations || [];
   const counts = data?.counts || { total: 0, occupied: 0, empty: 0, attention: 0 };
 
@@ -114,6 +114,10 @@ export default function Signage() {
         ) : (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
         )
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load signage locations"
+          description="There was a problem loading your signage stands — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : locations.length === 0 ? (
         <EmptyState icon={Flag} title="No signage locations yet"
           description="Add each banner stand once (its code, place and fixed size). Then track every banner mounted on it over time."

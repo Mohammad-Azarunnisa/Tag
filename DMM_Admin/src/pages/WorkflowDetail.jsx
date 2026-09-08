@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Check, X, Send, Plus, Trash2, MessageSquareWarning, CheckCircle2,
-  UserCheck, ThumbsUp, CalendarClock, FileText, Paperclip, Clock3, Palette, Upload,
+  UserCheck, ThumbsUp, CalendarClock, FileText, Paperclip, Clock3, Palette, Upload, Ban,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -104,7 +104,7 @@ function Media({ items = [], onOpen }) {
       {items.map((m) => (
         <button key={m._id || m.url} type="button" onClick={() => onOpen?.(m)}
           className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-          {isVideo(m.url) ? (
+          {isVideo(m) ? (
             <video src={m.url} className="h-32 w-full object-cover" muted />
           ) : m.mediaType === 'document' ? (
             <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
@@ -380,6 +380,44 @@ function ApproveConfirmModal({ half, coordinatorName, onClose, onConfirm, saving
   );
 }
 
+/**
+ * Says out loud what cancelling does, before it happens.
+ *
+ * Only offered before anyone has acknowledged either half, so this never pulls
+ * someone off work they have already started — it means telling the
+ * coordinator their ask is not going ahead, not stopping a job mid-way.
+ */
+function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
+  const [reason, setReason] = useState('');
+  return (
+    <Modal open onClose={onClose} title="Cancel this request?">
+      <div className="space-y-4">
+        <p className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50/70 p-3 text-sm text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+          <Ban className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Nobody has taken this on yet. Cancelling tells{' '}
+            <span className="font-bold">{coordinatorName || 'the coordinator'}</span> it will not be going
+            ahead, and takes it off both boards.
+          </span>
+        </p>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
+            Reason <span className="font-normal text-slate-400">· optional, shown to the coordinator</span>
+          </span>
+          <textarea className="input-base min-h-[90px]" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Not in our scope of work, not relevant to the Branding/Social Media Team, duplicate request" />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Keep it</Button>
+          <Button variant="danger" loading={saving} onClick={() => onConfirm(reason.trim())}>
+            <Ban className="h-4 w-4" /> Cancel the request
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function WorkflowDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -387,6 +425,7 @@ export default function WorkflowDetail() {
   const { user } = useAuthStore();
   const [changesOpen, setChangesOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [lightbox, setLightbox] = useState(null);
 
   const { data, isLoading } = useQuery({
@@ -403,10 +442,16 @@ export default function WorkflowDetail() {
     qc.invalidateQueries({ queryKey: ['admin-workflow'] });
     setChangesOpen(false);
     setApproveOpen(false);
+    setCancelOpen(false);
   };
   const reviewMut = useMutation({
     mutationFn: ({ action, feedbackPoints }) => workflowApi.review(id, action, feedbackPoints),
     onSuccess: (_r, vars) => done(vars.action === 'APPROVE' ? 'Approved — sent to the coordinator' : 'Sent back with your notes'),
+    onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
+  });
+  const cancelMut = useMutation({
+    mutationFn: (reason) => workflowApi.cancel(id, reason),
+    onSuccess: () => done('Request cancelled'),
     onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
   });
 
@@ -419,6 +464,7 @@ export default function WorkflowDetail() {
   const track = onPostHalf ? POST_TRACK : DESIGN_TRACK;
   const trackIndex = track.indexOf(stage);
   const canReview = (can.reviewDesign || can.reviewPost) && !user?.viewOnly;
+  const canCancel = can.cancel && !user?.viewOnly;
 
   return (
     <div>
@@ -441,15 +487,24 @@ export default function WorkflowDetail() {
             {item.raisedBy?.name ? ` by ${item.raisedBy.name}` : ''}
           </p>
         </div>
-        {canReview && (
+        {(canReview || canCancel) && (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button variant="success" loading={reviewMut.isPending && reviewMut.variables?.action === 'APPROVE'}
-              onClick={() => setApproveOpen(true)}>
-              <Check className="h-4 w-4" /> Approve
-            </Button>
-            <Button variant="danger" onClick={() => setChangesOpen(true)}>
-              <X className="h-4 w-4" /> Request changes
-            </Button>
+            {canReview && (
+              <>
+                <Button variant="success" loading={reviewMut.isPending && reviewMut.variables?.action === 'APPROVE'}
+                  onClick={() => setApproveOpen(true)}>
+                  <Check className="h-4 w-4" /> Approve
+                </Button>
+                <Button variant="danger" onClick={() => setChangesOpen(true)}>
+                  <X className="h-4 w-4" /> Request changes
+                </Button>
+              </>
+            )}
+            {canCancel && (
+              <Button variant="danger" onClick={() => setCancelOpen(true)}>
+                <Ban className="h-4 w-4" /> Cancel request
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -461,6 +516,13 @@ export default function WorkflowDetail() {
             Approving sends it to {item.raisedBy?.name || 'the coordinator'} to confirm.
             Requesting changes sends it back to {(onPostHalf ? item.handler?.name : item.designer?.name) || 'whoever is working on it'}.
           </p>
+        </div>
+      )}
+
+      {canCancel && (
+        <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+          <p className="font-bold">Nobody has taken this on yet.</p>
+          <p className="mt-0.5">You can cancel it before a {onPostHalf ? 'social media handler' : 'designer'} acknowledges it.</p>
         </div>
       )}
 
@@ -484,6 +546,9 @@ export default function WorkflowDetail() {
           <p className="mt-2 text-xs text-slate-400">
             Not social media work — finished when the coordinator confirmed the design, with nothing to post.
           </p>
+        )}
+        {stage === 'CANCELLED' && (
+          <p className="mt-2 text-xs text-slate-400">Cancelled before anyone took it on.</p>
         )}
       </Card>
 
@@ -531,6 +596,17 @@ export default function WorkflowDetail() {
               </div>
             )}
           </Card>
+
+          {stage === 'CANCELLED' && (
+            <Card className="border-rose-200 p-4 dark:border-rose-500/30">
+              <p className="mb-1.5 inline-flex items-center gap-1.5 text-sm font-bold text-rose-700 dark:text-rose-300">
+                <Ban className="h-4 w-4" /> Cancelled
+                {item.reviewedBy?.name ? ` by ${item.reviewedBy.name}` : ''}
+                {item.reviewedAt ? ` · ${timeAgo(item.reviewedAt)}` : ''}
+              </p>
+              {item.response && <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{item.response}</p>}
+            </Card>
+          )}
 
           {item.design && (
             <Card className="p-4">
@@ -581,10 +657,18 @@ export default function WorkflowDetail() {
         <ChangesModal saving={reviewMut.isPending} onClose={() => setChangesOpen(false)}
           onSubmit={(points) => reviewMut.mutate({ action: 'CHANGES', feedbackPoints: points })} />
       )}
+      {cancelOpen && (
+        <CancelConfirmModal
+          coordinatorName={item.raisedBy?.name}
+          saving={cancelMut.isPending}
+          onClose={() => setCancelOpen(false)}
+          onConfirm={(reason) => cancelMut.mutate(reason)}
+        />
+      )}
 
       {lightbox && (
         <Modal open onClose={() => setLightbox(null)} title={lightbox.name || 'Preview'} size="lg">
-          {isVideo(lightbox.url)
+          {isVideo(lightbox)
             ? <video src={lightbox.url} controls className="max-h-[70vh] w-full rounded-xl" />
             : <img src={lightbox.url} alt={lightbox.name || ''} className="max-h-[70vh] w-full rounded-xl object-contain" />}
           <div className="mt-3 flex justify-end">

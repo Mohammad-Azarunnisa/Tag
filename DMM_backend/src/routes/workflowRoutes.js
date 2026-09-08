@@ -7,6 +7,7 @@ import {
   reviewWorkflowItem,
   confirmWorkflowItem,
   markWorkflowPosted,
+  cancelWorkflowItem,
 } from '../controllers/workflowController.js';
 import { protect } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
@@ -36,5 +37,9 @@ router.put('/:id/confirm', confirmWorkflowItem);
 
 // The handler, once the coordinator has released it: posted now, or booked.
 router.put('/:id/posted', markWorkflowPosted);
+
+// Admin / Super Admin: pull the request back, but only before a designer or
+// handler has acknowledged it — see cancelWorkflowItem for the stage guard.
+router.put('/:id/cancel', cancelWorkflowItem);
 
 export default router;

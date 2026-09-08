@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Users as UsersIcon, Search, Mail, Phone, Crown, Palette, Send, ClipboardList } from 'lucide-react';
+import { Users as UsersIcon, Search, Mail, Phone, Crown, Palette, Send, ClipboardList, AlertTriangle } from 'lucide-react';
 import { userApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
+import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
 import { useAuthStore } from '../store/authStore.js';
 import { cn } from '../lib/utils.js';
@@ -42,7 +43,7 @@ export default function Directory() {
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('All');
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['directory'],
     queryFn: () => userApi.directory(),
   });
@@ -93,6 +94,11 @@ export default function Directory() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48" />)}
         </div>
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle}
+          title="Couldn't load this"
+          description="There was a problem loading your directory — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : people.length === 0 ? (
         <EmptyState icon={UsersIcon}
           title={all.length ? 'Nobody matches that' : 'No people to show yet'}

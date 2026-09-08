@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  Plus, Search, Download, Trash2, Pencil, FileImage, Eye, FolderOpen, LayoutGrid, List, Globe,
+  Plus, Search, Download, Trash2, Pencil, FileImage, Eye, FolderOpen, LayoutGrid, List, Globe, AlertTriangle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import PageHeader from './layout/PageHeader.jsx';
@@ -41,7 +41,7 @@ export default function RepositoryPage({ cfg }) {
   });
   const orgs = orgData?.organizations || [];
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [cfg.key, { search, category, orgFilter }],
     queryFn: () => cfg.api.list({ search, category, organizationId: orgFilter || undefined, limit: 48 }),
   });
@@ -120,6 +120,10 @@ export default function RepositoryPage({ cfg }) {
         ) : (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
         )
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load this"
+          description={`There was a problem loading your ${cfg.plural.toLowerCase()} — check your connection and try again.`}
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : items.length === 0 ? (
         <EmptyState icon={FolderOpen} title={`No ${cfg.plural.toLowerCase()} found`}
           description="Try adjusting filters or upload a new one."

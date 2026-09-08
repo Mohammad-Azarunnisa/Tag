@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   Palette, Send, Search, Eye, ThumbsUp, Clock3, CheckCircle2, Circle,
-  UserCheck, Flame, CalendarClock, Paperclip,
+  UserCheck, Flame, CalendarClock, Paperclip, Sparkles, AlertTriangle,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -59,7 +59,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
   const { user } = useAuthStore();
   const [filters, setFilters] = useState({ stage: 'All', search: '' });
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['workflow', board],
     queryFn: () => workflowApi.list({ board }),
   });
@@ -130,6 +130,10 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
 
       {isLoading ? (
         <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-28" />)}</div>
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load this board"
+          description="There was a problem loading this workflow board — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : shown.length === 0 ? (
         <EmptyState icon={cfg.icon} title={cfg.empty}
           description="Requests appear here as soon as a college raises them." />
@@ -152,6 +156,12 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
                       {URGENCY[i.priority] && (
                         <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold', URGENCY[i.priority].cls)}>
                           <Flame className="h-3 w-3" /> {URGENCY[i.priority].label}
+                        </span>
+                      )}
+                      {/* Already had the creative — this never touched a designer. */}
+                      {i.postOnly && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[11px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+                          <Sparkles className="h-3 w-3" /> Social Media Posting
                         </span>
                       )}
                     </div>

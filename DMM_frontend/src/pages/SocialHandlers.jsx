@@ -1,18 +1,19 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
-import { Share2, Mail, Phone, Users, ExternalLink, Linkedin, UserCheck, Copy } from 'lucide-react';
+import { Share2, Mail, Phone, Users, ExternalLink, Linkedin, UserCheck, Copy, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { libraryApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
+import { Button } from '../components/ui/Button.jsx';
 import { Card, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 
 export default function SocialHandlers() {
   const { user } = useAuthStore();
   const blocked = user && user.role !== 'CEO';
-  const { data, isLoading } = useQuery({ queryKey: ['social-accounts'], queryFn: () => libraryApi.socialAccounts(), enabled: !blocked });
+  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ['social-accounts'], queryFn: () => libraryApi.socialAccounts(), enabled: !blocked });
   const [contact, setContact] = useState(null);
   if (blocked) return <Navigate to="/dashboard" replace />;
   const accounts = data?.accounts || [];
@@ -22,6 +23,10 @@ export default function SocialHandlers() {
       <PageHeader title="Social Media Handlers" subtitle="Who manages each of your social platforms — click any name to see their contact details." />
       {isLoading ? (
         <div className="grid gap-4 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48" />)}</div>
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load this"
+          description="There was a problem loading your social media handlers — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : accounts.length === 0 ? (
         <EmptyState icon={Share2} title="No accounts listed yet" description="Your admin hasn't added social media handler details for your organization." />
       ) : (

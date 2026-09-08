@@ -49,6 +49,11 @@ export default function Users() {
   const [modal, setModal] = useState(null);
   const [menuFor, setMenuFor] = useState(null);
   const [view, setView] = useState(() => (localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list'));
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  // Any filter change restarts from page 1 so pagination never points past the
+  // (now smaller) results — mirrors the same rule Approvals uses.
+  const updateFilters = (patch) => { setFilters((f) => ({ ...f, ...patch })); setPage(1); };
 
   const pickView = (next) => {
     setView(next);
@@ -56,13 +61,21 @@ export default function Users() {
     localStorage.setItem(VIEW_KEY, next);
   };
 
-  const { data, isLoading } = useQuery({ queryKey: ['users', filters], queryFn: () => userApi.list(filters) });
+  const { data, isLoading } = useQuery({
+    queryKey: ['users', filters, page, limit],
+    queryFn: () => userApi.list({ ...filters, page, limit }),
+    placeholderData: (prev) => prev,
+  });
   const users = data?.users || [];
   const { data: orgData } = useQuery({ queryKey: ['organizations', 'all'], queryFn: () => organizationApi.list() });
   const orgs = orgData?.organizations || [];
   // Counted server-side out of everything in view except the role tile, so
   // picking one tile never drops the others to zero.
   const roleCounts = data?.roleCounts || {};
+  const matched = data?.matched ?? users.length;
+  const pages = data?.pages || 1;
+  const firstRow = matched === 0 ? 0 : (page - 1) * limit + 1;
+  const lastRow = Math.min(page * limit, matched);
 
   const removeMut = useMutation({
     mutationFn: (id) => userApi.remove(id),
@@ -103,7 +116,7 @@ export default function Users() {
   const tileActive = (s) => (s.role === 'All' ? filters.role === 'All' : filters.role === s.role);
   const pickRole = (s) => {
     if (!s.role) return;
-    setFilters({ ...filters, role: s.role === 'All' || filters.role === s.role ? 'All' : s.role });
+    updateFilters({ role: s.role === 'All' || filters.role === s.role ? 'All' : s.role });
   };
 
   // The same row menu drives both layouts, so a card offers exactly what a table
@@ -156,16 +169,16 @@ export default function Users() {
       <div className="mb-5 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input placeholder="Search by name or email..." className="pl-9" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
+          <Input placeholder="Search by name or email..." className="pl-9" value={filters.search} onChange={(e) => updateFilters({ search: e.target.value })} />
         </div>
-        <Select className="sm:w-44" value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })}>
+        <Select className="sm:w-44" value={filters.role} onChange={(e) => updateFilters({ role: e.target.value })}>
           <option value="All">All Roles</option>
           {/* Filtering to Super Admin can only ever come back empty for anyone
               but the super admin, so it is not offered to them. */}
           {ROLE_FILTERS.filter((r) => r.value !== 'SUPER' || me?.isSuperAdmin)
             .map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </Select>
-        <Select className="sm:w-52" value={filters.organization} onChange={(e) => setFilters({ ...filters, organization: e.target.value })}>
+        <Select className="sm:w-52" value={filters.organization} onChange={(e) => updateFilters({ organization: e.target.value })}>
           <option value="All">All colleges</option>
           {orgs.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
         </Select>
@@ -273,6 +286,24 @@ export default function Users() {
             </table>
           </div>
         </Card>
+      )}
+
+      {!isLoading && users.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs text-slate-400">Viewing {firstRow}–{lastRow} of {matched}</p>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+            <span className="whitespace-nowrap text-xs font-medium text-slate-500 dark:text-slate-400">Page {data?.page || page} of {pages}</span>
+            <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            Rows per page
+            <select className="input-base h-9 w-auto cursor-pointer py-0 text-xs" value={limit}
+              onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}>
+              {[10, 25, 50].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        </div>
       )}
 
       {modal?.type === 'create' && <UserFormModal onClose={() => setModal(null)} onSaved={() => { setModal(null); qc.invalidateQueries({ queryKey: ['users'] }); }} />}

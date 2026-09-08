@@ -346,4 +346,7 @@ export const workflowApi = {
   list: (params) => api.get('/workflow', { params }).then((r) => r.data),
   get: (id) => api.get(`/workflow/${id}`).then((r) => r.data),
   review: (id, action, feedbackPoints) => api.put(`/workflow/${id}/review`, { action, feedbackPoints }).then((r) => r.data),
+  // Pulling a request back before a designer or handler has acknowledged it —
+  // the console's own intervention point, gone once someone has taken it on.
+  cancel: (id, reason) => api.put(`/workflow/${id}/cancel`, { reason }).then((r) => r.data),
 };

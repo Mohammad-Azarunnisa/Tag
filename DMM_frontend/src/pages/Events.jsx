@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen, ImagePlus } from 'lucide-react';
+import { Camera, Plus, ExternalLink, MapPin, CalendarDays, Pencil, Trash2, FolderOpen, ImagePlus, AlertTriangle } from 'lucide-react';
 import { eventApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -32,7 +32,7 @@ export default function Events() {
   });
   const orgs = orgData?.organizations || [];
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['events', search, orgFilter],
     queryFn: () => eventApi.list({ search, organizationId: orgFilter || undefined }),
   });
@@ -80,6 +80,10 @@ export default function Events() {
         ) : (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
         )
+      ) : isError ? (
+        <EmptyState icon={AlertTriangle} title="Couldn't load events"
+          description="There was a problem loading your events — check your connection and try again."
+          action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : events.length === 0 ? (
         filtered ? (
           <EmptyState icon={Camera} title="No events match these filters" description="Try a different organization, or clear the search." />

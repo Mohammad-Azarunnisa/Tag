@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Palette, Send, Search, Eye, Clock3, CheckCircle2, Circle, UserCheck, Flame, CalendarClock,
+  Palette, Send, Search, Eye, Clock3, CheckCircle2, Circle, UserCheck, Flame, CalendarClock, Sparkles,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -130,6 +130,12 @@ export default function Workflow({ board = 'DESIGN' }) {
                       {['URGENT', 'HIGH'].includes(i.priority) && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-400">
                           <Flame className="h-3 w-3" /> {i.priority === 'URGENT' ? 'Urgent' : 'High'}
+                        </span>
+                      )}
+                      {/* Already had the creative — this never touched a designer. */}
+                      {i.postOnly && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[11px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+                          <Sparkles className="h-3 w-3" /> Social Media Posting
                         </span>
                       )}
                     </div>
