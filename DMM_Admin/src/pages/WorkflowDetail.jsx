@@ -4,14 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Check, X, Send, Plus, Trash2, MessageSquareWarning, CheckCircle2,
-  UserCheck, ThumbsUp, CalendarClock, FileText, Paperclip, Clock3, Palette, Upload, Ban,
+  UserCheck, ThumbsUp, CalendarClock, FileText, Paperclip, Clock3, Palette, Upload, Ban, Download,
 } from 'lucide-react';
-import { workflowApi } from '../api/endpoints.js';
+import { workflowApi, institutionRequestApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import { Button } from '../components/ui/Button.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Card, Badge, Avatar, Skeleton, Input } from '../components/ui/primitives.jsx';
-import { cn, formatDate, formatDateTime, timeAgo, isVideo } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo, isVideo, downloadAllAttachments, canNavigateBack } from '../lib/utils.js';
 
 /**
  * Every step this ask has been through, with the exact moment it happened.
@@ -100,22 +100,30 @@ function Detail({ label, children }) {
 function Media({ items = [], onOpen }) {
   if (!items.length) return null;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      {items.map((m) => (
-        <button key={m._id || m.url} type="button" onClick={() => onOpen?.(m)}
-          className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-          {isVideo(m) ? (
-            <video src={m.url} className="h-32 w-full object-cover" muted />
-          ) : m.mediaType === 'document' ? (
-            <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
-              <FileText className="h-8 w-8" />
-              <span className="max-w-full truncate px-2 text-[11px] font-semibold">{m.name || 'Document'}</span>
-            </span>
-          ) : (
-            <img src={m.url} alt={m.name || ''} className="h-32 w-full object-cover" />
-          )}
+    <div>
+      {items.length > 1 && (
+        <button type="button" onClick={() => downloadAllAttachments(items)}
+          className="mb-2 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+          <Download className="h-3 w-3" /> Download all ({items.length})
         </button>
-      ))}
+      )}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {items.map((m) => (
+          <button key={m._id || m.url} type="button" onClick={() => onOpen?.(m)}
+            className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+            {isVideo(m) ? (
+              <video src={m.url} className="h-32 w-full object-cover" muted />
+            ) : m.mediaType === 'document' ? (
+              <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
+                <FileText className="h-8 w-8" />
+                <span className="max-w-full truncate px-2 text-[11px] font-semibold">{m.name || 'Document'}</span>
+              </span>
+            ) : (
+              <img src={m.url} alt={m.name || ''} className="h-32 w-full object-cover" />
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -418,6 +426,34 @@ function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
   );
 }
 
+/**
+ * Super admin only, and only once a designer or handler has already taken this
+ * on — before that, Cancel above is the right tool. This is a hard delete: the
+ * request, its approvals and any work assignments built on it are gone for
+ * good, which is why it asks twice as loudly as Cancel does.
+ */
+function DeleteConfirmModal({ onClose, onConfirm, saving }) {
+  return (
+    <Modal open onClose={onClose} title="Delete this request?">
+      <div className="space-y-4">
+        <p className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50/70 p-3 text-sm text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+          <Trash2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            This permanently removes the request, along with any design/post approvals and work
+            assignments built on it. This cannot be undone.
+          </span>
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Keep it</Button>
+          <Button variant="danger" loading={saving} onClick={onConfirm}>
+            <Trash2 className="h-4 w-4" /> Delete permanently
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function WorkflowDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -426,6 +462,7 @@ export default function WorkflowDetail() {
   const [changesOpen, setChangesOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [lightbox, setLightbox] = useState(null);
 
   const { data, isLoading } = useQuery({
@@ -454,6 +491,16 @@ export default function WorkflowDetail() {
     onSuccess: () => done('Request cancelled'),
     onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
   });
+  const deleteMut = useMutation({
+    mutationFn: () => institutionRequestApi.remove(id),
+    onSuccess: () => {
+      toast.success('Request deleted');
+      qc.invalidateQueries({ queryKey: ['admin-workflow'] });
+      const stage = data?.item?.workflowStage;
+      navigate(POST_TRACK.includes(stage) ? '/workflow/to-be-posted' : '/workflow/designs');
+    },
+    onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
+  });
 
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-8 w-40" /><Skeleton className="h-96" /></div>;
   if (!item) return <p className="text-slate-400">This workflow item was not found.</p>;
@@ -465,12 +512,20 @@ export default function WorkflowDetail() {
   const trackIndex = track.indexOf(stage);
   const canReview = (can.reviewDesign || can.reviewPost) && !user?.viewOnly;
   const canCancel = can.cancel && !user?.viewOnly;
+  // Cancel (above) only ever applies before anyone has picked this up — this is
+  // its complement: once a designer or handler has acknowledged it, only the
+  // super admin gets a way to remove it, right up to it being posted/completed.
+  const canDelete = !!user?.isSuperAdmin && !user?.viewOnly
+    && !['DESIGN_OPEN', 'POST_OPEN', 'POSTED', 'COMPLETED', 'CANCELLED'].includes(stage);
 
   return (
     <div>
-      <button onClick={() => navigate(onPostHalf ? '/workflow/to-be-posted' : '/workflow/designs')}
+      <button
+        onClick={() => (canNavigateBack()
+          ? navigate(-1)
+          : navigate(onPostHalf ? '/workflow/to-be-posted' : '/workflow/designs'))}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200">
-        <ArrowLeft className="h-4 w-4" /> Back to {onPostHalf ? 'To Be Posted' : 'Designs to be Done'}
+        <ArrowLeft className="h-4 w-4" /> Back
       </button>
 
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -487,7 +542,7 @@ export default function WorkflowDetail() {
             {item.raisedBy?.name ? ` by ${item.raisedBy.name}` : ''}
           </p>
         </div>
-        {(canReview || canCancel) && (
+        {(canReview || canCancel || canDelete) && (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {canReview && (
               <>
@@ -503,6 +558,11 @@ export default function WorkflowDetail() {
             {canCancel && (
               <Button variant="danger" onClick={() => setCancelOpen(true)}>
                 <Ban className="h-4 w-4" /> Cancel request
+              </Button>
+            )}
+            {canDelete && (
+              <Button variant="danger" onClick={() => setDeleteOpen(true)}>
+                <Trash2 className="h-4 w-4" /> Delete request
               </Button>
             )}
           </div>
@@ -663,6 +723,13 @@ export default function WorkflowDetail() {
           saving={cancelMut.isPending}
           onClose={() => setCancelOpen(false)}
           onConfirm={(reason) => cancelMut.mutate(reason)}
+        />
+      )}
+      {deleteOpen && (
+        <DeleteConfirmModal
+          saving={deleteMut.isPending}
+          onClose={() => setDeleteOpen(false)}
+          onConfirm={() => deleteMut.mutate()}
         />
       )}
 

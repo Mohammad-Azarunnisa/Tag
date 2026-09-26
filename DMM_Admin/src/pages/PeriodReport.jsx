@@ -24,6 +24,26 @@ const PRESETS = [
 const dash = (v, suffix = '') => (v == null ? '—' : `${formatNumber(v)}${suffix}`);
 const money = (v) => (v == null ? '—' : `₹${formatNumber(v)}`);
 
+// Same stage labels the "Designs to be Done" board uses, so "Pending" here
+// never reads as one opaque number when the board right next to it already
+// breaks the same requests down by exactly where each one is stuck.
+const PENDING_STAGE_LABELS = {
+  waitingForDesigner: 'Waiting for a designer',
+  beingDesigned: 'Being designed',
+  withAdminReview: 'With the Admin',
+  withCoordinatorReview: 'With the coordinator',
+  other: 'No stage recorded (old data)',
+};
+const pendingStageItems = (byStage) => {
+  if (!byStage) return [];
+  const total = Object.values(byStage).reduce((a, b) => a + b, 0);
+  return Object.entries(byStage)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => ({ label: PENDING_STAGE_LABELS[key] || key, count, share: pct(count, total) }))
+    .sort((a, b) => b.count - a.count);
+};
+const pct = (part, whole) => (whole ? Math.round((part / whole) * 1000) / 10 : null);
+
 // A figure with its label, in the order management reads them.
 function Tile({ label, value, sub, accent }) {
   return (
@@ -273,8 +293,9 @@ export default function PeriodReport() {
             <Tile label="Engagement rate" value={h.engagementRate == null ? '—' : `${h.engagementRate}%`} accent="text-indigo-600 dark:text-indigo-400" />
             <Tile label="Ad spend" value={money(h.adSpend)} accent="text-amber-600 dark:text-amber-400" />
           </div>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
             <Tile label="Design pending" value={formatNumber(h.designPending)} />
+            <Tile label="Design cancelled" value={formatNumber(h.designCancelled)} accent="text-slate-400" />
             <Tile label="Avg turnaround" value={h.avgTurnaroundDays == null ? '—' : `${h.avgTurnaroundDays} d`} />
             <Tile label="First-pass approval" value={h.firstPassRate == null ? '—' : `${h.firstPassRate}%`} />
             <Tile label="Avg revisions" value={dash(h.avgRevisionRounds)} />
@@ -310,6 +331,7 @@ export default function PeriodReport() {
               { key: 'rec', label: 'Requests', align: 'right', render: (r) => r.requestsReceived, total: (t) => t.requestsReceived },
               { key: 'done', label: 'Completed', align: 'right', render: (r) => r.completed, total: (t) => t.completed },
               { key: 'pend', label: 'Pending', align: 'right', render: (r) => r.pending, total: (t) => t.pending },
+              { key: 'cancel', label: 'Cancelled', align: 'right', render: (r) => r.cancelled, total: (t) => t.cancelled },
               { key: 'ot', label: 'On time', align: 'right', render: (r) => dash(r.deliveredOnTime), total: (t) => dash(t.deliveredOnTime) },
               { key: 'otr', label: 'On-time rate', align: 'right', render: (r) => (r.onTimeRate == null ? '—' : `${r.onTimeRate}%`), total: (t) => (t.onTimeRate == null ? '—' : `${t.onTimeRate}%`) },
               { key: 'fp', label: 'First pass', align: 'right', render: (r) => r.approvedFirstPass, total: (t) => t.approvedFirstPass },
@@ -321,6 +343,7 @@ export default function PeriodReport() {
             totals={data.design.totals}
           />
           <MixList title="What those designs were" items={data.design.mix} />
+          <MixList title="Where the pending ones are stuck" items={pendingStageItems(data.design.totals.pendingByStage)} />
 
           {/* Part 2 */}
           <PartTable

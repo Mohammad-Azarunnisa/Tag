@@ -114,6 +114,7 @@ export const exportPeriodReport = asyncHandler(async (req, res) => {
     ['Engagement rate', h.engagementRate == null ? '—' : `${h.engagementRate}%`],
     ['Ad spend', h.adSpend],
     ['Design pending', h.designPending],
+    ['Design cancelled', h.designCancelled],
     ['Avg turnaround (days)', dash(h.avgTurnaroundDays)],
     ['First-pass approval', h.firstPassRate == null ? '—' : `${h.firstPassRate}%`],
     ['Avg revision rounds', dash(h.avgRevisionRounds)],
@@ -135,14 +136,15 @@ export const exportPeriodReport = asyncHandler(async (req, res) => {
 
   // Part 1
   addSheet(wb, '1 Design output',
-    ['Institution', 'Requests received', 'Completed', 'Pending', 'Delivered on time', 'On-time rate %',
+    ['Institution', 'Requests received', 'Completed', 'Pending', 'Cancelled', 'Delivered on time', 'On-time rate %',
       'Approved first pass', 'First-pass rate %', 'Avg turnaround (d)', 'Avg revision rounds'],
-    r.design.rows.map((x) => [x.organization.name, x.requestsReceived, x.completed, x.pending,
+    r.design.rows.map((x) => [x.organization.name, x.requestsReceived, x.completed, x.pending, x.cancelled,
       dash(x.deliveredOnTime), dash(x.onTimeRate), x.approvedFirstPass, dash(x.firstPassRate),
       dash(x.avgTurnaroundDays), dash(x.avgRevisionRounds)]),
     ['ALL INSTITUTIONS', r.design.totals.requestsReceived, r.design.totals.completed, r.design.totals.pending,
-      dash(r.design.totals.deliveredOnTime), dash(r.design.totals.onTimeRate), r.design.totals.approvedFirstPass,
-      dash(r.design.totals.firstPassRate), dash(r.design.totals.avgTurnaroundDays), dash(r.design.totals.avgRevisionRounds)]);
+      r.design.totals.cancelled, dash(r.design.totals.deliveredOnTime), dash(r.design.totals.onTimeRate),
+      r.design.totals.approvedFirstPass, dash(r.design.totals.firstPassRate), dash(r.design.totals.avgTurnaroundDays),
+      dash(r.design.totals.avgRevisionRounds)]);
 
   if (r.design.mix.length) {
     addSheet(wb, '1b What designs were', ['Type', 'Count', 'Share %'],

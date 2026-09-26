@@ -1,6 +1,37 @@
+import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { format, formatDistanceToNow } from 'date-fns';
+
+// Opening a row (a fresh navigate() to a detail route) and its Back button
+// coming right back here are both full navigations, not a browser "back" — so
+// filters, search text and pagination on a list page reset to their initial
+// state on every return trip unless something remembers them. This mirrors
+// them into sessionStorage under `key`, so the list looks exactly as the user
+// left it. Session-scoped (not localStorage) on purpose: a stale filter from
+// days ago shouldn't outlive the tab.
+export function useSessionState(key, initialValue) {
+  const [state, setState] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(key);
+      return saved != null ? JSON.parse(saved) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(key, JSON.stringify(state)); } catch { /* ignore */ }
+  }, [key, state]);
+  return [state, setState];
+}
+
+// Whether react-router has an in-app history entry to pop back to, so a
+// "Back" button can return to wherever the user actually came from — a
+// filtered list, a search result, a specific month on the calendar — instead
+// of a single hardcoded destination that ignores how they got here. Falls
+// back to that hardcoded destination only when there is nothing to go back
+// to (a pasted link, a fresh tab, a page refresh on the detail view).
+export const canNavigateBack = () => Boolean(window.history.state && window.history.state.idx > 0);
 
 // A coordinator runs exactly one college, so any "which college?" control is a
 // dead choice for them - the server pins their scope either way. Call sites use
@@ -157,6 +188,16 @@ export const triggerDownload = (url, fileName) => {
   document.body.appendChild(a);
   a.click();
   a.remove();
+};
+
+// Download every attachment in a message individually (no zip — see
+// triggerDownload above for why). Fired in the same tick, a browser treats a
+// burst of programmatic downloads like a popup flood and silently drops all
+// but the first, so each one is staggered.
+export const downloadAllAttachments = (attachments = []) => {
+  attachments.forEach((a, i) => {
+    setTimeout(() => triggerDownload(a?.url, fileLabel(a)), i * 400);
+  });
 };
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ const ICONS = {
   WORK_REJECTED: { icon: XCircle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
   WORK_ACKNOWLEDGED_ELSEWHERE: { icon: MessageSquare, color: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
   DESIGN_REQUESTED: { icon: Palette, color: 'text-brand-600 bg-brand-50 dark:bg-brand-500/10' },
+  PUBLISH_FAILED: { icon: AlertTriangle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
 };
 
 // Where a notification should take you when its stored link can't (older rows

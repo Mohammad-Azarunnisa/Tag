@@ -4,14 +4,14 @@ import { useSearchParams } from 'react-router-dom';
 import {
   MessageSquarePlus, Search, Clock3, Eye, CheckCircle2, XCircle, Flame, X, BriefcaseBusiness,
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
-  Paperclip, ExternalLink, Send,
+  Paperclip, ExternalLink, Send, Download,
 } from 'lucide-react';
 import { institutionRequestApi, organizationApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, formatDateTime, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo, downloadAllAttachments } from '../lib/utils.js';
 
 // The tiles read left to right as the journey: raised → with the handler → done.
 // IN_REVIEW and GETTING_ALLOCATED can no longer be reached (nothing approves a
@@ -347,9 +347,17 @@ function RequestDetailModal({ request: r, onClose }) {
 
         {/* The reference material — the reason this view exists. */}
         <div>
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            <Paperclip className="h-3.5 w-3.5" /> Reference files{files.length > 0 ? ` · ${files.length}` : ''}
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <Paperclip className="h-3.5 w-3.5" /> Reference files{files.length > 0 ? ` · ${files.length}` : ''}
+            </p>
+            {files.length > 1 && (
+              <button type="button" onClick={() => downloadAllAttachments(files)}
+                className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                <Download className="h-3 w-3" /> Download all ({files.length})
+              </button>
+            )}
+          </div>
           {files.length === 0 ? (
             <p className="text-sm text-slate-400">Nothing was attached to this request.</p>
           ) : (
@@ -357,7 +365,7 @@ function RequestDetailModal({ request: r, onClose }) {
               {images.length > 0 && (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {images.map((a, i) => (
-                    <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                    <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
                       title={a.name || 'Open full size'}
                       className="group relative block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                       <img src={a.url} alt={a.name || `Reference ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
@@ -369,7 +377,7 @@ function RequestDetailModal({ request: r, onClose }) {
                 </div>
               )}
               {others.map((a, i) => (
-                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
                   className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-brand-500/5">
                   <FileImage className="h-4 w-4 shrink-0 text-slate-400" />
                   <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>

@@ -208,6 +208,9 @@ export const approvalApi = {
   // is how posts that went live before anyone logged them land on the right day.
   markPosted: (id, postedAt) =>
     api.put(`/approvals/${id}/posted`, postedAt ? { postedAt } : {}).then((r) => r.data),
+  // Separate from markPosted above — actually publishes to a connected
+  // Facebook/Instagram account instead of just recording that it was posted.
+  publishNow: (id) => api.put(`/approvals/${id}/publish-now`, {}).then((r) => r.data),
   schedule: (id, scheduledAt) => api.put(`/approvals/${id}/schedule`, { scheduledAt }).then((r) => r.data),
   handlers: (organizationId, platform) => api.get('/users/handlers', { params: { organizationId, platform } }).then((r) => r.data),
   comment: (id, formData) =>

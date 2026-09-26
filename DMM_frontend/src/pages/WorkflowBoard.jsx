@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -11,7 +11,7 @@ import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, EmptyState, Input, Select, Skeleton, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, timeAgo, useSessionState } from '../lib/utils.js';
 
 // What each stage means to the person reading the board. Two boards, one record —
 // the stage is the whole answer to "whose move is it?".
@@ -47,7 +47,9 @@ const BOARDS = {
     // rather than implying one shared queue.
     subtitle: 'Designs the college has signed off, for the pages you handle. Take one on, write the post, and put it out once it is approved.',
     icon: Send,
-    stages: ['POST_OPEN', 'POST_IN_PROGRESS', 'POST_ADMIN_REVIEW', 'POST_COORDINATOR_REVIEW', 'POST_APPROVED', 'POSTED'],
+    // POSTED is deliberately excluded — once it's out, it's done, not "to be
+    // posted" (server-side too, see workflowController.js listWorkflow).
+    stages: ['POST_OPEN', 'POST_IN_PROGRESS', 'POST_ADMIN_REVIEW', 'POST_COORDINATOR_REVIEW', 'POST_APPROVED'],
     empty: 'Nothing is waiting to be posted.',
   },
 };
@@ -57,7 +59,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const [filters, setFilters] = useState({ stage: 'All', search: '' });
+  const [filters, setFilters] = useSessionState(`workflow-filters:${board}`, { stage: 'All', search: '' });
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['workflow', board],
@@ -66,6 +68,36 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
 
   const items = data?.items || [];
   const counts = data?.counts || {};
+
+  // Opening a card and coming back is a fresh navigation each time (Open
+  // pushes to /workflow/:id; the detail page's Back button pushes right back
+  // here), not a browser "back" — so nothing about where you were on this
+  // list survives on its own. Remembered here per board (Designs vs To Be
+  // Posted) and restored once the list has actually loaded, since scrolling
+  // to a saved position before the cards exist has nowhere to land.
+  const scrollKey = `workflow-scroll:${board}`;
+  const scrollYRef = useRef(0);
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    const onScroll = () => { scrollYRef.current = window.scrollY; };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      sessionStorage.setItem(scrollKey, String(scrollYRef.current));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board]);
+
+  useEffect(() => {
+    if (isLoading || restoredRef.current) return;
+    restoredRef.current = true;
+    const saved = Number(sessionStorage.getItem(scrollKey) || 0);
+    if (!saved) return;
+    // The list needs a layout pass before its full height exists to scroll into.
+    requestAnimationFrame(() => window.scrollTo(0, saved));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
   const ackMut = useMutation({
     mutationFn: (id) => workflowApi.acknowledge(id),
@@ -144,6 +176,50 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
             const StageIcon = meta.icon;
             const owner = board === 'DESIGN' ? i.designer : i.handler;
             const overdue = i.neededBy && new Date(i.neededBy) < new Date() && i.workflowStage !== 'POSTED';
+
+            // To Be Posted stays to just what a handler needs to triage at a
+            // glance — title, college, department, status, and whether it's
+            // been picked up — not the full brief (that's what Open is for).
+            if (board === 'POST') {
+              return (
+                <Card key={i._id} className="p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="break-words font-bold text-slate-800 dark:text-white">{i.title}</p>
+                        <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold', meta.cls)}>
+                          <StageIcon className="h-3 w-3" /> {meta.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        <span className="font-semibold text-slate-500 dark:text-slate-300">{i.organization?.name || 'Unknown college'}</span>
+                        {i.department ? ` · ${i.department}` : ''}
+                      </p>
+                      {owner ? (
+                        <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          <Avatar src={owner.avatar} name={owner.name} size="sm" className="h-4 w-4 ring-0" />
+                          Acknowledged by {owner.name}
+                        </p>
+                      ) : i.workflowStage === 'POST_OPEN' && (
+                        <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">Not yet acknowledged</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${i._id}`)}>
+                        <Eye className="h-4 w-4" /> Open
+                      </Button>
+                      {canAcknowledge(i) && (
+                        <Button size="sm" loading={ackMut.isPending && ackMut.variables === i._id}
+                          onClick={() => ackMut.mutate(i._id)}>
+                          <ThumbsUp className="h-4 w-4" /> Acknowledge
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              );
+            }
+
             return (
               <Card key={i._id} className="p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">

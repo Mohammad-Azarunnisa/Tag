@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Check, X, Send, ThumbsUp, Upload, Plus, Trash2, MessageSquareWarning,
-  CheckCircle2, UserCheck, CalendarClock, FileText, Paperclip, Clock3, Sparkles,
+  CheckCircle2, UserCheck, CalendarClock, FileText, Paperclip, Clock3, Sparkles, Download,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import { Button } from '../components/ui/Button.jsx';
@@ -12,7 +12,7 @@ import { Card, Badge, Avatar, Skeleton, Input, Textarea } from '../components/ui
 import { Modal } from '../components/ui/Modal.jsx';
 import FileDropzone from '../components/ui/FileDropzone.jsx';
 import { UPLOAD_ACCEPT } from '../lib/uploads.js';
-import { cn, formatDate, formatDateTime, timeAgo, isVideo } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo, isVideo, downloadAllAttachments, canNavigateBack } from '../lib/utils.js';
 
 /**
  * Every step this ask has been through, with the exact moment it happened.
@@ -103,22 +103,30 @@ function Detail({ label, children }) {
 function Media({ items = [], onOpen }) {
   if (!items.length) return null;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      {items.map((m) => (
-        <button key={m._id || m.url} type="button" onClick={() => onOpen?.(m)}
-          className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-          {isVideo(m.url) ? (
-            <video src={m.url} className="h-32 w-full object-cover" muted />
-          ) : m.mediaType === 'document' ? (
-            <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
-              <FileText className="h-8 w-8" />
-              <span className="max-w-full truncate px-2 text-[11px] font-semibold">{m.name || 'Document'}</span>
-            </span>
-          ) : (
-            <img src={m.url} alt={m.name || ''} className="h-32 w-full object-cover" />
-          )}
+    <div>
+      {items.length > 1 && (
+        <button type="button" onClick={() => downloadAllAttachments(items)}
+          className="mb-2 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+          <Download className="h-3 w-3" /> Download all ({items.length})
         </button>
-      ))}
+      )}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {items.map((m) => (
+          <button key={m._id || m.url} type="button" onClick={() => onOpen?.(m)}
+            className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+            {isVideo(m.url) ? (
+              <video src={m.url} className="h-32 w-full object-cover" muted />
+            ) : m.mediaType === 'document' ? (
+              <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
+                <FileText className="h-8 w-8" />
+                <span className="max-w-full truncate px-2 text-[11px] font-semibold">{m.name || 'Document'}</span>
+              </span>
+            ) : (
+              <img src={m.url} alt={m.name || ''} className="h-32 w-full object-cover" />
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -302,8 +310,12 @@ function ApproveConfirmModal({ half, coordinatorName, onClose, onConfirm, saving
  * has no page to go on, so it is just a confirmation. The server decides which
  * (needsPosting), so this modal only renders the answer.
  */
-function DoneModal({ half, platforms = [], needsPosting, onClose, onConfirm, saving }) {
-  const [picked, setPicked] = useState([]);
+function DoneModal({ half, platforms = [], initialPlatforms = [], needsPosting, onClose, onConfirm, saving }) {
+  // Pre-filled with whatever the coordinator already picked when they raised
+  // this as a Social Media design request, so accepting the finished design
+  // doesn't mean re-doing a choice they made days ago — still fully editable
+  // in case they've changed their mind since seeing the design.
+  const [picked, setPicked] = useState(() => initialPlatforms.filter((p) => platforms.includes(p)));
   const toggle = (p) => setPicked((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
   const askPages = half === 'DESIGN' && needsPosting;
 
@@ -573,9 +585,12 @@ export default function WorkflowDetail() {
 
   return (
     <div>
-      <button onClick={() => navigate(onPostHalf ? '/workflow/to-be-posted' : '/workflow/designs')}
+      <button
+        onClick={() => (canNavigateBack()
+          ? navigate(-1)
+          : navigate(onPostHalf ? '/workflow/to-be-posted' : '/workflow/designs'))}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
-        <ArrowLeft className="h-4 w-4" /> Back to {onPostHalf ? 'To Be Posted' : 'Designs to be Done'}
+        <ArrowLeft className="h-4 w-4" /> Back
       </button>
 
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -808,6 +823,7 @@ export default function WorkflowDetail() {
           half={can.acceptDesign ? 'DESIGN' : 'POST'}
           needsPosting={!!item.needsPosting}
           platforms={item.availablePlatforms || []}
+          initialPlatforms={item.postPlatforms || []}
           saving={confirmMut.isPending}
           onClose={() => setDoneOpen(false)}
           onConfirm={(platforms) => confirmMut.mutate({ action: 'DONE', platforms })}

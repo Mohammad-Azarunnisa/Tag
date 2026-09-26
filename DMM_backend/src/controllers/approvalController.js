@@ -22,6 +22,7 @@ import {
 import { requireOrgId, resolveOrgId, canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import { assertCanDeleteOrgItem } from '../utils/permissions.js';
 import { resolvePostedAt } from '../utils/postedAt.js';
+import { publishToConnectedPlatforms } from '../services/socialPublish.js';
 import {
   APPROVAL_STATUS,
   APPROVAL_TYPES,
@@ -1364,6 +1365,105 @@ export const markPosted = asyncHandler(async (req, res) => {
   logActivity({ user: req.user._id, organization: request.organization, action: ACTIVITY_ACTIONS.POST_COMPLETION, description: `Marked "${request.title}" as posted`, entityType: 'ApprovalRequest', entityId: request._id });
   await notifyApprovers(NOTIFICATION_TYPES.CONTENT_POSTED, 'Content posted', `${req.user.name} posted "${request.title}" on ${platformsOf(request).join(", ")}`, request);
   // Tell the coordinator who raised the brief that their design is now live.
+  if (request.type === APPROVAL_TYPES.DESIGN && String(request.createdBy) !== String(req.user._id)) {
+    await createNotification({
+      recipient: request.createdBy, organization: request.organization, type: NOTIFICATION_TYPES.CONTENT_POSTED,
+      title: 'Your design is live', message: `"${request.title}" was posted on ${platformsOf(request).join(", ")}`,
+      link: `/approvals/${request._id}`, relatedRequest: request._id,
+    });
+  }
+
+  res.json({ success: true, request });
+});
+
+// @route PUT /api/approvals/:id/publish-now  — direct social-media publish.
+//
+// A SEPARATE action from markPosted above — that one stays exactly as it
+// always has (a trust-based "I posted this myself elsewhere" record). This
+// one is explicit: the handler is telling the app to actually publish the
+// approved content itself, right now, to whichever connected Meta
+// (Facebook/Instagram) account this request targets. It only ever touches
+// those — LinkedIn/YouTube or a platform the college hasn't connected aren't
+// affected by this route at all, and "Mark as posted" still covers them.
+//
+// Needs socialPublish.js's publishToConnectedPlatforms to actually have
+// something to do: a META_SYSTEM_TOKEN with publish scopes
+// (pages_manage_posts, instagram_content_publish), and the organization's
+// Facebook Page / Instagram account linked (Admin -> Analytics -> "Link
+// accounts"). Until that's configured this route correctly reports "nothing
+// to publish" instead of silently doing nothing or falling back to a manual
+// flip — see the 400 below.
+export const publishNow = asyncHandler(async (req, res) => {
+  const request = await ApprovalRequest.findById(req.params.id);
+  if (!request) { res.status(404); throw new Error('Request not found'); }
+  assertOrgAccess(req, res, request);
+
+  // Same "who may close this out" rule as markPosted.
+  const isOwner = String(request.createdBy) === String(req.user._id);
+  const isHandler = request.assignedTo && String(request.assignedTo) === String(req.user._id);
+  if (request.type === APPROVAL_TYPES.DESIGN) {
+    if (!isHandler && !isSuperApprover(req.user)) { res.status(403); throw new Error('Only the allocated social handler can post this'); }
+  } else if (!isOwner && !isSuperApprover(req.user)) {
+    res.status(403); throw new Error('Not allowed');
+  }
+  if (request.status !== APPROVAL_STATUS.APPROVED) { res.status(400); throw new Error('Only approved content can be posted'); }
+
+  const outcome = await publishToConnectedPlatforms(request);
+  if (!outcome.attempted) {
+    res.status(400);
+    throw new Error('Nothing here can be posted directly yet — connect a Facebook/Instagram account for this college and make sure the Meta token has publish permissions, or use "Mark as posted" instead.');
+  }
+  request.metaPublishResults = outcome.results;
+  if (!outcome.allSucceeded) {
+    // Save the partial results so a retry only redoes what failed, then stop
+    // — the request stays APPROVED, nothing here claims it posted.
+    await request.save();
+    const failed = outcome.results.filter((r) => r.status === 'failed');
+    res.status(502).json({
+      success: false,
+      message: failed.map((f) => `${f.platform}: ${f.error}`).join(' · ') || 'Publishing to Meta failed',
+      results: outcome.results,
+      skipped: outcome.skipped,
+    });
+    return;
+  }
+
+  const postedAt = new Date();
+  request.status = APPROVAL_STATUS.POSTED;
+  request.postedAt = postedAt;
+  request.postedBy = req.user._id;
+  request.scheduledAt = undefined;
+  await request.save();
+
+  // Same closing-out as markPosted: the posting job this was raised for is done.
+  await closePostingWorkForApproval(request._id, req.user, postedAt);
+
+  const justPublished = outcome.results.filter((r) => r.status === 'success' && r.postUrl);
+  await recordFeed({
+    request: request._id, kind: 'event', author: req.user._id,
+    text: `posted directly to ${justPublished.map((r) => r.platform).join(', ') || platformsOf(request).join(', ')}`,
+  });
+  // Proof, not just a claim — a line per platform with the real live link.
+  for (const r of justPublished) {
+    await recordFeed({
+      request: request._id, kind: 'event', author: req.user._id,
+      text: `published live on ${r.platform} — ${r.postUrl}`,
+    });
+  }
+
+  if (request.sourceDesign) {
+    const design = await ApprovalRequest.findById(request.sourceDesign);
+    if (design && design.status !== APPROVAL_STATUS.POSTED) {
+      design.status = APPROVAL_STATUS.POSTED;
+      design.postedAt = request.postedAt;
+      design.postedBy = req.user._id;
+      await design.save();
+      await recordFeed({ request: design._id, kind: 'event', author: req.user._id, text: `the linked post went live on ${platformsOf(request).join(", ")}` });
+    }
+  }
+
+  logActivity({ user: req.user._id, organization: request.organization, action: ACTIVITY_ACTIONS.POST_COMPLETION, description: `Posted "${request.title}" directly to ${justPublished.map((r) => r.platform).join(', ') || platformsOf(request).join(', ')}`, entityType: 'ApprovalRequest', entityId: request._id });
+  await notifyApprovers(NOTIFICATION_TYPES.CONTENT_POSTED, 'Content posted', `${req.user.name} posted "${request.title}" on ${platformsOf(request).join(", ")}`, request);
   if (request.type === APPROVAL_TYPES.DESIGN && String(request.createdBy) !== String(req.user._id)) {
     await createNotification({
       recipient: request.createdBy, organization: request.organization, type: NOTIFICATION_TYPES.CONTENT_POSTED,

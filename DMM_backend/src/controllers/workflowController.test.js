@@ -86,6 +86,12 @@ const raiseRequest = async ({
   // Override both to exercise digital work that has no page to go on.
   workCategory = 'Social Media',
   workItem = 'Social Media Posts',
+  // A Social Media design request now has to name its pages at raise time
+  // too (mirrors the mandatory-platforms rule in institutionRequestController.js)
+  // — LinkedIn is always available to the default seeded org, so this is a
+  // safe default; pass [] to exercise the "no platforms picked" validation
+  // itself, or a narrower list for a test that cares which ones.
+  platforms = ['LinkedIn'],
 }) => {
   const fd = new FormData();
   fd.append('title', title);
@@ -97,6 +103,8 @@ const raiseRequest = async ({
   fd.append('workCategory', workCategory);
   fd.append('workItem', workItem);
   fd.append('department', 'CSE');
+  const isSocial = workType === 'DIGITAL_MEDIA' && (workCategory === 'Social Media' || workItem === 'Animated Social Media Posts');
+  if (isSocial) platforms.forEach((p) => fd.append('platforms', p));
   const res = await fetch(`${origin}/api/requests`, {
     method: 'POST', headers: { Authorization: `Bearer ${tok.coordinator}` }, body: fd,
   });

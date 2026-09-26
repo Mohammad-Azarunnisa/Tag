@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Organization from '../models/Organization.js';
+import InstitutionRequest from '../models/InstitutionRequest.js';
 import ApprovalRequest from '../models/ApprovalRequest.js';
 import WebTask from '../models/WebTask.js';
 import WorkAssignment from '../models/WorkAssignment.js';
@@ -8,7 +9,7 @@ import Analytics from '../models/Analytics.js';
 import SocialPost from '../models/SocialPost.js';
 import LinkedInPost from '../models/LinkedInPost.js';
 import User from '../models/User.js';
-import { APPROVAL_STATUS, APPROVAL_TYPES, PLATFORMS, ROLES } from '../config/constants.js';
+import { APPROVAL_TYPES, PLATFORMS, ROLES } from '../config/constants.js';
 
 /**
  * The Branding & Marketing period report, assembled from live data.
@@ -18,9 +19,24 @@ import { APPROVAL_STATUS, APPROVAL_TYPES, PLATFORMS, ROLES } from '../config/con
  *   4 paid ads           5 team output
  *
  * Everything here is measured, never estimated. Where the data to answer a column
- * genuinely isn't there, the figure comes back null and `gaps` says why — a report
- * to management that quietly prints 0% for "delivered on time" because nobody set
- * a due date is worse than one that admits it doesn't know.
+ * genuinely isn't there, the figure comes back null and `gaps` says why.
+ *
+ * "Delivered on time" only ever penalises a due date that was actually missed.
+ * A coordinator who never set one gave nobody a deadline to miss, so a finished
+ * item counts as on time by default rather than being left out of the rate.
+ *
+ * Design output is measured off InstitutionRequest — the ask itself — rather
+ * than the ApprovalRequest it carries, and only counts a design "delivered"
+ * once BOTH gates it needs have been passed: the Admin approved the artwork,
+ * AND the coordinator who asked for it confirmed it (`designAcceptedAt`,
+ * which the workflow never sets on just the Admin's say-so). An Admin
+ * approving alone flips the linked ApprovalRequest to APPROVED while the
+ * request still sits on "Designs to be Done" waiting on the coordinator —
+ * counting that as delivered would make the report disagree with the board
+ * it is supposed to describe. Once both gates pass, the design counts as
+ * delivered regardless of what happens next — whether it goes on to be
+ * posted is a separate deliverable, tracked separately (see the Approvals
+ * page's Posted tile), not a reason to hold the design itself back.
  */
 
 const DAY = 86400000;
@@ -45,46 +61,94 @@ const inWindow = (from, to) => ({ $gte: from, $lte: to });
 const designOutput = async (orgs, from, to) => {
   const rows = [];
   const mix = {};
-  let anyDueDate = false;
+  let anyCompleted = false;
 
   for (const org of orgs) {
     const scope = { organization: org._id };
     // "Received" counts what arrived in the window; the rest is measured on the
     // same set, so a design raised last period and finished in this one is not
-    // double-counted as a new request.
-    const received = await ApprovalRequest.find({ ...scope, createdAt: inWindow(from, to) })
-      .select('status createdAt approvedAt deliveredAt postedAt dueDate resubmitCount workItem workCategory type')
+    // double-counted as a new request. InstitutionRequest is the spine of the
+    // whole pipeline (see its own model comment) — one row per ask, whichever
+    // stage it has reached — so it is the one source of truth for this count,
+    // rather than the ApprovalRequest that only exists once work starts on it.
+    //
+    // postOnly asks are excluded here: the creative already existed, so there
+    // was never a design to deliver — they belong to the posting side of the
+    // pipeline, not this one.
+    const received = await InstitutionRequest.find({ ...scope, createdAt: inWindow(from, to), postOnly: { $ne: true } })
+      .select('workflowStage neededBy createdAt designAcceptedAt workItem workCategory workType designApproval')
       .lean();
 
-    const done = received.filter((r) => [
-      APPROVAL_STATUS.APPROVED, APPROVAL_STATUS.POSTED, APPROVAL_STATUS.DELIVERED,
-    ].includes(r.status));
-    const finishedAt = (r) => r.approvedAt || r.deliveredAt || r.postedAt || null;
+    // Delivered means both gates the design actually needs have been passed:
+    // the Admin signed off on the artwork, AND the coordinator who asked for it
+    // has confirmed it — `designAcceptedAt` is only ever set once both have
+    // happened (it is the coordinator's confirmation, which the workflow
+    // refuses before an Admin approval). That is the finish line for the
+    // design itself, whether or not it goes on to be posted afterwards —
+    // posting is a separate deliverable with its own count (see the Approvals
+    // page's Posted tile), not part of whether the design was delivered.
+    const done = received.filter((r) => !!r.designAcceptedAt);
+    const cancelled = received.filter((r) => r.workflowStage === 'CANCELLED');
+    const finishedAt = (r) => r.designAcceptedAt || null;
+    if (done.length) anyCompleted = true;
 
-    const withDue = done.filter((r) => r.dueDate && finishedAt(r));
-    if (withDue.length) anyDueDate = true;
-    const onTime = withDue.filter((r) => finishedAt(r) <= new Date(r.dueDate));
+    // No due date isn't a missed one — if the coordinator never set one, there
+    // was nothing to be late against, so a finished design counts as on time by
+    // default. Only a due date that was actually missed counts against the rate.
+    const onTime = done.filter((r) => !r.neededBy || (finishedAt(r) && finishedAt(r) <= new Date(r.neededBy)));
 
-    const firstPass = done.filter((r) => !r.resubmitCount);
+    // First-pass rate and revision rounds are tracked on the linked
+    // ApprovalRequest (its resubmitCount), not on the request itself.
+    const approvalIds = done.map((r) => r.designApproval).filter(Boolean);
+    const approvals = approvalIds.length
+      ? await ApprovalRequest.find({ _id: { $in: approvalIds } }).select('resubmitCount').lean()
+      : [];
+    const resubmitsById = new Map(approvals.map((a) => [String(a._id), a.resubmitCount || 0]));
+    const resubmitsOf = (r) => resubmitsById.get(String(r.designApproval)) || 0;
+    const firstPass = done.filter((r) => !resubmitsOf(r));
+
     const turnarounds = done.map((r) => (finishedAt(r) ? (new Date(finishedAt(r)) - new Date(r.createdAt)) / DAY : null))
       .filter((n) => n != null);
 
     for (const r of done) {
-      const key = r.workItem || (r.type === APPROVAL_TYPES.DESIGN ? 'Design (unclassified)' : 'Social media post creative');
+      const key = r.workItem || (r.workType === 'DIGITAL_MEDIA' ? 'Digital (unclassified)' : 'Print (unclassified)');
       mix[key] = (mix[key] || 0) + 1;
     }
 
+    // Cancelled requests are dead, not real work — they never counted toward
+    // "pending" (still in flight), and now they don't count toward the total
+    // either. `cancelled` is reported on its own so it isn't just invisible.
+    const requestsReceived = received.length - cancelled.length;
+
+    // "Pending" as one number hides exactly where each one is stuck — the same
+    // question the "Designs to be Done" board answers with its own stage
+    // columns. Broken out here the same way, so the two never disagree.
+    const stageCount = (stage) => received.filter((r) => r.workflowStage === stage).length;
+    const pendingByStage = {
+      waitingForDesigner: stageCount('DESIGN_OPEN'),
+      beingDesigned: stageCount('DESIGN_IN_PROGRESS'),
+      withAdminReview: stageCount('DESIGN_ADMIN_REVIEW'),
+      withCoordinatorReview: stageCount('DESIGN_COORDINATOR_REVIEW'),
+    };
+    // Anything left over is neither delivered, cancelled, nor sitting in a
+    // recognised design stage — old records from before workflowStage existed
+    // (see the gaps note below), not a live backlog.
+    const pending = requestsReceived - done.length;
+    pendingByStage.other = pending - Object.values(pendingByStage).reduce((a, b) => a + b, 0);
+
     rows.push({
       organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
-      requestsReceived: received.length,
+      requestsReceived,
       completed: done.length,
-      pending: received.length - done.length,
-      deliveredOnTime: withDue.length ? onTime.length : null,
-      onTimeRate: withDue.length ? pct(onTime.length, withDue.length) : null,
+      pending,
+      pendingByStage,
+      cancelled: cancelled.length,
+      deliveredOnTime: done.length ? onTime.length : null,
+      onTimeRate: done.length ? pct(onTime.length, done.length) : null,
       approvedFirstPass: firstPass.length,
       firstPassRate: pct(firstPass.length, done.length),
       avgTurnaroundDays: turnarounds.length ? round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
-      avgRevisionRounds: done.length ? round(sum(done, 'resubmitCount') / done.length) : null,
+      avgRevisionRounds: done.length ? round(done.reduce((s, r) => s + resubmitsOf(r), 0) / done.length) : null,
     });
   }
 
@@ -92,8 +156,16 @@ const designOutput = async (orgs, from, to) => {
     requestsReceived: sum(rows, 'requestsReceived'),
     completed: sum(rows, 'completed'),
     pending: sum(rows, 'pending'),
-    deliveredOnTime: anyDueDate ? sum(rows, 'deliveredOnTime') : null,
-    onTimeRate: anyDueDate ? weightedMean(rows, 'onTimeRate', 'completed') : null,
+    pendingByStage: {
+      waitingForDesigner: sum(rows.map((r) => r.pendingByStage), 'waitingForDesigner'),
+      beingDesigned: sum(rows.map((r) => r.pendingByStage), 'beingDesigned'),
+      withAdminReview: sum(rows.map((r) => r.pendingByStage), 'withAdminReview'),
+      withCoordinatorReview: sum(rows.map((r) => r.pendingByStage), 'withCoordinatorReview'),
+      other: sum(rows.map((r) => r.pendingByStage), 'other'),
+    },
+    cancelled: sum(rows, 'cancelled'),
+    deliveredOnTime: anyCompleted ? sum(rows, 'deliveredOnTime') : null,
+    onTimeRate: anyCompleted ? weightedMean(rows, 'onTimeRate', 'completed') : null,
     approvedFirstPass: sum(rows, 'approvedFirstPass'),
     firstPassRate: weightedMean(rows, 'firstPassRate', 'completed'),
     avgTurnaroundDays: weightedMean(rows, 'avgTurnaroundDays', 'completed'),
@@ -107,7 +179,6 @@ const designOutput = async (orgs, from, to) => {
     mix: Object.entries(mix)
       .sort((a, b) => b[1] - a[1])
       .map(([label, count]) => ({ label, count, share: pct(count, mixTotal) })),
-    hasDueDates: anyDueDate,
   };
 };
 
@@ -117,16 +188,17 @@ const designOutput = async (orgs, from, to) => {
 const webDevelopment = async (orgs, from, to) => {
   const rows = [];
   const mix = {};
-  let anyDueDate = false;
+  let anyCompleted = false;
 
   for (const org of orgs) {
     const received = await WebTask.find({ organization: org._id, createdAt: inWindow(from, to) })
       .select('status createdAt completedAt dueDate taskType').lean();
     const done = received.filter((t) => t.status === 'COMPLETED' && t.completedAt);
+    if (done.length) anyCompleted = true;
 
-    const withDue = done.filter((t) => t.dueDate);
-    if (withDue.length) anyDueDate = true;
-    const onTime = withDue.filter((t) => new Date(t.completedAt) <= new Date(t.dueDate));
+    // No due date isn't a missed one — see designOutput above for why a
+    // finished task with nothing set counts as on time by default.
+    const onTime = done.filter((t) => !t.dueDate || new Date(t.completedAt) <= new Date(t.dueDate));
 
     const turnarounds = done.map((t) => (new Date(t.completedAt) - new Date(t.createdAt)) / DAY);
     for (const t of done) mix[t.taskType || 'Other'] = (mix[t.taskType || 'Other'] || 0) + 1;
@@ -136,8 +208,8 @@ const webDevelopment = async (orgs, from, to) => {
       tasksReceived: received.length,
       completed: done.length,
       pending: received.length - done.length,
-      deliveredOnTime: withDue.length ? onTime.length : null,
-      onTimeRate: withDue.length ? pct(onTime.length, withDue.length) : null,
+      deliveredOnTime: done.length ? onTime.length : null,
+      onTimeRate: done.length ? pct(onTime.length, done.length) : null,
       avgTurnaroundDays: turnarounds.length ? round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
     });
   }
@@ -149,13 +221,12 @@ const webDevelopment = async (orgs, from, to) => {
       tasksReceived: sum(rows, 'tasksReceived'),
       completed: sum(rows, 'completed'),
       pending: sum(rows, 'pending'),
-      deliveredOnTime: anyDueDate ? sum(rows, 'deliveredOnTime') : null,
-      onTimeRate: anyDueDate ? weightedMean(rows, 'onTimeRate', 'completed') : null,
+      deliveredOnTime: anyCompleted ? sum(rows, 'deliveredOnTime') : null,
+      onTimeRate: anyCompleted ? weightedMean(rows, 'onTimeRate', 'completed') : null,
       avgTurnaroundDays: weightedMean(rows, 'avgTurnaroundDays', 'completed'),
     },
     mix: Object.entries(mix).sort((a, b) => b[1] - a[1])
       .map(([label, count]) => ({ label, count, share: pct(count, mixTotal) })),
-    hasDueDates: anyDueDate,
   };
 };
 
@@ -366,7 +437,7 @@ const teamOutput = async (orgs, from, to) => {
   }).select('name jobTitle role userType').lean();
 
   const rows = [];
-  let anyDueDate = false;
+  let anyCompleted = false;
 
   for (const person of people) {
     const assigned = await WorkAssignment.find({ assignee: person._id, organization: { $in: orgIds }, createdAt: inWindow(from, to) })
@@ -374,9 +445,10 @@ const teamOutput = async (orgs, from, to) => {
     if (!assigned.length) continue;
 
     const done = assigned.filter((a) => a.status === 'DONE' && a.completedAt);
-    const withDue = done.filter((a) => a.dueDate);
-    if (withDue.length) anyDueDate = true;
-    const onTime = withDue.filter((a) => new Date(a.completedAt) <= new Date(a.dueDate));
+    if (done.length) anyCompleted = true;
+    // No due date isn't a missed one — see designOutput above for why a
+    // finished assignment with nothing set counts as on time by default.
+    const onTime = done.filter((a) => !a.dueDate || new Date(a.completedAt) <= new Date(a.dueDate));
     const turnarounds = done.map((a) => (new Date(a.completedAt) - new Date(a.createdAt)) / DAY);
 
     // What they produced, split the way the report splits it.
@@ -396,8 +468,8 @@ const teamOutput = async (orgs, from, to) => {
       designTasks,
       socialCreatives,
       webTasks,
-      deliveredOnTime: withDue.length ? onTime.length : null,
-      onTimeRate: withDue.length ? pct(onTime.length, withDue.length) : null,
+      deliveredOnTime: done.length ? onTime.length : null,
+      onTimeRate: done.length ? pct(onTime.length, done.length) : null,
       avgTurnaroundDays: turnarounds.length ? round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
     });
   }
@@ -413,11 +485,10 @@ const teamOutput = async (orgs, from, to) => {
       designTasks: sum(rows, 'designTasks'),
       socialCreatives: sum(rows, 'socialCreatives'),
       webTasks: sum(rows, 'webTasks'),
-      deliveredOnTime: anyDueDate ? sum(rows, 'deliveredOnTime') : null,
-      onTimeRate: anyDueDate ? weightedMean(rows, 'onTimeRate', 'completed') : null,
+      deliveredOnTime: anyCompleted ? sum(rows, 'deliveredOnTime') : null,
+      onTimeRate: anyCompleted ? weightedMean(rows, 'onTimeRate', 'completed') : null,
       avgTurnaroundDays: weightedMean(rows, 'avgTurnaroundDays', 'completed'),
     },
-    hasDueDates: anyDueDate,
   };
 };
 
@@ -455,6 +526,7 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
     engagementRate: social.totals.engagementRate,
     adSpend: ads.totals.spend,
     designPending: design.totals.pending,
+    designCancelled: design.totals.cancelled,
     avgTurnaroundDays: design.totals.avgTurnaroundDays,
     firstPassRate: design.totals.firstPassRate,
     avgRevisionRounds: design.totals.avgRevisionRounds,
@@ -469,12 +541,9 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
   // Be explicit about what the numbers cannot tell you yet, so nobody reads a
   // blank as a zero.
   const gaps = [];
-  if (!design.hasDueDates) gaps.push('No due dates on design requests in this period, so there is no design on-time rate.');
-  if (!web.hasDueDates && web.totals.completed) gaps.push('No due dates on web tasks, so there is no web on-time rate.');
   if (!web.totals.tasksReceived) gaps.push('No web tasks recorded for this period.');
   if (!ads.totals.spend) gaps.push('No ad campaigns recorded for this period, so the paid section is empty.');
   else if (!ads.totals.leads) gaps.push('Ad spend is recorded but no leads, so cost per lead cannot be worked out.');
-  if (!team.hasDueDates && team.totals.completed) gaps.push('No due dates on assigned work, so there is no team on-time rate.');
   if (!social.totals.impressions) gaps.push('No post impressions in this period, so engagement rate cannot be normalised.');
 
   return {

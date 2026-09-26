@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BriefcaseBusiness, Inbox, Search, Images as ImagesIcon, Clock, Play, RefreshCw, CheckCircle2, Send, X,
-  XCircle, Palette, UserCheck, FileText,
+  XCircle, Palette, UserCheck, FileText, PackageCheck,
 } from 'lucide-react';
 import { approvalApi, organizationApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -77,7 +77,9 @@ const TABS = [
 
 // Stat tiles double as shortcuts to their status tab (Total -> All). `key` is
 // the count returned by the API (see approvalController#getApprovals), `tab` the
-// status filter the tile switches to.
+// status filter the tile switches to. Delivered only makes sense while looking
+// at Design approvals — a design with nothing to post, handed straight back to
+// the coordinator — same as the Delivered status tab it mirrors.
 const TILES = [
   { key: 'ALL', tab: 'All', label: 'Total', icon: Inbox, tone: 'text-slate-400' },
   { key: 'PENDING', tab: 'PENDING', label: 'Pending', icon: Clock, tone: 'text-amber-500' },
@@ -85,6 +87,7 @@ const TILES = [
   { key: 'APPROVED', tab: 'APPROVED', label: 'Approved', icon: CheckCircle2, tone: 'text-emerald-500' },
   { key: 'REJECTED', tab: 'REJECTED', label: 'Rejected', icon: XCircle, tone: 'text-rose-500' },
   { key: 'POSTED', tab: 'POSTED', label: 'Posted', icon: Send, tone: 'text-violet-500' },
+  { key: 'DELIVERED', tab: 'DELIVERED', label: 'Delivered', icon: PackageCheck, tone: 'text-teal-500', design: true },
 ];
 
 const EMPTY_COPY = {
@@ -128,18 +131,32 @@ export default function Approvals() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const urlStatus = searchParams.get('status');
+  const urlType = searchParams.get('type');
   const [showAssign, setShowAssign] = useState(false);
-  const [filters, setFilters] = useState({
+  // Opening a row and its Back button coming right back here is a fresh
+  // navigation, not a browser "back" — so the filters/page/row-count are
+  // remembered here and restored on return. A deep link (?status=/?type=)
+  // always wins over whatever was remembered, since it says exactly what view
+  // the caller wanted.
+  const LIST_STATE_KEY = 'admin-approvals-list-state';
+  const hasDeepLink = !!(urlStatus || urlType);
+  const savedListState = hasDeepLink ? null : (() => {
+    try { return JSON.parse(sessionStorage.getItem(LIST_STATE_KEY) || 'null'); } catch { return null; }
+  })();
+  const [filters, setFilters] = useState(savedListState?.filters || {
     search: '',
     status: TABS.some((t) => t.value === urlStatus) ? urlStatus : 'All',
-    type: searchParams.get('type') === 'DESIGN' ? 'DESIGN' : 'POST',
+    type: urlType === 'DESIGN' ? 'DESIGN' : 'POST',
     platform: 'All',
     organizationId: '',
     from: '',
     to: '',
   });
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [page, setPage] = useState(savedListState?.page || 1);
+  const [limit, setLimit] = useState(savedListState?.limit || 10);
+  useEffect(() => {
+    try { sessionStorage.setItem(LIST_STATE_KEY, JSON.stringify({ filters, page, limit })); } catch { /* ignore */ }
+  }, [filters, page, limit]);
 
   // Any filter change restarts from page 1 so pagination never points past the results.
   const setFilter = (patch) => { setFilters((f) => ({ ...f, ...patch })); setPage(1); };
@@ -197,8 +214,8 @@ export default function Approvals() {
       </div>
 
       {/* Stat tiles — click to jump to that status tab */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {TILES.map((t) => {
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        {TILES.filter((t) => !t.design || filters.type === 'DESIGN').map((t) => {
           const Icon = t.icon;
           const active = filters.status === t.tab;
           return (

@@ -26,25 +26,35 @@ const appSecretProof = (tok) => {
   return crypto.createHmac('sha256', secret).update(tok).digest('hex');
 };
 
-// Low-level Graph GET. Throws an Error enriched with Meta's error fields.
+// Low-level Graph call. Throws an Error enriched with Meta's error fields.
 // `tok` overrides the token (e.g. a Page Access Token for page/IG insights);
-// defaults to the system/user token from the environment.
-const call = async (path, params = {}, tok) => {
+// defaults to the system/user token from the environment. GET params ride the
+// query string (Meta's usual read shape); POST params ride a form-encoded body
+// so a publish call's `caption`/`message` isn't length-limited by a URL.
+const call = async (path, params = {}, tok, method = 'GET') => {
   if (!hasToken()) {
     const e = new Error('Meta is not connected. Set META_SYSTEM_TOKEN in the backend .env file.');
     e.notConfigured = true;
     throw e;
   }
   const useTok = tok || token();
-  const url = new URL(`${GRAPH}/${VERSION}/${path}`);
-  for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
-  url.searchParams.set('access_token', useTok);
   const proof = appSecretProof(useTok);
-  if (proof) url.searchParams.set('appsecret_proof', proof);
+  const url = new URL(`${GRAPH}/${VERSION}/${path}`);
+  let body;
+  if (method === 'GET') {
+    for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
+    url.searchParams.set('access_token', useTok);
+    if (proof) url.searchParams.set('appsecret_proof', proof);
+  } else {
+    body = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) body.set(k, v);
+    body.set('access_token', useTok);
+    if (proof) body.set('appsecret_proof', proof);
+  }
 
   let res, data;
   try {
-    res = await fetch(url);
+    res = await fetch(url, method === 'GET' ? undefined : { method, body });
     data = await res.json().catch(() => ({}));
   } catch (netErr) {
     const e = new Error(`Could not reach the Meta Graph API: ${netErr.message}`);
@@ -62,6 +72,9 @@ const call = async (path, params = {}, tok) => {
   }
   return data;
 };
+
+// POST convenience wrapper — same error shape as `call`, body instead of query string.
+const post = (path, params, tok) => call(path, params, tok, 'POST');
 
 // Follow Graph pagination via the absolute `paging.next` URL (which already
 // carries the token + cursor).
@@ -175,13 +188,19 @@ export const probe = async () => {
   return { id: me.id, name: me.name, scopes };
 };
 
-// Scopes required to read Instagram + Facebook insights.
+// Scopes required to read Instagram + Facebook insights, plus the two needed
+// to actually publish a post (pages_manage_posts, instagram_content_publish).
+// A system-user token minted before publishing existed won't have these —
+// the "Test connection" screen (metaController.js) reports them as missing so
+// whoever regenerates the token in Business Manager knows what to add.
 export const REQUIRED_SCOPES = [
   'instagram_basic',
   'instagram_manage_insights',
   'pages_show_list',
   'pages_read_engagement',
   'pages_read_user_content',
+  'pages_manage_posts',
+  'instagram_content_publish',
   'business_management',
 ];
 
@@ -581,4 +600,133 @@ export const getAdInsights = async (adAccountId, { since, until }) => {
   }
 
   return rows;
+};
+
+// ---------------------------------------------------------------------------
+// Publishing — Facebook Page posts and Instagram Business posts.
+//
+// Both need a PAGE access token (see getPageToken/listAccounts above), not the
+// raw system token — Meta ties publish permission to the page a system user
+// has been granted access to, not to the app user itself.
+//
+// `media` items are { url, mediaType: 'image' | 'video' }. The url MUST be
+// publicly reachable — Meta's servers fetch it directly server-to-server, so
+// a local-dev backend (http://localhost:...) cannot be used as the source; it
+// has to be the production/public URL the app is actually served from.
+// ---------------------------------------------------------------------------
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Exported so callers (socialPublish.js) can confirm a natively-scheduled
+// Facebook post's real permalink once its scheduled time has actually passed.
+export const getPermalink = async (id, tok) => {
+  const r = await call(id, { fields: 'permalink_url' }, tok).catch(() => ({}));
+  if (!r.permalink_url) return null;
+  return r.permalink_url.startsWith('http') ? r.permalink_url : `https://www.facebook.com${r.permalink_url}`;
+};
+
+// Facebook (unlike Instagram) has a real native "scheduled post" concept —
+// pass `scheduledUnix` (a Unix timestamp, seconds) and Meta itself holds the
+// post unpublished and fires it at that moment, visible as "Scheduled" in
+// Meta Business Suite immediately. Facebook requires this to be at least 10
+// minutes and at most 75 days out; callers should validate that window
+// before calling (see socialPublish.js's validateFacebookScheduleWindow) —
+// Meta also enforces it and rejects an out-of-range time with an API error.
+const FACEBOOK_SCHEDULE_MIN_SECONDS = 10 * 60;
+const FACEBOOK_SCHEDULE_MAX_SECONDS = 75 * 24 * 60 * 60;
+export { FACEBOOK_SCHEDULE_MIN_SECONDS, FACEBOOK_SCHEDULE_MAX_SECONDS };
+
+// Create a Facebook Page post: text-only, a single photo/video, or several
+// photos attached to one post. Facebook has no multi-video post, so extra
+// videos beyond the first are skipped rather than silently dropping the post.
+export const publishToFacebookPage = async (pageId, pageToken, { message = '', media = [], scheduledUnix } = {}) => {
+  // Unpublished + a future timestamp = a real native Facebook schedule, not a
+  // draft — Meta auto-publishes it at that moment on its own infrastructure.
+  const scheduleParams = scheduledUnix ? { published: 'false', scheduled_publish_time: String(scheduledUnix) } : {};
+  let created;
+  if (media.length === 0) {
+    created = await post(`${pageId}/feed`, { message, ...scheduleParams }, pageToken);
+  } else if (media.length === 1 && media[0].mediaType === 'video') {
+    created = await post(`${pageId}/videos`, { file_url: media[0].url, description: message, ...scheduleParams }, pageToken);
+  } else if (media.length === 1) {
+    created = await post(`${pageId}/photos`, { url: media[0].url, caption: message, ...scheduleParams }, pageToken);
+  } else {
+    const photoIds = [];
+    for (const m of media) {
+      if (m.mediaType === 'video') continue;
+      // Child photos are always unpublished regardless of scheduling — they
+      // only exist to be attached to the parent post below.
+      const photo = await post(`${pageId}/photos`, { url: m.url, published: 'false' }, pageToken);
+      photoIds.push(photo.id);
+    }
+    created = await post(`${pageId}/feed`, {
+      message,
+      attached_media: JSON.stringify(photoIds.map((id) => ({ media_fbid: id }))),
+      ...scheduleParams,
+    }, pageToken);
+  }
+
+  if (scheduledUnix) {
+    // An unpublished/scheduled post has no permalink yet — Facebook assigns
+    // one only once it actually goes live.
+    return { id: created.id, url: null };
+  }
+
+  const url = await getPermalink(created.id, pageToken);
+  return { id: created.id, url: url || `https://www.facebook.com/${created.id}` };
+};
+
+// Poll an Instagram media container until Meta finishes downloading/processing
+// it. Images are usually near-instant; video (required to go through IG's
+// Reels pipeline) can take real time, so this is only called for containers
+// that actually need it.
+const waitForInstagramContainer = async (containerId, pageToken, { timeoutMs = 90_000, intervalMs = 3000 } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await call(containerId, { fields: 'status_code' }, pageToken);
+    if (r.status_code === 'FINISHED') return;
+    if (r.status_code === 'ERROR') {
+      throw Object.assign(new Error('Instagram could not process this media.'), { metaType: 'IGContainerError' });
+    }
+    if (Date.now() > deadline) {
+      throw Object.assign(new Error('Instagram is still processing this media after 90s — try again shortly.'), { timeout: true });
+    }
+    await sleep(intervalMs);
+  }
+};
+
+// Create an Instagram Business post: a single image, a single video (posted
+// as a Reel — the Content Publishing API no longer accepts a plain feed
+// video), or a multi-item carousel.
+export const publishToInstagram = async (igId, pageToken, { caption = '', media = [] } = {}) => {
+  if (media.length === 0) {
+    throw new Error('Instagram requires at least one image or video.');
+  }
+
+  let creationId;
+  if (media.length === 1) {
+    const m = media[0];
+    const container = m.mediaType === 'video'
+      ? await post(`${igId}/media`, { video_url: m.url, media_type: 'REELS', caption }, pageToken)
+      : await post(`${igId}/media`, { image_url: m.url, caption }, pageToken);
+    if (m.mediaType === 'video') await waitForInstagramContainer(container.id, pageToken);
+    creationId = container.id;
+  } else {
+    const childIds = [];
+    for (const m of media) {
+      const child = m.mediaType === 'video'
+        ? await post(`${igId}/media`, { video_url: m.url, is_carousel_item: 'true' }, pageToken)
+        : await post(`${igId}/media`, { image_url: m.url, is_carousel_item: 'true' }, pageToken);
+      childIds.push(child.id);
+    }
+    const parent = await post(`${igId}/media`, {
+      media_type: 'CAROUSEL', children: childIds.join(','), caption,
+    }, pageToken);
+    await waitForInstagramContainer(parent.id, pageToken);
+    creationId = parent.id;
+  }
+
+  const published = await post(`${igId}/media_publish`, { creation_id: creationId }, pageToken);
+  const r = await call(published.id, { fields: 'permalink' }, pageToken).catch(() => ({}));
+  return { id: published.id, url: r.permalink || null };
 };

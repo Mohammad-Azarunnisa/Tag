@@ -166,6 +166,10 @@ export const NOTIFICATION_TYPES = {
   REQUEST_DECLINED: 'REQUEST_DECLINED',
   // The monthly Branding & Marketing report landing for the super admin.
   MONTHLY_REPORT: 'MONTHLY_REPORT',
+  // A scheduled/instant publish to a connected Meta (Facebook/Instagram)
+  // account failed — the request stays APPROVED rather than falsely showing
+  // as posted, and this is the only signal anyone gets that it needs a look.
+  PUBLISH_FAILED: 'PUBLISH_FAILED',
 };
 
 export const ACTIVITY_ACTIONS = {

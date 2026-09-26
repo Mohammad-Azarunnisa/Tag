@@ -6,7 +6,7 @@ import {
   ArrowLeft, Check, X, Plus, Trash2, Hash, Play, Send, Paperclip, Inbox,
   CheckCircle2, RefreshCw, MessageSquareWarning, FileText, Rocket, Images as ImagesIcon,
   UserCheck, Palette, Truck, Route, Sparkles, Globe, Printer, CalendarClock,
-  Users, Megaphone,
+  Users, Megaphone, Download,
 } from 'lucide-react';
 import { approvalApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -14,7 +14,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
-import { formatDate, formatDateTime, timeAgo, cn, isVideo, isDoc, fileLabel, platformsOf } from '../lib/utils.js';
+import { formatDate, formatDateTime, timeAgo, cn, isVideo, isDoc, fileLabel, platformsOf, downloadAllAttachments, canNavigateBack } from '../lib/utils.js';
 import { StatusPill, FeedbackCategoryTag, FEEDBACK_CATEGORIES } from './Approvals.jsx';
 import ReviewAssist from '../components/ReviewAssist.jsx';
 
@@ -54,6 +54,20 @@ export default function ApprovalDetail() {
     mutationFn: (postedAt) => approvalApi.markPosted(id, postedAt),
     onSuccess: () => { toast.success('Marked as posted — the request is now closed'); setPostedOpen(false); invalidate(); },
     onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
+  });
+  // Separate module from "Mark as posted" above — this actually publishes to
+  // a connected Facebook/Instagram account instead of just recording a
+  // claim. Dormant until a Meta token with publish scopes + a linked
+  // Page/Instagram account exist (DMM_backend/src/services/socialPublish.js);
+  // until then the backend reports there's nothing to post directly.
+  const publishNowMut = useMutation({
+    mutationFn: () => approvalApi.publishNow(id),
+    onSuccess: (res) => {
+      const live = (res?.request?.metaPublishResults || []).filter((p) => p.status === 'success' && p.postUrl);
+      toast.success(live.length ? `Published live: ${live.map((p) => p.platform).join(', ')}` : 'Posted');
+      invalidate();
+    },
+    onError: (e) => toast.error(e.response?.data?.message || 'Could not post this directly', { duration: e.response?.status === 502 ? 8000 : 4000 }),
   });
   const deleteMut = useMutation({
     mutationFn: () => approvalApi.remove(id),
@@ -106,6 +120,10 @@ export default function ApprovalDetail() {
   // that is what the server allows (markPosted), so it is not offered wider.
   const canMarkPosted = !!user?.isSuperAdmin && !isViewer && r.status === 'APPROVED'
     && (r.type !== 'DESIGN' || !!r.assignedTo);
+  // Only meaningful when the request actually targets a platform this module
+  // knows how to post to directly — everything else still goes through
+  // "Mark as Posted" above, unchanged.
+  const canPublishNow = canMarkPosted && platformsOf(r).some((p) => p === 'Facebook' || p === 'Instagram');
   // Once a post is approved it needs a go-live time, so the system can mark it
   // posted on its own. A design has nothing to publish until it is allocated.
   const canSchedule = isAdministrator && !isViewer && r.status === 'APPROVED' && r.type !== 'DESIGN';
@@ -113,9 +131,11 @@ export default function ApprovalDetail() {
 
   return (
     <div>
-      <Link to="/approvals" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200">
-        <ArrowLeft className="h-4 w-4" /> Back to approvals
-      </Link>
+      <button
+        onClick={() => (canNavigateBack() ? navigate(-1) : navigate('/approvals'))}
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200">
+        <ArrowLeft className="h-4 w-4" /> Back
+      </button>
 
       {/* Header: title, status + reviewer actions */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -151,6 +171,14 @@ export default function ApprovalDetail() {
           {canSchedule && (
             <Button variant={needsSchedule ? 'default' : 'outline'} onClick={() => setScheduleOpen(true)}>
               <CalendarClock className="h-4 w-4" /> {r.scheduledAt ? 'Reschedule' : 'Schedule post'}
+            </Button>
+          )}
+          {/* Separate from "Mark as Posted" below — this one actually posts
+              live to a connected Facebook/Instagram account. Only shown when
+              there's a real platform for it to do that to. */}
+          {canPublishNow && (
+            <Button variant="success" loading={publishNowMut.isPending} onClick={() => publishNowMut.mutate()}>
+              <Send className="h-4 w-4" /> Post now
             </Button>
           )}
           {canMarkPosted && (
@@ -716,6 +744,14 @@ function MediaViewer({ items }) {
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-100 dark:border-slate-800">
+      {sorted.length > 1 && (
+        <div className="flex justify-end border-b border-slate-100 px-3 py-1.5 dark:border-slate-800">
+          <button type="button" onClick={() => downloadAllAttachments(sorted)}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+            <Download className="h-3 w-3" /> Download all ({sorted.length})
+          </button>
+        </div>
+      )}
       <div className="relative flex aspect-video items-center justify-center bg-slate-100 dark:bg-slate-800">
         {current
           ? (isVideo(current)
@@ -844,7 +880,14 @@ function FeedItem({ item, own }) {
       <div className={cn('max-w-[90%] rounded-xl p-3', own ? 'rounded-tr-sm border border-brand-500/20 bg-brand-500/10' : 'rounded-tl-sm bg-slate-100 dark:bg-slate-800')}>
         {item.text && <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">{item.text}</p>}
         {attachments.length > 0 && (
-          <div className={cn('grid grid-cols-2 gap-1.5', item.text && 'mt-2')}>
+          <div className={cn(item.text && 'mt-2')}>
+            {attachments.length > 1 && (
+              <button type="button" onClick={() => downloadAllAttachments(attachments)}
+                className="mb-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                <Download className="h-3 w-3" /> Download all ({attachments.length})
+              </button>
+            )}
+            <div className="grid grid-cols-2 gap-1.5">
             {attachments.map((a, i) =>
               a.mediaType === 'video' || isVideo(a) ? (
                 <video key={i} src={a.url} controls className="h-24 w-full rounded-lg bg-black object-cover" />
@@ -860,6 +903,7 @@ function FeedItem({ item, own }) {
                 </button>
               )
             )}
+            </div>
           </div>
         )}
       </div>

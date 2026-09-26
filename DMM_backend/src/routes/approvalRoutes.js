@@ -8,6 +8,7 @@ import {
   rejectRequest,
   resubmitRequest,
   markPosted,
+  publishNow,
   scheduleRequest,
   claimDesignRequest,
   assignRequest,
@@ -47,6 +48,11 @@ router.put('/:id/forward', authorize(ROLES.ADMIN, ROLES.CEO), forwardRequest);
 router.put('/:id/resubmit', upload.array('images', 10), resubmitRequest);
 router.put('/:id/schedule', scheduleRequest);
 router.put('/:id/posted', markPosted);
+// Separate from /posted above — this one actually publishes to a connected
+// Facebook/Instagram account instead of just recording that it was posted.
+// See publishNow in approvalController.js for exactly when it does something
+// vs. when it reports there's nothing it can post directly yet.
+router.put('/:id/publish-now', publishNow);
 
 // Conversation thread on a request (owner / ADMIN / org CEO — enforced in the
 // controller). Messages may carry up to 6 image/video attachments.

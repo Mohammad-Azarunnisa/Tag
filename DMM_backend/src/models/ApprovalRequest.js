@@ -145,6 +145,35 @@ const approvalRequestSchema = new mongoose.Schema(
     postedAt: { type: Date },
     postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
+    // Outcome of each attempt to actually publish this to a connected Meta
+    // (Facebook/Instagram) account, keyed by platform. One entry per platform
+    // targeted by this request — a retry after a partial failure only redoes
+    // the platforms still 'failed', never a platform already 'success'/
+    // 'scheduled', so a handler re-clicking "Mark as posted" (or the sweep
+    // re-ticking) can never double-post a channel that already went out
+    // (services/socialPublish.js).
+    //
+    // 'scheduled' is Facebook-only: Meta's API lets a Page post be created
+    // now but held unpublished until a future moment Facebook itself fires it
+    // at (visible as "Scheduled" in Meta Business Suite right away).
+    // Instagram has no equivalent in Meta's API at all — every tool that
+    // offers "Instagram scheduling", including Meta's own, holds it
+    // internally and calls the real publish endpoint at the right moment
+    // (see services/scheduledPosts.js), so Instagram only ever gets a
+    // 'success' entry, written the moment it actually goes live.
+    metaPublishResults: {
+      type: [{
+        platform: { type: String, enum: PLATFORMS, required: true },
+        status: { type: String, enum: ['success', 'failed', 'scheduled'], required: true },
+        postUrl: { type: String, default: '' },
+        postId: { type: String, default: '' },
+        error: { type: String, default: '' },
+        attemptedAt: { type: Date, default: Date.now },
+        _id: false,
+      }],
+      default: undefined,
+    },
+
     resubmitCount: { type: Number, default: 0 },
     // Set when an admin routes an approved request to the designer pool.
     openForDesigners: { type: Boolean, default: false, index: true },

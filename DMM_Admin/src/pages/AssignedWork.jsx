@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BriefcaseBusiness, Search, Circle, Clock3, Send, CheckCircle2, MessageSquareWarning, ThumbsUp, X,
-  UserRoundCog, Flame, Share2, UserRound,
+  UserRoundCog, Flame, Share2, UserRound, Download,
 } from 'lucide-react';
 import { workAssignmentApi, organizationApi, userApi, institutionRequestApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -13,7 +13,7 @@ import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
 import ViewToggle, { useViewMode } from '../components/ui/ViewToggle.jsx';
-import { cn, formatDate, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, timeAgo, downloadAllAttachments } from '../lib/utils.js';
 import { useAuthStore } from '../store/authStore.js';
 
 const STATUS_META = {
@@ -445,11 +445,19 @@ function AttachmentList({ files, label }) {
   const others = list.filter((a) => !isImage(a));
   return (
     <div>
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{label} · {list.length}</p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label} · {list.length}</p>
+        {list.length > 1 && (
+          <button type="button" onClick={() => downloadAllAttachments(list)}
+            className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+            <Download className="h-3 w-3" /> Download all ({list.length})
+          </button>
+        )}
+      </div>
       {images.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {images.map((a, i) => (
-            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" title={a.name || 'Open full size'}
+            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true} title={a.name || 'Open full size'}
               className="group block overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
               <img src={a.url} alt={a.name || `File ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
             </a>
@@ -457,7 +465,7 @@ function AttachmentList({ files, label }) {
         </div>
       )}
       {others.map((a, i) => (
-        <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+        <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
           className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:border-brand-300 dark:border-slate-700 dark:text-slate-300">
           <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>
         </a>

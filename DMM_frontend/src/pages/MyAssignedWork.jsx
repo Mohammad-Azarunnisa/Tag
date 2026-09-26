@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BriefcaseBusiness, CheckCircle2, Circle, Search, Clock3, Send, MessageSquareWarning, ThumbsUp, Flame, Eye, X,
-  Paperclip, ExternalLink, FileImage, CalendarClock, ClipboardList, AlertTriangle,
+  Paperclip, ExternalLink, FileImage, CalendarClock, ClipboardList, AlertTriangle, Download,
 } from 'lucide-react';
 import { workAssignmentApi, workflowApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -12,7 +12,7 @@ import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, EmptyState, Input, Select, Skeleton } from '../components/ui/primitives.jsx';
 import FileDropzone from '../components/ui/FileDropzone.jsx';
-import { cn, formatDate, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, timeAgo, downloadAllAttachments, useSessionState } from '../lib/utils.js';
 
 const STATUS_OPTIONS = ['All', 'OPEN', 'ACKNOWLEDGED', 'SUBMITTED', 'DONE'];
 
@@ -101,13 +101,21 @@ function FileList({ files, label }) {
   const others = list.filter((a) => !isImageAttachment(a));
   return (
     <div className="mt-3">
-      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-        <Paperclip className="h-3.5 w-3.5" /> {label} · {list.length}
-      </p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          <Paperclip className="h-3.5 w-3.5" /> {label} · {list.length}
+        </p>
+        {list.length > 1 && (
+          <button type="button" onClick={() => downloadAllAttachments(list)}
+            className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+            <Download className="h-3 w-3" /> Download all ({list.length})
+          </button>
+        )}
+      </div>
       {images.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {images.map((a, i) => (
-            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" title={a.name || 'Open full size'}
+            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true} title={a.name || 'Open full size'}
               className="group relative block overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
               <img src={a.url} alt={a.name || `File ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
             </a>
@@ -115,7 +123,7 @@ function FileList({ files, label }) {
         </div>
       )}
       {others.map((a, i) => (
-        <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+        <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
           className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300">
           <FileImage className="h-4 w-4 shrink-0 text-slate-400" />
           <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>
@@ -187,13 +195,21 @@ function RequestBrief({ request: r }) {
 
       {files.length > 0 && (
         <div className="mt-3">
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            <Paperclip className="h-3.5 w-3.5" /> Reference files · {files.length}
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <Paperclip className="h-3.5 w-3.5" /> Reference files · {files.length}
+            </p>
+            {files.length > 1 && (
+              <button type="button" onClick={() => downloadAllAttachments(files)}
+                className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                <Download className="h-3 w-3" /> Download all ({files.length})
+              </button>
+            )}
+          </div>
           {images.length > 0 && (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {images.map((a, i) => (
-                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" title={a.name || 'Open full size'}
+                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true} title={a.name || 'Open full size'}
                   className="group relative block overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
                   <img src={a.url} alt={a.name || `Reference ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
                 </a>
@@ -201,7 +217,7 @@ function RequestBrief({ request: r }) {
             </div>
           )}
           {others.map((a, i) => (
-            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+            <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
               className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300">
               <FileImage className="h-4 w-4 shrink-0 text-slate-400" />
               <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>
@@ -221,7 +237,7 @@ export default function MyAssignedWork() {
   // "Another designer already acknowledged this" links here with ?assignment=<id>,
   // so the card it is talking about is the one that stands out.
   const highlightId = params.get('assignment') || '';
-  const [filters, setFilters] = useState({ status: 'All', search: '' });
+  const [filters, setFilters] = useSessionState('my-assigned-work-filters', { status: 'All', search: '' });
   // The assignment whose completion request is being written.
   const [requesting, setRequesting] = useState(null);
   const [viewing, setViewing] = useState(null);

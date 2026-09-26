@@ -163,6 +163,9 @@ export const approvalApi = {
   // is how posts that went live before anyone logged them land on the right day.
   markPosted: (id, postedAt) =>
     api.put(`/approvals/${id}/posted`, postedAt ? { postedAt } : {}).then((r) => r.data),
+  // Separate from markPosted above — actually publishes to a connected
+  // Facebook/Instagram account instead of just recording that it was posted.
+  publishNow: (id) => api.put(`/approvals/${id}/publish-now`, {}).then((r) => r.data),
   // Approved content: book the go-live moment; a server sweep posts it then.
   schedule: (id, scheduledAt) => api.put(`/approvals/${id}/schedule`, { scheduledAt }).then((r) => r.data),
   // Post route: allocate an approved design to a social handler who will post it.

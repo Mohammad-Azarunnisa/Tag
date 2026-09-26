@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -153,8 +154,18 @@ export default function Users() {
               title: s.role === 'All' ? 'Show everyone' : `Show only ${s.label}`,
             } : {})}
             className={cn('flex items-center gap-3 p-4',
-              s.role && 'cursor-pointer transition hover:-translate-y-0.5 hover:shadow-glow',
-              s.role && tileActive(s) && 'ring-2 ring-brand-500/40')}
+              // A plain div with role="button" (this Card isn't a native
+              // <button>) gets the browser's keyboard-focus ring on a mouse
+              // click too, not just Tab — without this override that global
+              // ring (index.css, brand-500/70 + an offset) would flash on top
+              // of the plain selected-state ring every other filter tile in
+              // the app uses, looking like a different, heavier color.
+              s.role && 'cursor-pointer transition hover:-translate-y-0.5 hover:shadow-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-0',
+              // Solid brand-500, no opacity — matches the strength of the
+              // selected-stage tiles on the Designs to be Done / To Be Posted
+              // boards (WorkflowBoard.jsx's border-brand-500), rather than the
+              // paler 40%-opacity ring most other filter cards in the app use.
+              s.role && tileActive(s) && 'ring-2 ring-brand-500')}
           >
             <div className={`rounded-xl p-2.5 ${s.cls}`}><s.icon className="h-5 w-5" /></div>
             <div className="min-w-0">
@@ -227,13 +238,23 @@ export default function Users() {
                 {users.map((u) => {
                   const RoleIcon = roleIcon(u);
                   const isSelf = u._id === me?._id;
+                  const actions = actionProps(u);
                   return (
                     <tr key={u._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                       <td className="px-5 py-3">
-                        <div className="flex items-center gap-3">
+                        <div
+                          className={cn('flex items-center gap-3', canManage && 'group cursor-pointer')}
+                          {...(canManage ? {
+                            role: 'button',
+                            tabIndex: 0,
+                            onClick: () => actions.onEdit(),
+                            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); actions.onEdit(); } },
+                            title: `Open ${u.name}'s details`,
+                          } : {})}
+                        >
                           <Avatar src={u.avatar} name={u.name} size="sm" />
                           <div>
-                            <p className="flex flex-wrap items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
+                            <p className={cn('flex flex-wrap items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200', canManage && 'group-hover:text-brand-600 dark:group-hover:text-brand-400')}>
                               {u.name} {isSelf && <span className="text-xs font-normal text-slate-400">(you)</span>}
                               {u.viewOnly && (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
@@ -277,7 +298,7 @@ export default function Users() {
                       </td>
                       <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{formatDate(u.createdAt)}</td>
                       <td className="px-5 py-3">
-                        <RowActions {...actionProps(u)} />
+                        <RowActions {...actions} />
                       </td>
                     </tr>
                   );
@@ -321,21 +342,57 @@ const MenuItem = ({ icon: Icon, label, onClick, danger }) => (
 
 // The row menu, shared by the table and the cards. A Chairman (view-only) gets
 // a dash instead — the same "nothing to do here" the table has always shown.
+const MENU_WIDTH = 176; // w-44
+const MENU_HEIGHT = 190; // ~4 items, worst case (Edit/Reset/Toggle/Delete)
+
 function RowActions({ isSelf, canManage, isActive, open, onToggle, onClose, onEdit, onReset, onToggleActive, onDelete }) {
+  const btnRef = useRef(null);
+  // The table this sits in clips overflow (for its rounded corners), and an
+  // absolutely-positioned menu is clipped by that ancestor no matter which
+  // direction it opens — for the last row, or the only search result, that
+  // meant the menu was rendered but invisible unless you scrolled to find it.
+  // Portalling straight to <body> with viewport-fixed coordinates (measured
+  // off the button itself, each time it opens) escapes that clipping
+  // entirely, and still flips upward when there isn't room below.
+  const [coords, setCoords] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const measure = () => {
+      const rect = btnRef.current.getBoundingClientRect();
+      const openUp = window.innerHeight - rect.bottom < MENU_HEIGHT;
+      setCoords({
+        left: Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
+        top: openUp ? rect.top - MENU_HEIGHT - 4 : rect.bottom + 4,
+      });
+    };
+    measure();
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [open]);
+
   if (!canManage) return <div className="flex justify-end text-xs text-slate-300 dark:text-slate-600">—</div>;
   return (
     <div className="relative flex justify-end">
-      <button onClick={onToggle} aria-label="Actions" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
-      {open && (
+      <button ref={btnRef} onClick={onToggle} aria-label="Actions" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
+      {open && coords && createPortal(
         <>
-          <div className="fixed inset-0 z-10" onClick={onClose} />
-          <div className="absolute right-0 top-9 z-20 w-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5 shadow-card">
+          <div className="fixed inset-0 z-40" onClick={onClose} />
+          <div
+            style={{ position: 'fixed', top: coords.top, left: coords.left, width: MENU_WIDTH }}
+            className="z-50 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5 shadow-card"
+          >
             <MenuItem icon={Pencil} label="Edit" onClick={onEdit} />
             <MenuItem icon={KeyRound} label="Reset password" onClick={onReset} />
             <MenuItem icon={Power} label={isActive ? 'Deactivate' : 'Activate'} onClick={onToggleActive} />
             {!isSelf && <MenuItem icon={Trash2} label="Delete" danger onClick={onDelete} />}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
@@ -353,9 +410,19 @@ function UserCard({ user: u, ...actions }) {
   return (
     <Card className={cn('flex flex-col p-5', !u.isActive && 'opacity-75')}>
       <div className="flex items-start gap-4">
+        <div
+          className={cn('flex min-w-0 flex-1 items-start gap-4', actions.canManage && 'group cursor-pointer')}
+          {...(actions.canManage ? {
+            role: 'button',
+            tabIndex: 0,
+            onClick: () => actions.onEdit(),
+            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); actions.onEdit(); } },
+            title: `Open ${u.name}'s details`,
+          } : {})}
+        >
         <Avatar src={u.avatar} name={u.name} size="lg" className="h-20 w-20 shrink-0 text-xl" />
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-1.5 font-bold text-slate-800 dark:text-white">
+          <p className={cn('flex flex-wrap items-center gap-1.5 font-bold text-slate-800 dark:text-white', actions.canManage && 'group-hover:text-brand-600 dark:group-hover:text-brand-400')}>
             <span className="truncate">{u.name}</span>
             {actions.isSelf && <span className="text-xs font-normal text-slate-400">(you)</span>}
           </p>
@@ -379,6 +446,7 @@ function UserCard({ user: u, ...actions }) {
               </span>
             )}
           </div>
+        </div>
         </div>
         <div className="-mr-1 -mt-1 shrink-0"><RowActions {...actions} /></div>
       </div>

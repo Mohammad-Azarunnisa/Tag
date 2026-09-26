@@ -104,7 +104,7 @@ export const login = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Email and password are required');
   }
-  const user = await User.findOne({ email: email.toLowerCase() })
+  const user = await User.findOne({ email: email.trim().toLowerCase() })
     .select('+password')
     .populate('organization', 'name slug logo color isActive');
   if (!user || !(await user.matchPassword(password))) {

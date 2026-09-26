@@ -7,14 +7,19 @@ import InstitutionRequest, {
 import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 import WorkAssignment from '../models/WorkAssignment.js';
+import ApprovalRequest from '../models/ApprovalRequest.js';
+import ApprovalImage from '../models/ApprovalImage.js';
+import ApprovalComment from '../models/ApprovalComment.js';
 import { createNotification } from '../utils/notify.js';
 import { logActivity } from '../utils/logActivity.js';
 import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
-import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
-import { uploadBuffer } from '../config/storage.js';
+import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, SOCIAL_POST_WORK_CATEGORIES, SOCIAL_POST_WORK_ITEMS } from '../config/constants.js';
+import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { platformsForOrganization } from '../utils/platforms.js';
 
 const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
+// Kept in sync with the frontend's textarea maxLength (Requests.jsx).
+const DETAILS_MAX_LENGTH = 400;
 
 // find() casts id strings against the schema; an aggregate's $match does not, so
 // the org filter has to be cast by hand or the counts pipeline silently matches
@@ -194,6 +199,13 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   const { title, details, category = 'Other', priority = 'NORMAL', neededBy, postOnly, platforms } = req.body;
   const { workType = 'PRINT_MEDIA', workCategory = '', workItem = '', event = 'false', department = '', eventName = '', eventDate = '', place = '', eventCoordinatorName = '' } = req.body;
   const isPostOnly = postOnly === true || postOnly === 'true';
+  // A coordinator asks a designer to make something — this path skips design
+  // entirely and hands ready-made creative straight to a social handler, which
+  // is not a coordinator's call to make on their own. The frontend already
+  // hides this choice for them; this is the same rule enforced server-side.
+  if (isPostOnly && isCoordinator(req.user)) {
+    res.status(403); throw new Error('Coordinators raise a Design Request — only a designer can send work on to a social media handler');
+  }
   // Ready-to-post content is always digital and always "Social Media" — that is
   // what makes needsPosting() (elsewhere in the pipeline) agree that this is
   // social work, and it is the only kind of ask with nothing left to design.
@@ -201,6 +213,11 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   const finalWorkCategory = isPostOnly ? 'Social Media' : workCategory;
   if (!finalWorkCategory || !workItem) { res.status(400); throw new Error('Pick the work category and specific work item'); }
   if (!department) { res.status(400); throw new Error('Department is required'); }
+  // One request is one post/brief, not a bundle of several — the length cap
+  // keeps the notes that size, mirrored by maxLength on the form itself.
+  if (String(details || '').length > DETAILS_MAX_LENGTH) {
+    res.status(400); throw new Error(`Notes must be ${DETAILS_MAX_LENGTH} characters or fewer`);
+  }
   const hasEvent = event === true || event === 'true';
   if (hasEvent) {
     if (!eventName || !place || !eventCoordinatorName || !eventDate) { res.status(400); throw new Error('Fill in the event details'); }
@@ -209,19 +226,30 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   if (!CATEGORIES.includes(category)) { res.status(400); throw new Error(`category must be one of ${CATEGORIES.join(', ')}`); }
   if (!PRIORITIES.includes(priority)) { res.status(400); throw new Error(`priority must be one of ${PRIORITIES.join(', ')}`); }
 
+  // A Design Request that will turn into social-media work needs pages
+  // picked up front too, for the same reason a postOnly ask already does — a
+  // handler eventually has to publish this somewhere, and this is the
+  // single source of truth for "is this social work" (mirrors needsPosting()
+  // in workflowController.js, which asks the same question later at
+  // design-acceptance time).
+  const isSocialDesign = !isPostOnly && finalWorkType === 'DIGITAL_MEDIA'
+    && (SOCIAL_POST_WORK_CATEGORIES.includes(finalWorkCategory) || SOCIAL_POST_WORK_ITEMS.includes(workItem));
+
   // There is no design step to produce the file here, so the coordinator has to
   // bring it, and has to say where it goes — a handler picking this up needs
   // both before there is anything for them to do.
   let chosenPlatforms = [];
-  if (isPostOnly) {
-    const attachmentCount = Array.isArray(req.files) ? req.files.length : 0;
-    if (!attachmentCount) { res.status(400); throw new Error('Attach the ready-to-post file(s) before sending this to a handler'); }
+  if (isPostOnly || isSocialDesign) {
+    if (isPostOnly) {
+      const attachmentCount = Array.isArray(req.files) ? req.files.length : 0;
+      if (!attachmentCount) { res.status(400); throw new Error('Attach the ready-to-post file(s) before sending this to a handler'); }
+    }
     chosenPlatforms = [...new Set(
       (Array.isArray(platforms) ? platforms : String(platforms ?? '').split(','))
         .map((p) => String(p).trim())
         .filter(Boolean)
     )];
-    if (!chosenPlatforms.length) { res.status(400); throw new Error('Choose at least one page for this to be posted on'); }
+    if (!chosenPlatforms.length) { res.status(400); throw new Error('Choose at least one page this should be posted on'); }
   }
 
   // A request is raised on behalf of a college, so it is always the requester's
@@ -232,7 +260,7 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   const org = await Organization.findById(orgId).select('_id name isActive');
   if (!org || !org.isActive) { res.status(400); throw new Error('That college does not exist'); }
 
-  if (isPostOnly) {
+  if (isPostOnly || isSocialDesign) {
     const available = await platformsForOrganization(org._id);
     const unknown = chosenPlatforms.filter((p) => !available.includes(p));
     if (unknown.length) { res.status(400); throw new Error(`Your college does not have ${unknown.join(', ')} set up`); }
@@ -267,7 +295,11 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     // reaches once its coordinator has accepted it and handed it to posting.
     workflowStage: isPostOnly ? 'POST_OPEN' : 'DESIGN_OPEN',
     status: isPostOnly ? 'WITH_SOCIAL_HANDLER' : 'OPEN',
-    postPlatforms: isPostOnly ? chosenPlatforms : [],
+    // Chosen up front for postOnly (nothing to ask later) and for a Social
+    // Media design request (asked again, pre-filled with this, once the
+    // design is ready — see workflowController.js's confirm/accept-design
+    // step — but never starts blank for these).
+    postPlatforms: (isPostOnly || isSocialDesign) ? chosenPlatforms : [],
   });
 
   const attachments = Array.isArray(req.files) ? req.files : [];
@@ -326,6 +358,23 @@ export const deleteInstitutionRequest = asyncHandler(async (req, res) => {
   if (mine && !req.user.isSuperAdmin && !stillOpen) {
     res.status(400); throw new Error('It has already been picked up — talk to the admin instead of withdrawing it');
   }
+
+  // Only a super admin ever reaches this once the request is past OPEN, at
+  // which point a designer/handler may already have approvals, assignments and
+  // uploaded files hanging off it — leaving those behind would orphan them, so
+  // clean up the same way deleteApproval does for a standalone approval.
+  const approvals = await ApprovalRequest.find({ sourceRequest: request._id });
+  for (const approval of approvals) {
+    const images = await ApprovalImage.find({ request: approval._id });
+    await Promise.all(images.map((img) => deleteFile(img.publicId)));
+    const comments = await ApprovalComment.find({ request: approval._id }).select('attachments').lean();
+    await Promise.all(comments.flatMap((c) => (c.attachments || []).map((a) => deleteFile(a.publicId))));
+    await ApprovalImage.deleteMany({ request: approval._id });
+    await ApprovalComment.deleteMany({ request: approval._id });
+  }
+  await ApprovalRequest.deleteMany({ sourceRequest: request._id });
+  await WorkAssignment.deleteMany({ sourceRequest: request._id });
+  await Promise.all((request.attachments || []).map((a) => deleteFile(a.publicId)));
   await request.deleteOne();
   res.json({ success: true, message: 'Request withdrawn' });
 });

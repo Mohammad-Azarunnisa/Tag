@@ -254,10 +254,6 @@ export const getUsers = asyncHandler(async (req, res) => {
   const { search, role, organization, page, limit = 25 } = req.query;
   const query = {};
   if (organization && organization !== 'All') query.organization = organization;
-  if (search) query.$or = [
-    { name: { $regex: escapeRegex(search), $options: 'i' } },
-    { email: { $regex: escapeRegex(search), $options: 'i' } },
-  ];
 
   // An Admin (CEO) sees the people inside the institutions they hold, and
   // nobody else. A social handler can serve a college through `handles` while
@@ -280,6 +276,19 @@ export const getUsers = asyncHandler(async (req, res) => {
   // happens to hide them because the account belongs to no college.
   const viewerIsSuperAdmin = !!req.user.isSuperAdmin;
   if (!viewerIsSuperAdmin) query.isSuperAdmin = { $ne: true };
+
+  // The stat tiles are a standing count of who exists in view (scoped by
+  // organization/permissions), not a live reflection of the search box —
+  // typing a name would otherwise shrink "Total Users" as you type, which
+  // reads as accounts disappearing rather than a list narrowing below.
+  // Snapshotted before the free-text search clause is added, so counting off
+  // it later is unaffected by whatever's currently typed in the search box.
+  const countBaseQuery = { ...query };
+
+  if (search) query.$or = [
+    { name: { $regex: escapeRegex(search), $options: 'i' } },
+    { email: { $regex: escapeRegex(search), $options: 'i' } },
+  ];
 
   // The role tile is applied to the LIST only, never to the counts — the tiles
   // are how you pick a role, so counting out of the filtered list would zero
@@ -315,9 +324,9 @@ export const getUsers = asyncHandler(async (req, res) => {
         })()
       : [],
     listQuery ? User.countDocuments(listQuery) : 0,
-    User.countDocuments(query),
-    User.countDocuments({ ...query, role: ROLES.CEO }),
-    User.countDocuments({ ...query, role: ROLES.USER }),
+    User.countDocuments(countBaseQuery),
+    User.countDocuments({ ...countBaseQuery, role: ROLES.CEO }),
+    User.countDocuments({ ...countBaseQuery, role: ROLES.USER }),
     User.countDocuments({ isSuperAdmin: true, isActive: true }),
   ]);
 

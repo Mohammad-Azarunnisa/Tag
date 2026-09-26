@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell, CheckCheck, Check, XCircle, RefreshCw, Send, FileText, Trash2, ClipboardList, UserCog,
-  MessageSquare, Palette, PackageCheck, Forward,
+  MessageSquare, Palette, PackageCheck, Forward, AlertTriangle,
 } from 'lucide-react';
 import { notificationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -35,6 +35,7 @@ const ICONS = {
   WORK_APPROVED: { icon: Check, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10' },
   WORK_REJECTED: { icon: XCircle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
   WORK_ACKNOWLEDGED_ELSEWHERE: { icon: MessageSquare, color: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
+  PUBLISH_FAILED: { icon: AlertTriangle, color: 'text-rose-600 bg-rose-50 dark:bg-rose-500/10' },
 };
 
 // Notification links are written for the product app's routes. Translate the

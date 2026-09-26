@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   MessageSquarePlus, Plus, Clock3, Eye, CheckCircle2, XCircle, Trash2, Flame, BriefcaseBusiness,
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
-  Paperclip, ExternalLink, List, LayoutGrid, Send, Palette, Sparkles,
+  Paperclip, ExternalLink, List, LayoutGrid, Send, Palette, Sparkles, Download, AlertTriangle,
 } from 'lucide-react';
 import { institutionRequestApi, organizationApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -12,7 +12,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatBytes, formatDate, formatDateTime, timeAgo } from '../lib/utils.js';
+import { cn, formatBytes, formatDate, formatDateTime, timeAgo, downloadAllAttachments, isCoordinatorUser } from '../lib/utils.js';
 
 // The tiles read left to right as the journey: raised → with the handler → done.
 // IN_REVIEW and GETTING_ALLOCATED can no longer be reached (nothing approves a
@@ -27,6 +27,8 @@ const STATUS_META = {
 // Still moving: raised, or handed to a handler to publish. Work sitting with a
 // handler is still late if it has not gone out, so it counts as in flight.
 const inFlight = (status) => ['OPEN', 'IN_REVIEW', 'GETTING_ALLOCATED', 'WITH_SOCIAL_HANDLER'].includes(status);
+// Kept in sync with the backend's own cap (institutionRequestController.js).
+const DETAILS_MAX_LENGTH = 400;
 
 // Chips only — statuses the old flow could set, which no new request reaches.
 const LEGACY_STATUS_META = {
@@ -642,9 +644,17 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
         )}
 
         <div>
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            <Paperclip className="h-3.5 w-3.5" /> Reference files{files.length > 0 ? ` · ${files.length}` : ''}
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <Paperclip className="h-3.5 w-3.5" /> Reference files{files.length > 0 ? ` · ${files.length}` : ''}
+            </p>
+            {files.length > 1 && (
+              <button type="button" onClick={() => downloadAllAttachments(files)}
+                className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                <Download className="h-3 w-3" /> Download all ({files.length})
+              </button>
+            )}
+          </div>
           {files.length === 0 ? (
             <p className="text-sm text-slate-400">Nothing was attached to this request.</p>
           ) : (
@@ -652,7 +662,7 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
               {images.length > 0 && (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {images.map((a, i) => (
-                    <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                    <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
                       title={a.name || 'Open full size'}
                       className="group relative block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                       <img src={a.url} alt={a.name || `Reference ${i + 1}`} className="aspect-video w-full object-cover transition-transform group-hover:scale-105" />
@@ -664,7 +674,7 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
                 </div>
               )}
               {others.map((a, i) => (
-                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer"
+                <a key={a.url || i} href={a.url} target="_blank" rel="noreferrer" download={a.name || true}
                   className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-brand-500/5">
                   <FileImage className="h-4 w-4 shrink-0 text-slate-400" />
                   <span className="min-w-0 flex-1 truncate">{a.name || 'Attachment'}</span>
@@ -707,18 +717,41 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
 // The college is implicit — the server stamps the requester's own, so there is
 // nothing to choose and nothing to get wrong.
 function AskModal({ onClose, onSaved }) {
+  const { user } = useAuthStore();
+  // A coordinator asks a designer to make something — "Social Media Posting"
+  // skips design entirely and hands ready-made creative straight to a social
+  // handler, which is not a coordinator's call to make on their own. Hidden
+  // for them below rather than just left off the form, so it reads as a rule
+  // rather than a missing option; the server enforces the same rule.
+  const coordinatorOnlyDesign = isCoordinatorUser(user);
+  // Coordinators keep bundling several posts' worth of instructions into one
+  // request instead of raising one per post — the placeholder text alone
+  // wasn't enough to stop it, so this says it again, louder, the moment the
+  // form opens.
+  useEffect(() => {
+    if (coordinatorOnlyDesign) {
+      toast('One request = one design or post. If you need several, please raise a separate request for each one.', { icon: '📌', duration: 6000 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const maxAttachments = 20;
   const [form, setForm] = useState(DEFAULT_BRIEF);
   const selectedDigitalItems = DIGITAL_MEDIA_OPTIONS[form.workCategory] || DIGITAL_MEDIA_OPTIONS['Social Media'];
   const selectedDigitalItem = selectedDigitalItems.includes(form.workItem) ? form.workItem : selectedDigitalItems[0];
-  const postOnly = form.requestKind === 'POST_ONLY';
+  const postOnly = !coordinatorOnlyDesign && form.requestKind === 'POST_ONLY';
+  // Mirrors the backend's SOCIAL_POST_WORK_CATEGORIES/SOCIAL_POST_WORK_ITEMS
+  // (config/constants.js) — a Design Request that will end up needing a page
+  // to post to, same as a Social Media Posting request already requires.
+  const isSocialDesign = !postOnly && (form.workCategory === 'Social Media' || form.workItem === 'Animated Social Media Posts');
 
-  // The pages this college actually runs, for "where should this go?" — only
-  // needed for a postOnly request, which has no design-acceptance step to ask at.
+  // The pages this college actually runs, for "where should this go?" —
+  // needed for a postOnly request (no design-acceptance step to ask at
+  // later) and for a Social Media design request (asked up front so a
+  // designer/handler never starts on work with nowhere to publish it).
   const { data: orgOptions } = useQuery({
     queryKey: ['org-options-mine'],
     queryFn: () => organizationApi.myOptions(),
-    enabled: postOnly,
+    enabled: postOnly || isSocialDesign,
     staleTime: 5 * 60 * 1000,
   });
   const availablePlatforms = orgOptions?.organizations?.[0]?.platforms || [];
@@ -794,6 +827,7 @@ function AskModal({ onClose, onSaved }) {
         payload.append('workType', form.workType);
         payload.append('workCategory', form.workCategory);
         payload.append('workItem', form.workItem);
+        if (isSocialDesign) form.platforms.forEach((p) => payload.append('platforms', p));
       }
       payload.append('department', form.department);
       payload.append('details', form.details);
@@ -830,13 +864,23 @@ function AskModal({ onClose, onSaved }) {
       if (!form.attachments.length) { toast.error('Attach the ready-to-post file(s)'); return; }
       if (!form.platforms.length) { toast.error('Pick at least one page to post it on'); return; }
     }
+    if (isSocialDesign && !form.platforms.length) { toast.error('Pick at least one page this should be posted on'); return; }
     mutation.mutate();
   };
 
   return (
     <Modal open onClose={onClose} title="Raise a request" size="lg">
       <form onSubmit={submit} className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
+        {coordinatorOnlyDesign && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <span className="font-bold">One request = one design or post.</span> If you need several, raise a
+              separate request for each one — don't list multiple posts in a single request.
+            </span>
+          </div>
+        )}
+        <div className={cn('grid gap-3', coordinatorOnlyDesign ? 'sm:grid-cols-1' : 'sm:grid-cols-2')}>
           <button type="button" onClick={() => setRequestKind('DESIGN')}
             className={cn('rounded-2xl border-2 p-3 text-left transition',
               !postOnly ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 hover:border-brand-300 dark:border-slate-700')}>
@@ -845,14 +889,19 @@ function AskModal({ onClose, onSaved }) {
             </p>
             <p className="mt-0.5 text-xs text-slate-400">Goes to Designs to be Done for a designer to make.</p>
           </button>
-          <button type="button" onClick={() => setRequestKind('POST_ONLY')}
-            className={cn('rounded-2xl border-2 p-3 text-left transition',
-              postOnly ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 hover:border-brand-300 dark:border-slate-700')}>
-            <p className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-white">
-              <Sparkles className="h-4 w-4" /> Social Media Posting
-            </p>
-            <p className="mt-0.5 text-xs text-slate-400">Already have the creative? Skips design, straight to a social media handler.</p>
-          </button>
+          {/* Skips design and goes straight to a social handler — a coordinator
+              always raises through a designer first, so this choice is not
+              offered to them at all. */}
+          {!coordinatorOnlyDesign && (
+            <button type="button" onClick={() => setRequestKind('POST_ONLY')}
+              className={cn('rounded-2xl border-2 p-3 text-left transition',
+                postOnly ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 hover:border-brand-300 dark:border-slate-700')}>
+              <p className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-white">
+                <Sparkles className="h-4 w-4" /> Social Media Posting
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">Already have the creative? Skips design, straight to a social media handler.</p>
+            </button>
+          )}
         </div>
 
         {postOnly ? (
@@ -918,6 +967,34 @@ function AskModal({ onClose, onSaved }) {
                 ))}
               </Select>
             )}
+
+            {isSocialDesign && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">Which pages should this go out on?</label>
+                {availablePlatforms.length === 0 ? (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                    Your college has no social pages set up yet — ask the admin to add them before sending this.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {availablePlatforms.map((p) => {
+                      const on = form.platforms.includes(p);
+                      return (
+                        <button key={p} type="button" onClick={() => togglePlatform(p)}
+                          className={cn('inline-flex items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-sm font-semibold transition',
+                            on ? 'border-brand-500 bg-brand-50/60 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                              : 'border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-700 dark:text-slate-300')}>
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-xs text-slate-400">
+                  You'll get a chance to change this again once the design is ready.
+                </p>
+              </div>
+            )}
           </>
         )}
 
@@ -962,11 +1039,12 @@ function AskModal({ onClose, onSaved }) {
           <label className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
             {postOnly ? 'Notes for the handler' : 'Notes for the designer'} <span className="font-normal text-slate-400">· optional</span>
           </label>
-          <textarea className="input-base min-h-[110px]" value={form.details}
+          <textarea className="input-base min-h-[110px]" value={form.details} maxLength={DETAILS_MAX_LENGTH}
             onChange={(e) => setForm({ ...form, details: e.target.value })}
             placeholder={postOnly
-              ? 'Add anything the handler should know — a caption idea, hashtags, timing.'
-              : 'Add anything that matters to the brief — quantities, audience, branding notes, deadlines.'} />
+              ? 'One request per post — describe a single post only. Add anything the handler should know: a caption idea, hashtags, timing.'
+              : 'One request per post — describe a single post only. Add anything that matters to the brief: quantities, audience, branding notes, deadlines.'} />
+          <p className="mt-1 text-right text-xs text-slate-400">{form.details.length}/{DETAILS_MAX_LENGTH}</p>
         </div>
 
         <div>

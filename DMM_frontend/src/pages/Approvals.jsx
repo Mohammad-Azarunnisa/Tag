@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import {
   Plus, Search, Inbox, Images as ImagesIcon, Play, Layers, Clock, RefreshCw,
   CheckCircle2, Send, ChevronLeft, ChevronRight, Palette, UserCheck, FileText, MessageSquarePlus, AlertTriangle,
+  PackageCheck,
 } from 'lucide-react';
 import { approvalApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
@@ -37,12 +38,18 @@ const TYPE_TABS = [
 const STATUS_LABELS = { All: 'All', IN_DESIGN: 'In design', PENDING: 'Pending', RESUBMITTED: 'Resubmitted', APPROVED: 'Approved', REJECTED: 'Rejected', POSTED: 'Posted', DELIVERED: 'Delivered' };
 
 // Stat tiles across the top — each doubles as a shortcut to its status tab.
+// Posted counts how many have gone out on either pipeline (a straight answer
+// to "how many social media posts have we posted so far"); Delivered is the
+// design pipeline's own finish line — a design with nothing to post, handed
+// straight back to the coordinator — so it only makes sense while looking at
+// Design approvals, same as the Delivered status tab itself.
 const TILES = [
   { key: 'All', label: 'Total', countKey: 'ALL', icon: Layers, tone: 'text-slate-400' },
   { key: 'PENDING', label: 'Pending', countKey: 'PENDING', icon: Clock, tone: 'text-amber-500' },
   { key: 'RESUBMITTED', label: 'Resubmitted', countKey: 'RESUBMITTED', icon: RefreshCw, tone: 'text-sky-500' },
   { key: 'APPROVED', label: 'Approved', countKey: 'APPROVED', icon: CheckCircle2, tone: 'text-emerald-500' },
   { key: 'POSTED', label: 'Posted', countKey: 'POSTED', icon: Send, tone: 'text-violet-500' },
+  { key: 'DELIVERED', label: 'Delivered', countKey: 'DELIVERED', icon: PackageCheck, tone: 'text-teal-500', design: true },
 ];
 
 const EMPTY_COPY = {
@@ -52,6 +59,7 @@ const EMPTY_COPY = {
   APPROVED: 'Nothing is approved and waiting to be posted.',
   REJECTED: 'No requests currently need changes.',
   POSTED: 'Nothing has been marked as posted yet.',
+  DELIVERED: 'No approved designs have been delivered to a coordinator yet.',
 };
 
 export default function Approvals() {
@@ -77,9 +85,23 @@ export default function Approvals() {
   // tied back to it so the pipeline moves on.
   const composeWorkflow = searchParams.get('workflow') || '';
   const composeTitle = searchParams.get('title') || '';
-  const [filters, setFilters] = useState({ search: '', status: initialStatus, type: initialType, platform: 'All', from: '', to: '' });
-  const [page, setPage] = useState(1);
-  const [rows, setRows] = useState(10);
+  // Opening a row and its Back button coming right back here is a fresh
+  // navigation, not a browser "back" — so the filters/page/row-count are
+  // remembered here and restored on return. A deep link (?status=/?type=)
+  // always wins over whatever was remembered, since it says exactly what view
+  // the caller wanted.
+  const LIST_STATE_KEY = 'approvals-list-state';
+  const hasDeepLink = !!(searchParams.get('status') || searchParams.get('type'));
+  const savedListState = hasDeepLink ? null : (() => {
+    try { return JSON.parse(sessionStorage.getItem(LIST_STATE_KEY) || 'null'); } catch { return null; }
+  })();
+  const [filters, setFilters] = useState(savedListState?.filters
+    || { search: '', status: initialStatus, type: initialType, platform: 'All', from: '', to: '' });
+  const [page, setPage] = useState(savedListState?.page || 1);
+  const [rows, setRows] = useState(savedListState?.rows || 10);
+  useEffect(() => {
+    try { sessionStorage.setItem(LIST_STATE_KEY, JSON.stringify({ filters, page, rows })); } catch { /* ignore */ }
+  }, [filters, page, rows]);
   // A deep link must not open a composer for someone who cannot submit it.
   const [showCreate, setShowCreate] = useState(
     canCreate && (!!composeDesign || !!composeWorkflow || searchParams.get('compose') === 'post')
@@ -156,8 +178,8 @@ export default function Approvals() {
       </div>
 
       {/* Stat tiles — click to jump to that status tab */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {TILES.map((t, i) => (
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {TILES.filter((t) => !t.design || filters.type === 'DESIGN').map((t, i) => (
           <motion.button
             key={t.key} type="button" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
             onClick={() => applyFilters({ status: t.key })}

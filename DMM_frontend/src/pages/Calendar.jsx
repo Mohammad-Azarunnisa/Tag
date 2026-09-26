@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, CalendarDays, X } from 'lucide-react';
 import { calendarApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Card, Badge, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
-import { cn } from '../lib/utils.js';
+import { cn, useSessionState } from '../lib/utils.js';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -14,8 +13,8 @@ const pad = (n) => String(n).padStart(2, '0');
 
 export default function Calendar() {
   const today = new Date();
-  const [view, setView] = useState({ year: today.getFullYear(), month: today.getMonth() });
-  const [selected, setSelected] = useState(null);
+  const [view, setView] = useSessionState('calendar-view', { year: today.getFullYear(), month: today.getMonth() });
+  const [selected, setSelected] = useSessionState('calendar-selected', null);
 
   const monthStr = `${view.year}-${pad(view.month + 1)}`;
   const { data: monthData, isLoading } = useQuery({ queryKey: ['calendar', monthStr], queryFn: () => calendarApi.month(monthStr) });

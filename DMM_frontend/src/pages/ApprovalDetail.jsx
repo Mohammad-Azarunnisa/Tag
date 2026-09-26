@@ -14,7 +14,7 @@ import { Card, Badge, Avatar, Skeleton, Input } from '../components/ui/primitive
 import { Modal } from '../components/ui/Modal.jsx';
 import FileDropzone from '../components/ui/FileDropzone.jsx';
 import ReviewAssist from '../components/approvals/ReviewAssist.jsx';
-import { cn, formatDate, formatDateTime, timeAgo, isVideo, isDoc, fileLabel, statusLabel, platformsOf, canDeleteContent } from '../lib/utils.js';
+import { cn, formatDate, formatDateTime, timeAgo, isVideo, isDoc, fileLabel, statusLabel, platformsOf, canDeleteContent, downloadAllAttachments, canNavigateBack } from '../lib/utils.js';
 import { UPLOAD_ACCEPT } from '../lib/uploads.js';
 
 const fileName = (u = '') => u.split('/').pop() || 'download';
@@ -93,6 +93,21 @@ export default function ApprovalDetail() {
     onSuccess: () => { toast.success('Request deleted'); qc.invalidateQueries({ queryKey: ['approvals'] }); navigate('/approvals'); },
     onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
   });
+  // Separate module from "Mark as posted" — this actually publishes to a
+  // connected Facebook/Instagram account instead of just recording a claim.
+  // Dormant until a Meta token with publish scopes + a linked Page/Instagram
+  // account exist (see DMM_backend/src/services/socialPublish.js); until
+  // then the backend reports there's nothing to post directly, and "Mark as
+  // posted" is still there as the normal way to close this out.
+  const publishNowMut = useMutation({
+    mutationFn: () => approvalApi.publishNow(id),
+    onSuccess: (res) => {
+      const live = (res?.request?.metaPublishResults || []).filter((r) => r.status === 'success' && r.postUrl);
+      toast.success(live.length ? `Published live: ${live.map((r) => r.platform).join(', ')}` : 'Posted');
+      invalidate();
+    },
+    onError: (e) => toast.error(e.response?.data?.message || 'Could not post this directly', { duration: e.response?.status === 502 ? 8000 : 4000 }),
+  });
 
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-8 w-40" /><div className="grid gap-5 lg:grid-cols-3"><Skeleton className="h-96 lg:col-span-2" /><Skeleton className="h-96" /></div></div>;
   if (!r) return <p className="text-slate-400">Request not found.</p>;
@@ -124,6 +139,10 @@ export default function ApprovalDetail() {
   const canClaim = isDesign && r.status === 'PENDING' && !r.designer && user?.userType === 'DESIGNER';
   const canResubmit = r.status === 'REJECTED' && (isDesign ? isDesigner : isOwner);
   const canMarkPosted = r.status === 'APPROVED' && (isDesign ? isHandler : isOwner);
+  // Only meaningful when the request actually targets a platform this module
+  // knows how to post to directly — everything else still goes through
+  // "Mark as posted" above, unchanged.
+  const canPublishNow = canMarkPosted && platformsOf(r).some((p) => p === 'Facebook' || p === 'Instagram');
   // An Admin who signs a post off can book its go-live time too, rather than
   // handing it back to the author just to schedule it.
   const canSchedule = !isDesign && r.status === 'APPROVED' && (isOwner || canDecide);
@@ -137,8 +156,10 @@ export default function ApprovalDetail() {
 
   return (
     <div>
-      <button onClick={() => navigate('/approvals')} className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
-        <ArrowLeft className="h-4 w-4" /> Back to approvals
+      <button
+        onClick={() => (canNavigateBack() ? navigate(-1) : navigate('/approvals'))}
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+        <ArrowLeft className="h-4 w-4" /> Back
       </button>
 
       {/* Booked go-live time, visible to everyone on the request */}
@@ -185,6 +206,14 @@ export default function ApprovalDetail() {
           {canResubmit && (
             <Button onClick={() => setResubmitOpen(true)}><RefreshCw className="h-4 w-4" /> Edit &amp; Resubmit</Button>
           )}
+          {/* Separate from "Mark as posted" below — this one actually posts
+              live to a connected Facebook/Instagram account. Only shown when
+              there's a real platform for it to do that to. */}
+          {canPublishNow && (
+            <Button variant="success" loading={publishNowMut.isPending} onClick={() => publishNowMut.mutate()}>
+              <Send className="h-4 w-4" /> Post now
+            </Button>
+          )}
           {/* One action, and it asks WHEN: it is already out, or it goes out at
               a time you set and closes itself then. Two separate buttons made
               the time look like a different job from marking it posted. */}
@@ -220,10 +249,18 @@ export default function ApprovalDetail() {
                 {isDesign ? (finalImages.length ? 'Final design' : 'Reference') : 'Media'}
               </p>
               {canDownloadFinal && shownImg && (
-                <a href={shownImg.url} download={fileName(shownImg.url)} target="_blank" rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10">
-                  <Download className="h-3.5 w-3.5" /> Download
-                </a>
+                <div className="flex items-center gap-1">
+                  <a href={shownImg.url} download={fileName(shownImg.url)} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                    <Download className="h-3.5 w-3.5" /> Download
+                  </a>
+                  {images.length > 1 && (
+                    <button type="button" onClick={() => downloadAllAttachments(images)}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                      <Download className="h-3.5 w-3.5" /> Download all ({images.length})
+                    </button>
+                  )}
+                </div>
               )}
             </div>
             <div className={`relative mt-2 aspect-video bg-slate-100 dark:bg-slate-800 ${shownImg && !isVideo(shownImg) && !isDoc(shownImg) ? 'cursor-zoom-in' : ''}`}
@@ -257,10 +294,18 @@ export default function ApprovalDetail() {
               it without the two ever reading as one set of work. */}
           {supersededImages.length > 0 && (
             <Card className="p-4">
-              <p className="mb-2.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
-                <RefreshCw className="h-3.5 w-3.5 text-amber-500" />
-                Earlier versions · replaced after changes were asked for
-              </p>
+              <div className="mb-2.5 flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+                  <RefreshCw className="h-3.5 w-3.5 text-amber-500" />
+                  Earlier versions · replaced after changes were asked for
+                </p>
+                {supersededImages.length > 1 && (
+                  <button type="button" onClick={() => downloadAllAttachments(supersededImages)}
+                    className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                    <Download className="h-3 w-3" /> Download all ({supersededImages.length})
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2 opacity-60">
                 {supersededImages.map((img) => (
                   <div key={img._id} className="text-center">
@@ -281,9 +326,17 @@ export default function ApprovalDetail() {
           {/* Reference material the coordinator attached (once the final work exists) */}
           {finalImages.length > 0 && referenceImages.length > 0 && (
             <Card className="p-4">
-              <p className="mb-2.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
-                <Palette className="h-3.5 w-3.5 text-violet-500" /> Reference from coordinator
-              </p>
+              <div className="mb-2.5 flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+                  <Palette className="h-3.5 w-3.5 text-violet-500" /> Reference from coordinator
+                </p>
+                {referenceImages.length > 1 && (
+                  <button type="button" onClick={() => downloadAllAttachments(referenceImages)}
+                    className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                    <Download className="h-3 w-3" /> Download all ({referenceImages.length})
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 {referenceImages.map((img) => (
                   isVideo(img)
@@ -750,14 +803,22 @@ function ActivityCard({ r, user, onOpenImage }) {
                 mine ? 'border border-brand-500/20 bg-brand-500/10' : 'bg-slate-100 dark:bg-slate-800')}>
                 {c.text && <p className="whitespace-pre-wrap break-words">{c.text}</p>}
                 {atts.length > 0 && (
-                  <div className={cn('grid grid-cols-2 gap-1.5', c.text && 'mt-2')}>
-                    {atts.map((a, i) => (
-                      isVideo(a)
-                        ? <video key={i} src={a.url} controls className="w-full rounded-lg" />
-                        : isDoc(a)
-                          ? <DocTile key={i} item={a} className="h-20 w-full" />
-                          : <img key={i} src={a.url} alt={a.name || ''} onClick={() => onOpenImage(a.url)} className="h-20 w-full cursor-pointer rounded-lg object-cover" />
-                    ))}
+                  <div className={cn(c.text && 'mt-2')}>
+                    {atts.length > 1 && (
+                      <button type="button" onClick={() => downloadAllAttachments(atts)}
+                        className="mb-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                        <Download className="h-3 w-3" /> Download all ({atts.length})
+                      </button>
+                    )}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {atts.map((a, i) => (
+                        isVideo(a)
+                          ? <video key={i} src={a.url} controls className="w-full rounded-lg" />
+                          : isDoc(a)
+                            ? <DocTile key={i} item={a} className="h-20 w-full" />
+                            : <img key={i} src={a.url} alt={a.name || ''} onClick={() => onOpenImage(a.url)} className="h-20 w-full cursor-pointer rounded-lg object-cover" />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

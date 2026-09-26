@@ -416,7 +416,10 @@ export const listWorkflow = asyncHandler(async (req, res) => {
   }
 
   const board = req.query.board === 'POST' ? 'POST' : 'DESIGN';
-  const stages = board === 'POST' ? [...POST_STAGES, 'POSTED'] : DESIGN_STAGES;
+  // Once something is actually POSTED it is done, not "to be posted" — leaving
+  // it in this query would mean everyone who has ever posted anything keeps
+  // seeing it here forever, on top of everything still outstanding.
+  const stages = board === 'POST' ? POST_STAGES : DESIGN_STAGES;
 
   if (board === 'DESIGN' && !(isDesigner(req.user) || isAdministrator(req.user) || req.user.userType === USER_TYPES.COORDINATOR)) {
     res.status(403); throw new Error('Designs to be Done is for designers and admins');

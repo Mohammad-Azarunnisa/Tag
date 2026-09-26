@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -8,7 +8,7 @@ import { workflowApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, EmptyState, Input, Select, Skeleton, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, timeAgo } from '../lib/utils.js';
+import { cn, formatDate, timeAgo, useSessionState } from '../lib/utils.js';
 
 // The console's job on these boards is oversight plus the two approval gates —
 // everything that moves the work is done by the people doing it.
@@ -37,7 +37,9 @@ const BOARDS = {
     title: 'To Be Posted',
     subtitle: 'Approved designs on their way to being published. Approve the content the handlers write, or send it back.',
     icon: Send,
-    stages: ['POST_OPEN', 'POST_IN_PROGRESS', 'POST_ADMIN_REVIEW', 'POST_COORDINATOR_REVIEW', 'POST_APPROVED', 'POSTED'],
+    // POSTED is deliberately excluded — once it's out, it's done, not "to be
+    // posted" (server-side too, see workflowController.js listWorkflow).
+    stages: ['POST_OPEN', 'POST_IN_PROGRESS', 'POST_ADMIN_REVIEW', 'POST_COORDINATOR_REVIEW', 'POST_APPROVED'],
     empty: 'Nothing is waiting to be posted.',
   },
 };
@@ -45,7 +47,7 @@ const BOARDS = {
 export default function Workflow({ board = 'DESIGN' }) {
   const cfg = BOARDS[board];
   const navigate = useNavigate();
-  const [filters, setFilters] = useState({ stage: 'All', search: '' });
+  const [filters, setFilters] = useSessionState(`workflow-filters:${board}`, { stage: 'All', search: '' });
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-workflow', board],
@@ -53,6 +55,35 @@ export default function Workflow({ board = 'DESIGN' }) {
   });
   const items = data?.items || [];
   const counts = data?.counts || {};
+
+  // Opening a card and coming back is a fresh navigation each time (Open
+  // pushes to /workflow/:id; the detail page's Back button pushes right back
+  // here), not a browser "back" — so nothing about where you were on this
+  // list survives on its own. Remembered here per board and restored once the
+  // list has actually loaded, since scrolling to a saved position before the
+  // cards exist has nowhere to land.
+  const scrollKey = `admin-workflow-scroll:${board}`;
+  const scrollYRef = useRef(0);
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    const onScroll = () => { scrollYRef.current = window.scrollY; };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      sessionStorage.setItem(scrollKey, String(scrollYRef.current));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board]);
+
+  useEffect(() => {
+    if (isLoading || restoredRef.current) return;
+    restoredRef.current = true;
+    const saved = Number(sessionStorage.getItem(scrollKey) || 0);
+    if (!saved) return;
+    requestAnimationFrame(() => window.scrollTo(0, saved));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
   const shown = useMemo(() => {
     const needle = filters.search.trim().toLowerCase();
