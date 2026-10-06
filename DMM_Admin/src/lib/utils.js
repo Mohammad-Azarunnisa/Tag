@@ -35,9 +35,29 @@ export const canNavigateBack = () => Boolean(window.history.state && window.hist
 
 export const cn = (...inputs) => twMerge(clsx(inputs));
 
+const PHOTOGRAPHER_SLOT_LABELS = { MORNING: 'Morning', AFTERNOON: 'Afternoon', EVENING: 'Evening', FULL_DAY: 'Full day' };
+export const photographerSlotLabel = (s) => PHOTOGRAPHER_SLOT_LABELS[s] || s;
+
 export const formatDate = (d) => (d ? format(new Date(d), 'dd MMM yyyy') : '-');
 export const formatDateTime = (d) => (d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '-');
 export const timeAgo = (d) => (d ? formatDistanceToNow(new Date(d), { addSuffix: true }) : '-');
+
+// Whether `value` falls between two <input type="date"> values (yyyy-MM-dd),
+// both inclusive and read as whole days in the viewer's own timezone. Either
+// end may be blank; with both blank everything matches, and a missing value
+// never does once a range is set.
+export const inDateRange = (value, from, to) => {
+  if (!from && !to) return true;
+  if (!value) return false;
+  const day = (s, end) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return end ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
+  };
+  const t = new Date(value);
+  if (from && t < day(from)) return false;
+  if (to && t > day(to, true)) return false;
+  return true;
+};
 
 export const formatBytes = (bytes) => {
   if (!bytes) return '0 B';
@@ -97,6 +117,7 @@ const USER_TYPE_LABELS = {
   DESIGNER: 'Designer',
   SOCIAL_HANDLER: 'Social Handler',
   COORDINATOR: 'Coordinator',
+  PHOTOGRAPHER: 'Photographer',
 };
 export const userTypeLabel = (t) => USER_TYPE_LABELS[t] || 'Designer';
 

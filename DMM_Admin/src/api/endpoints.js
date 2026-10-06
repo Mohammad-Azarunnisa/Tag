@@ -85,7 +85,7 @@ export const institutionRequestApi = {
       ? api.post('/requests', data, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data)
       : api.post('/requests', data).then((r) => r.data)
   ),
-  remove: (id) => api.delete(`/requests/${id}`).then((r) => r.data),
+  remove: (id, reason) => api.delete(`/requests/${id}`, { data: { reason } }).then((r) => r.data),
 };
 
 // The Branding & Marketing period report: five parts, computed live for any
@@ -93,6 +93,14 @@ export const institutionRequestApi = {
 export const periodReportApi = {
   get: (params) => api.get('/reports/period', { params }).then((r) => r.data),
   export: (params) => api.get('/reports/period/export', { params, responseType: 'blob' }).then((r) => r.data),
+  // Its own filter set (date window + one organisation + one platform, or "all"
+  // of either) — independent of whatever the main report page currently shows.
+  // The filename comes off the response header so the UI never has to
+  // re-derive the resolved date window itself.
+  exportPdf: (params) => api.get('/reports/period/export-pdf', { params, responseType: 'blob' }).then((r) => {
+    const match = /filename="?([^"]+)"?/i.exec(r.headers?.['content-disposition'] || '');
+    return { blob: r.data, filename: match ? match[1] : 'B&M_Report.pdf' };
+  }),
   exportPlatformAnalytics: (params) => api.get('/reports/platform-export', { params, responseType: 'blob' }).then((r) => r.data),
 };
 
@@ -247,6 +255,16 @@ export const eventApi = {
   update: (id, payload) => api.put(`/events/${id}`, payload, multipart(payload)).then((r) => r.data),
   addFiles: (id, formData) => api.post(`/events/${id}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
   remove: (id) => api.delete(`/events/${id}`).then((r) => r.data),
+};
+
+export const photographerApi = {
+  list: () => api.get('/photographers').then((r) => r.data),
+  today: () => api.get('/photographers/today').then((r) => r.data),
+  slots: (params) => api.get('/photographers/slots', { params }).then((r) => r.data),
+  book: (data) => api.post('/photographers/slots', data).then((r) => r.data),
+  cancelSlot: (id) => api.delete(`/photographers/slots/${id}`).then((r) => r.data),
+  plans: (photographerId, params) => api.get(`/photographers/${photographerId}/plans`, { params }).then((r) => r.data),
+  savePlan: (date, note) => api.put(`/photographers/plans/${date}`, { note }).then((r) => r.data),
 };
 
 // Signage — campus banner stands + their banner change history.

@@ -35,8 +35,10 @@ const sanitize = (u) => ({
   createdAt: u.createdAt,
 });
 
-// ADMIN is global; CEO/USER must belong to an organization.
-const roleNeedsOrg = (role) => role === ROLES.CEO || role === ROLES.USER;
+// ADMIN is global; CEO/USER must belong to an organization — except a
+// Photographer, a shared resource who works across every college rather than
+// belonging to one, the same as an ADMIN in that one respect.
+const roleNeedsOrg = (role, userType) => role === ROLES.CEO || (role === ROLES.USER && userType !== USER_TYPES.PHOTOGRAPHER);
 
 // Multipart form fields always arrive as strings, so an org the client meant to
 // leave empty can show up as the text "null" — which would CastError if it ever
@@ -386,7 +388,7 @@ export const createUser = asyncHandler(async (req, res) => {
   }
   // CEO/USER must be assigned to a valid, active organization (super admins are global).
   let orgId = null;
-  if (!wantSuper && roleNeedsOrg(finalRole)) {
+  if (!wantSuper && roleNeedsOrg(finalRole, finalUserType)) {
     const wanted = orgIdOf(organization);
     if (!wanted) { res.status(400); throw new Error('An organization is required for Admin and User accounts'); }
     const org = await Organization.findById(wanted);
@@ -489,19 +491,21 @@ export const updateUser = asyncHandler(async (req, res) => {
   if (req.file) await replaceAvatar(user, req.file, res);
 
   const nextRole = role && Object.values(ROLES).includes(role) ? role : user.role;
-  // Determine the resulting organization. Org is required for CEO/USER, cleared for ADMIN.
+  const nextUserType = nextRole === ROLES.USER ? normalizeUserType(userType || user.userType) : undefined;
+  // Determine the resulting organization. Org is required for CEO/USER, cleared
+  // for ADMIN — and for a Photographer, who works across every college rather
+  // than belonging to one.
   const nextOrg = organization !== undefined ? orgIdOf(organization) : user.organization;
-  if (roleNeedsOrg(nextRole)) {
+  if (roleNeedsOrg(nextRole, nextUserType)) {
     if (!nextOrg) { res.status(400); throw new Error('An organization is required for CEO and User accounts'); }
     const org = await Organization.findById(nextOrg);
     if (!org) { res.status(400); throw new Error('Selected organization does not exist'); }
     user.organization = org._id;
   } else {
-    user.organization = null; // ADMIN is global
+    user.organization = null; // ADMIN is global, or a Photographer who isn't tied to one college
   }
   user.role = nextRole;
-  if (nextRole === ROLES.USER) user.userType = normalizeUserType(userType || user.userType);
-  else user.userType = undefined;
+  user.userType = nextUserType;
 
   // Extra institutions belong to an Admin (CEO) only, so they are cleared on any
   // other role - otherwise a demoted account would keep a stale grant.

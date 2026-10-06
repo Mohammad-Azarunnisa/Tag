@@ -37,12 +37,33 @@ export const canNavigateBack = () => Boolean(window.history.state && window.hist
 // dead choice for them - the server pins their scope either way. Call sites use
 // this to drop the control rather than render a one-option picker.
 export const isCoordinatorUser = (user) => user?.role === 'USER' && user?.userType === 'COORDINATOR';
+export const isPhotographerUser = (user) => user?.role === 'USER' && user?.userType === 'PHOTOGRAPHER';
+
+const PHOTOGRAPHER_SLOT_LABELS = { MORNING: 'Morning', AFTERNOON: 'Afternoon', EVENING: 'Evening', FULL_DAY: 'Full day' };
+export const photographerSlotLabel = (s) => PHOTOGRAPHER_SLOT_LABELS[s] || s;
 
 export const cn = (...inputs) => twMerge(clsx(inputs));
 
 export const formatDate = (d) => (d ? format(new Date(d), 'dd MMM yyyy') : '-');
 export const formatDateTime = (d) => (d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '-');
 export const timeAgo = (d) => (d ? formatDistanceToNow(new Date(d), { addSuffix: true }) : '-');
+
+// Whether `value` falls between two <input type="date"> values (yyyy-MM-dd),
+// both inclusive and read as whole days in the viewer's own timezone. Either
+// end may be blank; with both blank everything matches, and a missing value
+// never does once a range is set.
+export const inDateRange = (value, from, to) => {
+  if (!from && !to) return true;
+  if (!value) return false;
+  const day = (s, end) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return end ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
+  };
+  const t = new Date(value);
+  if (from && t < day(from)) return false;
+  if (to && t > day(to, true)) return false;
+  return true;
+};
 
 // Show the full count with thousands separators (e.g. 12,400) — no K/M shorthand.
 export const formatNumber = (n) => {

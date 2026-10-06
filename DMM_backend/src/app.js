@@ -41,6 +41,7 @@ import workflowRoutes from './routes/workflowRoutes.js';
 import webTaskRoutes from './routes/webTaskRoutes.js';
 import adCampaignRoutes from './routes/adCampaignRoutes.js';
 import brandingRegisterRoutes from './routes/brandingRegisterRoutes.js';
+import photographerRoutes from './routes/photographerRoutes.js';
 import pushRoutes from './push/pushRoutes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -126,6 +127,7 @@ app.use('/api/social-accounts', socialAccountRoutes);
 app.use('/api/websites', websiteRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/photographers', photographerRoutes);
 app.use('/api/push', pushRoutes);
 
 app.use(notFound);

@@ -19,6 +19,7 @@ import BrandLibrary from './pages/BrandLibrary.jsx';
 import Templates from './pages/Templates.jsx';
 import Assets from './pages/Assets.jsx';
 import Events from './pages/Events.jsx';
+import Photographers from './pages/Photographers.jsx';
 import Signage from './pages/Signage.jsx';
 import SocialAccounts from './pages/SocialAccounts.jsx';
 import Websites from './pages/Websites.jsx';
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="/templates" element={<Templates />} />
         <Route path="/assets" element={<Assets />} />
         <Route path="/events" element={<Events />} />
+        <Route path="/photographers" element={<Photographers />} />
         <Route path="/signage" element={<Signage />} />
         <Route path="/branding-register" element={<BrandingRegister />} />
         <Route path="/social-accounts" element={<SocialAccounts />} />

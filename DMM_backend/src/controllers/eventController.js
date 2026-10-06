@@ -17,6 +17,20 @@ const canManage = (user, event) =>
   user.role === ROLES.ADMIN ||
   (user.role === ROLES.CEO && (!event.organization || canAccessOrg(user, event.organization)));
 
+const isPhotographer = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.PHOTOGRAPHER;
+//
+// A second, distinct log entry (on top of EVENT_UPDATED above) only when the
+// actor is a photographer — so the super admin's photographer work heatmap
+// (Photographers.jsx, filtering on this exact action) can count "posted work"
+// without picking up every event anyone else adds.
+const logPhotographerWork = (req, event, description) => {
+  if (!isPhotographer(req.user)) return;
+  logActivity({
+    user: req.user._id, organization: event.organization, action: ACTIVITY_ACTIONS.PHOTOGRAPHER_WORK_POSTED,
+    description, entityType: 'Event', entityId: event._id,
+  });
+};
+
 const requireDrive = (res) => {
   if (isDriveConfigured()) return;
   res.status(503);
@@ -122,6 +136,7 @@ export const createEvent = asyncHandler(async (req, res) => {
   });
 
   logActivity({ user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.EVENT_UPDATED, description: `Added event "${event.name}"`, entityType: 'Event', entityId: event._id });
+  logPhotographerWork(req, event, `Posted "${event.name}"${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''}`);
   const populated = await Event.findById(event._id).populate('createdBy', 'name avatar').populate('organization', 'name color').lean();
   res.status(201).json({ success: true, event: populated });
 });
@@ -144,6 +159,7 @@ export const addEventFiles = asyncHandler(async (req, res) => {
     event.photos.push(toPhoto(uploaded));
   }
   await event.save();
+  logPhotographerWork(req, event, `Added ${req.files.length} photo${req.files.length === 1 ? '' : 's'} to "${event.name}"`);
   const populated = await Event.findById(event._id).populate('createdBy', 'name avatar').populate('organization', 'name color').lean();
   res.json({ success: true, event: populated });
 });

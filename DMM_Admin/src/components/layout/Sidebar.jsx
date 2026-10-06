@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart, Palette, Send } from 'lucide-react';
+import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart, Palette, Send, Aperture } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
 import { useAuthStore } from '../../store/authStore.js';
 
@@ -31,6 +31,7 @@ const NAV_SECTIONS = [
       { to: '/assets', label: 'Assets', icon: Package },
       { to: '/brand-library', label: 'Brand Library', icon: Images },
       { to: '/events', label: 'Events', icon: Camera },
+      { to: '/photographers', label: 'Photographers', icon: Aperture },
       { to: '/signage', label: 'Signage', icon: Flag },
     ],
   },

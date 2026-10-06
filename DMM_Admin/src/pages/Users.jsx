@@ -24,6 +24,7 @@ const ROLE_FILTERS = [
   { value: 'COORDINATOR', label: 'Coordinator' },
   { value: 'DESIGNER', label: 'Designer' },
   { value: 'SOCIAL_HANDLER', label: 'Social Handler' },
+  { value: 'PHOTOGRAPHER', label: 'Photographer' },
 ];
 // Roles the super admin can assign. 'SUPER' → ADMIN + isSuperAdmin (Branding
 // Director). 'CHAIRMAN' → global ADMIN + viewOnly (read-only oversight).
@@ -33,7 +34,12 @@ const CREATE_ROLES = [
   { value: 'CEO', label: 'Admin' },
   { value: 'USER', label: 'User' },
 ];
-const USER_TYPES = [{ value: 'DESIGNER', label: 'Designer' }, { value: 'SOCIAL_HANDLER', label: 'Social Handler' }, { value: 'COORDINATOR', label: 'Coordinator' }];
+const USER_TYPES = [
+  { value: 'DESIGNER', label: 'Designer' },
+  { value: 'SOCIAL_HANDLER', label: 'Social Handler' },
+  { value: 'COORDINATOR', label: 'Coordinator' },
+  { value: 'PHOTOGRAPHER', label: 'Photographer' },
+];
 const PAGE_PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook', 'X (Twitter)'];
 const AZAR_HANDLE_ORGS = ['Torii Minds', 'NCET', 'NCMS', 'NDC', 'Technical Hub'];
 const roleIcon = (u) => (u?.isSuperAdmin ? ShieldCheck : u?.role === 'USER' ? UserIcon : Crown);

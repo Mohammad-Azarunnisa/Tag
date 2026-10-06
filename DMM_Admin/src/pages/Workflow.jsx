@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import {
-  Palette, Send, Search, Eye, Clock3, CheckCircle2, Circle, UserCheck, Flame, CalendarClock, Sparkles,
+  Palette, Send, Search, Eye, Clock3, CheckCircle2, Circle, UserCheck, Flame, CalendarClock, CalendarRange, Sparkles, X, Ban,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
+import { useAuthStore } from '../store/authStore.js';
+import { CancelConfirmModal } from './WorkflowDetail.jsx';
 import { Card, EmptyState, Input, Select, Skeleton, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, timeAgo, useSessionState } from '../lib/utils.js';
+import { cn, formatDate, inDateRange, timeAgo, useSessionState } from '../lib/utils.js';
 
 // The console's job on these boards is oversight plus the two approval gates —
 // everything that moves the work is done by the people doing it.
@@ -24,6 +27,13 @@ const STAGE_META = {
   POST_APPROVED: { label: 'Ready to post', icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' },
   POSTED: { label: 'Posted', icon: CheckCircle2, cls: 'bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300' },
 };
+
+const FILTER_DEFAULTS = { stage: 'All', search: '', dateField: 'createdAt', from: '', to: '' };
+
+const DATE_FIELDS = [
+  { value: 'createdAt', label: 'Raised on' },
+  { value: 'neededBy', label: 'Needed by' },
+];
 
 const BOARDS = {
   DESIGN: {
@@ -47,7 +57,23 @@ const BOARDS = {
 export default function Workflow({ board = 'DESIGN' }) {
   const cfg = BOARDS[board];
   const navigate = useNavigate();
-  const [filters, setFilters] = useSessionState(`workflow-filters:${board}`, { stage: 'All', search: '' });
+  const qc = useQueryClient();
+  const { user } = useAuthStore();
+  const isAdminUser = user?.role === 'ADMIN' || user?.role === 'CEO' || user?.isSuperAdmin;
+  const [cancelling, setCancelling] = useState(null);
+  const cancelMut = useMutation({
+    mutationFn: ({ id, reason }) => workflowApi.cancel(id, reason),
+    onSuccess: () => {
+      toast.success('Request cancelled');
+      setCancelling(null);
+      qc.invalidateQueries({ queryKey: ['admin-workflow'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
+  });
+  const [savedFilters, setFilters] = useSessionState(`workflow-filters:${board}`, FILTER_DEFAULTS);
+  // A tab that saved its filters before the date range existed has no
+  // from/to/dateField keys; the defaults fill them in.
+  const filters = { ...FILTER_DEFAULTS, ...savedFilters };
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-workflow', board],
@@ -85,15 +111,29 @@ export default function Workflow({ board = 'DESIGN' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
+  const { stage, search, dateField, from, to } = filters;
+  const dateActive = Boolean(from || to);
+  const inDates = useMemo(
+    () => items.filter((i) => inDateRange(i[dateField], from, to)),
+    [items, dateField, from, to],
+  );
+
+  // With a date range set, the stage tiles count only what falls inside it,
+  // so they agree with the list underneath.
+  const tileCounts = useMemo(() => {
+    if (!dateActive) return counts;
+    return inDates.reduce((acc, i) => ({ ...acc, [i.workflowStage]: (acc[i.workflowStage] || 0) + 1 }), {});
+  }, [dateActive, inDates, counts]);
+
   const shown = useMemo(() => {
-    const needle = filters.search.trim().toLowerCase();
-    return items.filter((i) => {
-      if (filters.stage !== 'All' && i.workflowStage !== filters.stage) return false;
+    const needle = search.trim().toLowerCase();
+    return inDates.filter((i) => {
+      if (stage !== 'All' && i.workflowStage !== stage) return false;
       if (!needle) return true;
       return [i.title, i.organization?.name, i.designer?.name, i.handler?.name, i.raisedBy?.name]
         .some((f) => String(f || '').toLowerCase().includes(needle));
     });
-  }, [items, filters]);
+  }, [inDates, stage, search]);
 
   const waiting = counts[board === 'DESIGN' ? 'DESIGN_ADMIN_REVIEW' : 'POST_ADMIN_REVIEW'] ?? 0;
 
@@ -117,7 +157,7 @@ export default function Workflow({ board = 'DESIGN' }) {
               className={cn('rounded-2xl border-2 bg-white p-3 text-left transition dark:bg-slate-900',
                 active ? 'border-brand-500' : 'border-slate-100 hover:border-brand-300 dark:border-slate-800')}>
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{meta.label}</p>
-              <p className="mt-0.5 text-2xl font-extrabold text-slate-800 dark:text-white">{counts[s] ?? 0}</p>
+              <p className="mt-0.5 text-2xl font-extrabold text-slate-800 dark:text-white">{tileCounts[s] ?? 0}</p>
             </button>
           );
         })}
@@ -135,6 +175,25 @@ export default function Workflow({ board = 'DESIGN' }) {
             <option value="All">Every stage</option>
             {cfg.stages.map((s) => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
           </Select>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
+          <Select className="w-full sm:w-40" value={dateField} aria-label="Which date to filter by"
+            onChange={(e) => setFilters((f) => ({ ...f, dateField: e.target.value }))}>
+            {DATE_FIELDS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+          </Select>
+          <div className="flex flex-1 flex-wrap items-center gap-2 sm:flex-none">
+            <Input type="date" className="w-full sm:w-44" aria-label="From date" value={from} max={to || undefined}
+              onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
+            <span className="text-xs font-semibold text-slate-400">to</span>
+            <Input type="date" className="w-full sm:w-44" aria-label="To date" value={to} min={from || undefined}
+              onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
+          </div>
+          {dateActive && (
+            <Button size="sm" variant="ghost" onClick={() => setFilters((f) => ({ ...f, from: '', to: '' }))}>
+              <X className="h-4 w-4" /> Clear dates
+            </Button>
+          )}
         </div>
       </Card>
 
@@ -205,15 +264,31 @@ export default function Workflow({ board = 'DESIGN' }) {
                         {formatDate(i.neededBy)}{overdue ? ' — passed' : ''}
                       </p>
                     )}
-                    <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${i._id}`)}>
-                      <Eye className="h-4 w-4" /> Open
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {/* Only before anyone has picked it up — the server enforces the same. */}
+                      {isAdminUser && !user?.viewOnly && ['DESIGN_OPEN', 'POST_OPEN'].includes(i.workflowStage) && (
+                        <Button size="sm" variant="danger" onClick={() => setCancelling(i)}>
+                          <Ban className="h-4 w-4" /> Cancel
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${i._id}`)}>
+                        <Eye className="h-4 w-4" /> Open
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </Card>
             );
           })}
         </div>
+      )}
+      {cancelling && (
+        <CancelConfirmModal
+          coordinatorName={cancelling.raisedBy?.name}
+          saving={cancelMut.isPending}
+          onClose={() => setCancelling(null)}
+          onConfirm={(reason) => cancelMut.mutate({ id: cancelling._id, reason })}
+        />
       )}
     </div>
   );

@@ -11,10 +11,14 @@ const idOf = (v) => String(v?._id || v || '');
  *
  * An Admin (role CEO) heads their own `organization` and may hold extra
  * institutions the super admin granted via `managedOrganizations`. Everyone else
- * is limited to the single organization they belong to.
+ * is limited to the single organization they belong to — except a Photographer,
+ * who has no home organization at all (see User creation) precisely because
+ * they work across every college, not one: for them "no organization set" has
+ * to mean the same "not restricted" as the super admin, not "allowed nowhere".
  */
 export const accessibleOrgIds = (user) => {
   if (user?.role === ROLES.ADMIN) return null;
+  if (user?.role === ROLES.USER && user?.userType === USER_TYPES.PHOTOGRAPHER) return null;
   // `protect` (middleware/auth.js) has already resolved which of the user's
   // organizations are still enabled. Preferring that list is what makes a
   // disabled college vanish from every org-scoped query at once, instead of each

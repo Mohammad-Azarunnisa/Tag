@@ -208,6 +208,16 @@ export const eventApi = {
   remove: (id) => api.delete(`/events/${id}`).then((r) => r.data),
 };
 
+export const photographerApi = {
+  list: () => api.get('/photographers').then((r) => r.data),
+  today: () => api.get('/photographers/today').then((r) => r.data),
+  slots: (params) => api.get('/photographers/slots', { params }).then((r) => r.data),
+  book: (data) => api.post('/photographers/slots', data).then((r) => r.data),
+  cancelSlot: (id) => api.delete(`/photographers/slots/${id}`).then((r) => r.data),
+  plans: (photographerId, params) => api.get(`/photographers/${photographerId}/plans`, { params }).then((r) => r.data),
+  savePlan: (date, note) => api.put(`/photographers/plans/${date}`, { note }).then((r) => r.data),
+};
+
 // ---- Signage (campus banner stands + their banner change history) ----
 const mpHeaders = { headers: { 'Content-Type': 'multipart/form-data' } };
 export const signageApi = {

@@ -17,6 +17,7 @@ import Templates from './pages/Templates.jsx';
 import Assets from './pages/Assets.jsx';
 import BrandLibrary from './pages/BrandLibrary.jsx';
 import Events from './pages/Events.jsx';
+import Photographers from './pages/Photographers.jsx';
 import Signage from './pages/Signage.jsx';
 import Profile from './pages/Profile.jsx';
 import SocialHandlers from './pages/SocialHandlers.jsx';
@@ -64,7 +65,7 @@ function ProfileGate({ children }) {
 const COORDINATOR_ROUTES = [
   /^\/dashboard/, /^\/notifications/, /^\/profile/, /^\/settings/,
   /^\/templates/, /^\/assets/, /^\/brand-library/, /^\/events/,
-  /^\/social-analytics/, /^\/requests/,
+  /^\/social-analytics/, /^\/requests/, /^\/photographers/,
   /^\/people/, /^\/workflow/,
 ];
 
@@ -73,6 +74,22 @@ function CoordinatorGate({ children }) {
   const location = useLocation();
   const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
   if (isCoordinator && location.pathname !== '/' && !COORDINATOR_ROUTES.some((rx) => rx.test(location.pathname))) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
+// A photographer can only reach these pages.
+const PHOTOGRAPHER_ROUTES = [
+  /^\/dashboard/, /^\/notifications/, /^\/profile/, /^\/settings/,
+  /^\/events/, /^\/photographers/, /^\/people/,
+];
+
+function PhotographerGate({ children }) {
+  const { user } = useAuthStore();
+  const location = useLocation();
+  const isPhotographer = user?.role === 'USER' && user?.userType === 'PHOTOGRAPHER';
+  if (isPhotographer && location.pathname !== '/' && !PHOTOGRAPHER_ROUTES.some((rx) => rx.test(location.pathname))) {
     return <Navigate to="/dashboard" replace />;
   }
   return children;
@@ -120,7 +137,7 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-      <Route element={<ProtectedRoute><ProfileGate><CoordinatorGate><AppLayout /></CoordinatorGate></ProfileGate></ProtectedRoute>}>
+      <Route element={<ProtectedRoute><ProfileGate><CoordinatorGate><PhotographerGate><AppLayout /></PhotographerGate></CoordinatorGate></ProfileGate></ProtectedRoute>}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -128,6 +145,7 @@ export default function App() {
         <Route path="/assets" element={<Assets />} />
         <Route path="/brand-library" element={<BrandLibrary />} />
         <Route path="/events" element={<Events />} />
+        <Route path="/photographers" element={<Photographers />} />
         <Route path="/signage" element={<Signage />} />
         <Route path="/social-handlers" element={<SocialHandlers />} />
         <Route path="/premium-packs" element={<PremiumPacks />} />

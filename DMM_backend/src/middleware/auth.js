@@ -29,6 +29,10 @@ const COORDINATOR_ALLOWED = [
   /^\/api\/organizations\/options$/, // naming the college a request is for
   /^\/api\/link-preview(\/|$)/, // link cards inside a request thread
   /^\/api\/work-assignments(\/|$)/, // hand work to their own people and track it
+  // Booking a photographer (a shared pool, not this college's own) — the
+  // controller pins any booking they make to their own college regardless of
+  // what's sent, the same way pinnedWriteOrg does elsewhere.
+  /^\/api\/photographers(\/|$)/,
 ];
 
 // Their college's material. Uploading to the shared libraries is allowed - it

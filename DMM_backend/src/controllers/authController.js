@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import Organization from '../models/Organization.js';
 import { generateToken } from '../utils/token.js';
 import { sendEmail, isEmailConfigured } from '../utils/email.js';
-import { ROLES } from '../config/constants.js';
+import { ROLES, USER_TYPES } from '../config/constants.js';
 
 // The two front-ends are separate products for separate audiences: the console
 // (DMM_Admin) belongs to the platform's ADMIN accounts, the product app
@@ -133,8 +133,10 @@ export const login = asyncHandler(async (req, res) => {
       res.status(403);
       throw new Error('Your organization has been disabled. Contact your administrator.');
     }
-  } else if (user.role !== ROLES.ADMIN) {
-    // A college account belongs to exactly one organization, and it must be live.
+  } else if (user.role !== ROLES.ADMIN && user.userType !== USER_TYPES.PHOTOGRAPHER) {
+    // A college account belongs to exactly one organization, and it must be
+    // live — except a Photographer, a shared resource across every college
+    // with no organization of its own (see userController.js#roleNeedsOrg).
     if (!user.organization) {
       res.status(403);
       throw new Error('Your account is not assigned to an organization. Contact your administrator.');

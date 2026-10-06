@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import {
   MessageSquarePlus, Plus, Clock3, Eye, CheckCircle2, XCircle, Trash2, Flame, BriefcaseBusiness,
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
@@ -197,6 +198,7 @@ const DEFAULT_BRIEF = {
  */
 export default function Requests() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { user } = useAuthStore();
   const canRaise = !user?.viewOnly;
 
@@ -220,6 +222,23 @@ export default function Requests() {
     qc.invalidateQueries({ queryKey: ['institution-requests'] });
     qc.invalidateQueries({ queryKey: ['notifications'] });
   };
+
+  // A coordinator cannot raise a new ask while an earlier one of theirs is
+  // waiting on their own accept/decline. `myPendingCount` ignores the active
+  // status tab (same as `counts`), so this stays accurate no matter which tab
+  // they're looking at.
+  const isCoordinator = isCoordinatorUser(user);
+  const hasPendingRequest = isCoordinator && (data?.myPendingCount || 0) > 0;
+  const pendingRequests = data?.myPending || [];
+  const openAsk = () => {
+    if (hasPendingRequest) {
+      toast.error('You have a request waiting for your approval. Please accept or decline it before raising another.', { duration: 6000 });
+      return;
+    }
+    setAsking(true);
+  };
+  // The button is not offered at all while something is waiting on them.
+  const canStartNew = canRaise && !hasPendingRequest;
 
   const withdrawMut = useMutation({
     mutationFn: (id) => institutionRequestApi.remove(id),
@@ -271,8 +290,31 @@ export default function Requests() {
       <PageHeader
         title="Raise a Request"
         subtitle={`Ask for what ${user?.organization?.name || 'your college'} needs — raise a Design Request for something to be made, or a Social Media Posting request for a creative you already have. You will be notified as it moves.`}
-        actions={canRaise && <Button onClick={() => setAsking(true)}><Plus className="h-4 w-4" /> New request</Button>}
+        actions={canStartNew && <Button onClick={openAsk}><Plus className="h-4 w-4" /> New request</Button>}
       />
+
+      {hasPendingRequest && (
+        <div role="alert" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-amber-900 dark:text-amber-200">
+                You have {data.myPendingCount === 1 ? 'a request' : `${data.myPendingCount} requests`} waiting for your approval
+              </p>
+              <p className="mt-0.5 text-sm text-amber-800 dark:text-amber-300">
+                Accept or decline {data.myPendingCount === 1 ? 'it' : 'them'} first — you can raise a new request once nothing is waiting on you.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {pendingRequests.map((p) => (
+                  <Button key={p._id} size="sm" variant="outline" onClick={() => navigate(`/workflow/${p._id}`)}>
+                    <Eye className="h-4 w-4" /> Review: {p.title.length > 40 ? `${p.title.slice(0, 40)}…` : p.title}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Object.entries(STATUS_META).map(([key, m]) => (
@@ -357,7 +399,7 @@ export default function Requests() {
         <EmptyState icon={MessageSquarePlus}
           title={status === 'All' ? 'Nothing asked for yet' : `Nothing ${STATUS_META[status]?.label.toLowerCase()}`}
           description="Raise a request when the college needs something made — it goes straight to the designers."
-          action={canRaise && status === 'All' && <Button onClick={() => setAsking(true)}><Plus className="h-4 w-4" /> New request</Button>} />
+          action={canStartNew && status === 'All' && <Button onClick={openAsk}><Plus className="h-4 w-4" /> New request</Button>} />
       ) : viewMode === 'list' ? (
         <Card className="overflow-hidden p-0">
           <div className="overflow-x-auto">

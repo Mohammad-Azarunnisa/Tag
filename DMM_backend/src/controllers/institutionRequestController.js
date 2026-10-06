@@ -185,7 +185,21 @@ export const listInstitutionRequests = asyncHandler(async (req, res) => {
   };
   statusCounts.forEach(({ _id, count }) => { if (counts[_id] !== undefined) counts[_id] = count; });
 
-  res.json({ success: true, counts, categories: CATEGORIES, requests });
+  // A coordinator cannot raise a new ask while an earlier one of theirs is
+  // sitting at *_COORDINATOR_REVIEW — waiting on their own accept/decline —
+  // see createInstitutionRequest's own check. This is what the "Raise a
+  // request" button reads to warn them before they even open the form,
+  // rather than letting them fill it in and only then refusing it.
+  const myPendingFilter = {
+    raisedBy: req.user._id,
+    workflowStage: { $in: ['DESIGN_COORDINATOR_REVIEW', 'POST_COORDINATOR_REVIEW'] },
+  };
+  const [myPendingCount, myPending] = await Promise.all([
+    InstitutionRequest.countDocuments(myPendingFilter),
+    InstitutionRequest.find(myPendingFilter).sort({ updatedAt: -1 }).limit(5).select('title workflowStage').lean(),
+  ]);
+
+  res.json({ success: true, counts, categories: CATEGORIES, requests, myPendingCount, myPending });
 });
 
 // @route POST /api/requests — a college asks for something. It is not sent to
@@ -205,6 +219,20 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   // hides this choice for them; this is the same rule enforced server-side.
   if (isPostOnly && isCoordinator(req.user)) {
     res.status(403); throw new Error('Coordinators raise a Design Request — only a designer can send work on to a social media handler');
+  }
+  // A coordinator cannot raise a new ask while an earlier one of theirs is
+  // sitting at *_COORDINATOR_REVIEW — the admin has approved it and it is
+  // now waiting on the coordinator's own accept/decline (confirmWorkflowItem)
+  // — until they act on it one way or the other.
+  if (isCoordinator(req.user)) {
+    const pending = await InstitutionRequest.findOne({
+      raisedBy: req.user._id,
+      workflowStage: { $in: ['DESIGN_COORDINATOR_REVIEW', 'POST_COORDINATOR_REVIEW'] },
+    }).select('_id').lean();
+    if (pending) {
+      res.status(409);
+      throw new Error('You have a request waiting for your approval. Open it under Approvals and accept or decline it before raising a new one.');
+    }
   }
   // Ready-to-post content is always digital and always "Social Media" — that is
   // what makes needsPosting() (elsewhere in the pipeline) agree that this is
@@ -357,6 +385,27 @@ export const deleteInstitutionRequest = asyncHandler(async (req, res) => {
   const stillOpen = request.status === 'OPEN' || (request.postOnly && request.workflowStage === 'POST_OPEN');
   if (mine && !req.user.isSuperAdmin && !stillOpen) {
     res.status(400); throw new Error('It has already been picked up — talk to the admin instead of withdrawing it');
+  }
+
+  // The super admin removing someone else's request must say why; the
+  // coordinator hears it before the request disappears.
+  const reason = String(req.body?.reason || '').trim();
+  const removedByAdmin = !mine;
+  if (removedByAdmin && reason.length < 3) {
+    res.status(400); throw new Error('Please write the reason for cancelling — the coordinator will see it');
+  }
+  if (removedByAdmin) {
+    await logActivity({
+      user: req.user._id, organization: request.organization, action: ACTIVITY_ACTIONS.REQUEST_REVIEWED,
+      description: `Cancelled "${request.title}": ${reason}`,
+      entityType: 'InstitutionRequest', entityId: request._id,
+    });
+    await createNotification({
+      recipient: request.raisedBy, organization: request.organization, type: NOTIFICATION_TYPES.REQUEST_DECLINED,
+      title: 'Your request was cancelled',
+      message: `${req.user.name} cancelled "${request.title}" — ${reason}`,
+      link: '/requests',
+    });
   }
 
   // Only a super admin ever reaches this once the request is past OPEN, at

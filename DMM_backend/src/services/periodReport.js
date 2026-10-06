@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import Organization from '../models/Organization.js';
-import InstitutionRequest from '../models/InstitutionRequest.js';
+import InstitutionRequest, { POST_STAGES } from '../models/InstitutionRequest.js';
 import ApprovalRequest from '../models/ApprovalRequest.js';
 import WebTask from '../models/WebTask.js';
 import WorkAssignment from '../models/WorkAssignment.js';
@@ -8,6 +8,7 @@ import AdCampaign from '../models/AdCampaign.js';
 import Analytics from '../models/Analytics.js';
 import SocialPost from '../models/SocialPost.js';
 import LinkedInPost from '../models/LinkedInPost.js';
+import Goal from '../models/Goal.js';
 import User from '../models/User.js';
 import { APPROVAL_TYPES, PLATFORMS, ROLES } from '../config/constants.js';
 
@@ -87,7 +88,8 @@ const designOutput = async (orgs, from, to) => {
     // design itself, whether or not it goes on to be posted afterwards —
     // posting is a separate deliverable with its own count (see the Approvals
     // page's Posted tile), not part of whether the design was delivered.
-    const done = received.filter((r) => !!r.designAcceptedAt);
+    // A cancelled request never counts as delivered, even if it had been accepted before it was cancelled.
+    const done = received.filter((r) => !!r.designAcceptedAt && r.workflowStage !== 'CANCELLED');
     const cancelled = received.filter((r) => r.workflowStage === 'CANCELLED');
     const finishedAt = (r) => r.designAcceptedAt || null;
     if (done.length) anyCompleted = true;
@@ -110,9 +112,11 @@ const designOutput = async (orgs, from, to) => {
     const turnarounds = done.map((r) => (finishedAt(r) ? (new Date(finishedAt(r)) - new Date(r.createdAt)) / DAY : null))
       .filter((n) => n != null);
 
+    const ownMix = {};
     for (const r of done) {
       const key = r.workItem || (r.workType === 'DIGITAL_MEDIA' ? 'Digital (unclassified)' : 'Print (unclassified)');
       mix[key] = (mix[key] || 0) + 1;
+      ownMix[key] = (ownMix[key] || 0) + 1;
     }
 
     // Cancelled requests are dead, not real work — they never counted toward
@@ -128,18 +132,22 @@ const designOutput = async (orgs, from, to) => {
       waitingForDesigner: stageCount('DESIGN_OPEN'),
       beingDesigned: stageCount('DESIGN_IN_PROGRESS'),
       withAdminReview: stageCount('DESIGN_ADMIN_REVIEW'),
-      withCoordinatorReview: stageCount('DESIGN_COORDINATOR_REVIEW'),
     };
+    // A design waiting on the coordinator's own accept/decline is not the
+    // design team's pending work, so it is left out of the pending count.
+    const withCoordinator = stageCount('DESIGN_COORDINATOR_REVIEW');
     // Anything left over is neither delivered, cancelled, nor sitting in a
     // recognised design stage — old records from before workflowStage existed
     // (see the gaps note below), not a live backlog.
-    const pending = requestsReceived - done.length;
+    const pending = requestsReceived - done.length - withCoordinator;
     pendingByStage.other = pending - Object.values(pendingByStage).reduce((a, b) => a + b, 0);
 
     rows.push({
       organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
       requestsReceived,
       completed: done.length,
+      // Designers have finished these too; they are only waiting on the coordinator.
+      designsCompleted: done.length + withCoordinator,
       pending,
       pendingByStage,
       cancelled: cancelled.length,
@@ -149,18 +157,21 @@ const designOutput = async (orgs, from, to) => {
       firstPassRate: pct(firstPass.length, done.length),
       avgTurnaroundDays: turnarounds.length ? round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
       avgRevisionRounds: done.length ? round(done.reduce((s, r) => s + resubmitsOf(r), 0) / done.length) : null,
+      mix: Object.entries(ownMix)
+        .sort((a, b) => b[1] - a[1])
+        .map(([label, count]) => ({ label, count, share: pct(count, done.length) })),
     });
   }
 
   const totals = {
     requestsReceived: sum(rows, 'requestsReceived'),
     completed: sum(rows, 'completed'),
+    designsCompleted: sum(rows, 'designsCompleted'),
     pending: sum(rows, 'pending'),
     pendingByStage: {
       waitingForDesigner: sum(rows.map((r) => r.pendingByStage), 'waitingForDesigner'),
       beingDesigned: sum(rows.map((r) => r.pendingByStage), 'beingDesigned'),
       withAdminReview: sum(rows.map((r) => r.pendingByStage), 'withAdminReview'),
-      withCoordinatorReview: sum(rows.map((r) => r.pendingByStage), 'withCoordinatorReview'),
       other: sum(rows.map((r) => r.pendingByStage), 'other'),
     },
     cancelled: sum(rows, 'cancelled'),
@@ -236,20 +247,38 @@ const webDevelopment = async (orgs, from, to) => {
 // Engagement rate is normalised the same way for every account —
 // (likes + comments + shares) / impressions — so the comparison is fair even
 // though each platform reports its own version of the number.
-const socialOrganic = async (orgs, from, to) => {
+const socialOrganic = async (orgs, from, to, platformFilter) => {
   const rows = [];
   const platformCounts = {};
+  // A single-platform filter narrows every figure in this section to just that
+  // platform (used by the PDF export's "Social Media" filter — see
+  // periodReportController.js#exportPeriodReportPdf). LinkedIn lives in its own
+  // collection (LinkedInPost) rather than tagged rows in SocialPost, so it only
+  // ever enters the totals when there's no filter, or the filter IS LinkedIn.
+  const includeLinkedIn = !platformFilter || platformFilter === 'LinkedIn';
 
   for (const org of orgs) {
-    const posts = await SocialPost.find({ organization: org._id, publishedAt: inWindow(from, to) })
+    const postQuery = { organization: org._id, publishedAt: inWindow(from, to) };
+    if (platformFilter) postQuery.platform = platformFilter;
+    const posts = await SocialPost.find(postQuery)
       .select('platform reach impressions likes comments shares saved views').lean();
-    const liPosts = await LinkedInPost.find({ organization: org._id, createdDate: inWindow(from, to) })
-      .select('impressions reactions comments reposts clicks').lean();
+    const liPosts = includeLinkedIn
+      ? await LinkedInPost.find({ organization: org._id, createdDate: inWindow(from, to) })
+          .select('impressions reactions comments reposts clicks').lean()
+      : [];
 
     for (const p of posts) platformCounts[p.platform] = (platformCounts[p.platform] || 0) + 1;
     if (liPosts.length) platformCounts.LinkedIn = (platformCounts.LinkedIn || 0) + liPosts.length;
 
-    const reach = sum(posts, 'reach');
+    // LinkedIn's post export carries no reach column; its reach is the page's
+    // daily "unique impressions" (the export's Metrics sheet), summed over the
+    // window — added up day by day, the same way Instagram reach is added up
+    // post by post.
+    const liReach = includeLinkedIn
+      ? sum(await Analytics.find({ organization: org._id, platform: 'LinkedIn', date: inWindow(from, to) })
+          .select('uniqueImpressions').lean(), 'uniqueImpressions')
+      : 0;
+    const reach = sum(posts, 'reach') + liReach;
     const impressions = sum(posts, 'impressions') + sum(liPosts, 'impressions');
     const likes = sum(posts, 'likes') + sum(liPosts, 'reactions');
     const comments = sum(posts, 'comments') + sum(liPosts, 'comments');
@@ -259,7 +288,8 @@ const socialOrganic = async (orgs, from, to) => {
     // Followers: where the audience stood at the end of the window, and how much
     // of that was added inside it.
     const audience = {};
-    for (const platform of PLATFORMS) {
+    const audiencePlatforms = platformFilter ? [platformFilter] : PLATFORMS;
+    for (const platform of audiencePlatforms) {
       const field = platform === 'YouTube' ? 'subscribers' : 'followers';
       const [last, first] = await Promise.all([
         Analytics.findOne({ organization: org._id, platform, [field]: { $gt: 0 }, date: { $lte: to } })
@@ -273,7 +303,35 @@ const socialOrganic = async (orgs, from, to) => {
     const followerGrowth = Object.values(audience)
       .reduce((t, a) => t + Math.max(0, a.end - (a.start || a.end)), 0);
 
+    // The same figures split per platform, so a reader can see how this one
+    // college is doing on each of its channels rather than only in aggregate.
+    // A platform is listed when it had posts in the window or an audience.
+    const platforms = [];
+    for (const platform of (platformFilter ? [platformFilter] : PLATFORMS)) {
+      const isLi = platform === 'LinkedIn';
+      const pPosts = isLi ? liPosts : posts.filter((p) => p.platform === platform);
+      const pImpr = sum(pPosts, 'impressions');
+      const pLikes = isLi ? sum(pPosts, 'reactions') : sum(pPosts, 'likes');
+      const pInter = isLi
+        ? sum(pPosts, 'reactions') + sum(pPosts, 'comments') + sum(pPosts, 'reposts')
+        : sum(pPosts, 'likes') + sum(pPosts, 'comments') + sum(pPosts, 'shares');
+      const aud = audience[platform] || { end: 0, start: 0 };
+      if (!pPosts.length && !aud.end && !(isLi && liReach)) continue;
+      platforms.push({
+        platform,
+        posts: pPosts.length,
+        reach: isLi ? liReach : sum(pPosts, 'reach'),
+        impressions: pImpr,
+        likes: pLikes,
+        interactions: pInter,
+        engagementRate: pImpr ? round((pInter / pImpr) * 100, 2) : null,
+        followers: aud.end,
+        followerGrowth: Math.max(0, aud.end - (aud.start || aud.end)),
+      });
+    }
+
     rows.push({
+      platforms,
       organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
       posts: posts.length + liPosts.length,
       reach,
@@ -292,16 +350,16 @@ const socialOrganic = async (orgs, from, to) => {
   const totalInteractions = sum(rows, 'interactions');
   const postsTotal = sum(rows, 'posts');
 
-  // Ranked by the normalised rate, which is the only fair basis — a big account
-  // and a small one can be compared on it.
+  // Ranked by likes received in the period.
   const leaderboard = rows
-    .filter((r) => r.engagementRate != null)
-    .sort((a, b) => b.engagementRate - a.engagementRate)
+    .filter((r) => r.posts > 0 || r.likes > 0)
+    .sort((a, b) => b.likes - a.likes)
     .map((r, i) => ({
       rank: i + 1,
       organization: r.organization,
       posts: r.posts,
       reach: r.reach,
+      likes: r.likes,
       engagementRate: r.engagementRate,
       followers: r.followers,
       followerGrowth: r.followerGrowth,
@@ -309,24 +367,62 @@ const socialOrganic = async (orgs, from, to) => {
 
   // The stand-out posts of the period, by their own engagement rate.
   const orgIds = orgs.map((o) => o._id);
-  const topRaw = await SocialPost.find({
-    organization: { $in: orgIds }, publishedAt: inWindow(from, to), impressions: { $gt: 0 },
-  }).select('organization platform caption message title reach impressions likes comments shares publishedAt')
+  // Cut by character, not UTF-16 unit, so a styled or emoji character is never
+  // split in half at the 90-character mark.
+  const shortTitle = (t) => Array.from(t || 'Untitled post').slice(0, 90).join('');
+  // Rated against impressions, except YouTube, which reports views instead;
+  // `audienceCount`/`audienceLabel` say which audience figure each post shows.
+  const topQuery = {
+    organization: { $in: orgIds },
+    publishedAt: inWindow(from, to),
+    $or: [{ likes: { $gt: 0 } }, { impressions: { $gt: 0 } }, { platform: 'YouTube', views: { $gt: 0 } }],
+  };
+  if (platformFilter) topQuery.platform = platformFilter;
+  const topRaw = await SocialPost.find(topQuery)
+    .select('organization platform caption message title reach impressions views likes comments shares publishedAt')
     .populate('organization', 'name code').lean();
-  const topPosts = topRaw
-    .map((p) => {
-      const inter = (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
-      return {
-        organization: p.organization,
-        platform: p.platform,
-        title: (p.title || p.caption || p.message || 'Untitled post').slice(0, 90),
-        reach: p.reach || 0,
-        engagementRate: round((inter / p.impressions) * 100, 2),
-        publishedAt: p.publishedAt,
-      };
-    })
-    .sort((a, b) => b.engagementRate - a.engagementRate)
-    .slice(0, 5);
+  const fromSynced = topRaw.map((p) => {
+    const inter = (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
+    const byViews = !(p.impressions > 0);
+    return {
+      organization: p.organization,
+      platform: p.platform,
+      title: shortTitle(p.title || p.caption || p.message),
+      reach: p.reach || 0,
+      likes: p.likes || 0,
+      audienceCount: byViews ? p.views : (p.reach || p.impressions),
+      audienceLabel: byViews ? 'views' : (p.reach ? 'reach' : 'impressions'),
+      engagementRate: (byViews ? p.views : p.impressions) ? round((inter / (byViews ? p.views : p.impressions)) * 100, 2) : null,
+      publishedAt: p.publishedAt,
+    };
+  });
+  const liTop = includeLinkedIn
+    ? await LinkedInPost.find({ organization: { $in: orgIds }, createdDate: inWindow(from, to), impressions: { $gt: 0 } })
+        .select('organization title impressions reactions comments reposts createdDate')
+        .populate('organization', 'name code').lean()
+    : [];
+  const fromLinkedIn = liTop.map((p) => ({
+    organization: p.organization,
+    platform: 'LinkedIn',
+    title: shortTitle(p.title),
+    reach: 0,
+    audienceCount: p.impressions,
+    audienceLabel: 'impressions',
+    likes: p.reactions || 0,
+    engagementRate: round((((p.reactions || 0) + (p.comments || 0) + (p.reposts || 0)) / p.impressions) * 100, 2),
+    publishedAt: p.createdDate,
+  }));
+  const rankedPosts = [...fromSynced, ...fromLinkedIn].sort((a, b) => (b.likes - a.likes) || ((b.engagementRate || 0) - (a.engagementRate || 0)));
+  const topPosts = rankedPosts.slice(0, 5);
+  // Each college's best post on each platform it used, for its page in the
+  // PDF — one ranking across platforms would hand every slot to whichever
+  // platform runs the highest rates (usually Instagram).
+  const topPostsByOrg = {};
+  for (const p of rankedPosts) {
+    const key = String(p.organization?._id || p.organization);
+    const list = topPostsByOrg[key] || (topPostsByOrg[key] = []);
+    if (!list.some((q) => q.platform === p.platform)) list.push(p);
+  }
 
   return {
     rows,
@@ -344,8 +440,28 @@ const socialOrganic = async (orgs, from, to) => {
     },
     byPlatform: Object.entries(platformCounts).sort((a, b) => b[1] - a[1])
       .map(([label, count]) => ({ label, count, share: pct(count, postsTotal) })),
+    // Every organisation's per-platform figures summed, so "how is each
+    // platform doing across all colleges" has its own answer.
+    platformTotals: (() => {
+      const acc = {};
+      for (const r of rows) {
+        for (const p of r.platforms) {
+          const a = acc[p.platform] || (acc[p.platform] = {
+            platform: p.platform, posts: 0, reach: 0, impressions: 0, likes: 0, interactions: 0, followers: 0, followerGrowth: 0,
+          });
+          a.likes += p.likes || 0;
+          a.posts += p.posts; a.reach += p.reach; a.impressions += p.impressions;
+          a.interactions += p.interactions; a.followers += p.followers; a.followerGrowth += p.followerGrowth;
+        }
+      }
+      return PLATFORMS.filter((p) => acc[p]).map((p) => ({
+        ...acc[p],
+        engagementRate: acc[p].impressions ? round((acc[p].interactions / acc[p].impressions) * 100, 2) : null,
+      }));
+    })(),
     leaderboard,
     topPosts,
+    topPostsByOrg,
   };
 };
 
@@ -493,6 +609,202 @@ const teamOutput = async (orgs, from, to) => {
 };
 
 // ---------------------------------------------------------------------------
+// Part 6 — Publishing pipeline
+// ---------------------------------------------------------------------------
+// Design Output stops the moment the coordinator accepts the artwork — it
+// never says whether that design actually went out. This part picks up
+// exactly there: how much work entered the posting half this period, how
+// much of it was actually published, how long that took, and what's still
+// sitting in the queue. `postOnly` asks (a ready-made creative that only
+// needs posting, never a design) skip the design half entirely, so they
+// "enter" the posting half the moment they're raised rather than the moment
+// a design is accepted.
+const publishingPipeline = async (orgs, from, to) => {
+  const rows = [];
+  const platformMix = {};
+  let postOnlyPosted = 0;
+
+  for (const org of orgs) {
+    const scope = { organization: org._id };
+
+    const entered = await InstitutionRequest.countDocuments({
+      ...scope,
+      $or: [
+        { postOnly: { $ne: true }, designAcceptedAt: inWindow(from, to) },
+        { postOnly: true, createdAt: inWindow(from, to) },
+      ],
+    });
+
+    // Posting is done by hand outside t@g, so work sitting in "To Be Posted"
+    // counts as posted, dated from the day it entered that board; anything the
+    // handler did mark posted keeps its own posted date.
+    const enteredWindow = [
+      { postOnly: { $ne: true }, designAcceptedAt: inWindow(from, to) },
+      { postOnly: true, createdAt: inWindow(from, to) },
+    ];
+    const posted = await InstitutionRequest.find({
+      ...scope,
+      $or: [
+        { postedAt: inWindow(from, to) },
+        { workflowStage: { $in: POST_STAGES }, $or: enteredWindow },
+      ],
+    }).select('postedAt designAcceptedAt createdAt postOnly postPlatforms workflowStage').lean();
+
+    const scheduled = await InstitutionRequest.countDocuments({ ...scope, scheduledFor: { $ne: null }, postedAt: null });
+    // A live snapshot, not period-bound — the same convention designOutput's
+    // pendingByStage uses for "where is the backlog right now".
+    const backlog = await InstitutionRequest.countDocuments({ ...scope, workflowStage: { $in: POST_STAGES } });
+
+    const turnarounds = posted
+      .map((p) => {
+        if (POST_STAGES.includes(p.workflowStage)) return 0;
+        const start = p.postOnly ? p.createdAt : p.designAcceptedAt;
+        return start ? (new Date(p.postedAt) - new Date(start)) / DAY : null;
+      })
+      .filter((n) => n != null);
+
+    posted.forEach((p) => {
+      if (p.postOnly) postOnlyPosted += 1;
+      for (const platform of p.postPlatforms || []) platformMix[platform] = (platformMix[platform] || 0) + 1;
+    });
+
+    rows.push({
+      organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
+      entered,
+      posted: posted.length,
+      scheduled,
+      backlog,
+      avgDaysToPost: turnarounds.length ? round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
+    });
+  }
+
+  const postedTotal = sum(rows, 'posted');
+  const platformTotal = Object.values(platformMix).reduce((a, b) => a + b, 0);
+  return {
+    rows,
+    totals: {
+      entered: sum(rows, 'entered'),
+      posted: postedTotal,
+      scheduled: sum(rows, 'scheduled'),
+      backlog: sum(rows, 'backlog'),
+      avgDaysToPost: weightedMean(rows, 'avgDaysToPost', 'posted'),
+      postOnlyShare: postedTotal ? pct(postOnlyPosted, postedTotal) : null,
+    },
+    byPlatform: Object.entries(platformMix).sort((a, b) => b[1] - a[1])
+      .map(([label, count]) => ({ label, count, share: pct(count, platformTotal) })),
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Part 7 — Goal attainment
+// ---------------------------------------------------------------------------
+// A goal runs on its own start/end dates (set whenever someone raised it),
+// never on this report's window — only goals whose own window overlaps this
+// report's are counted, and each one's progress is computed exactly the way
+// the Goals page computes it (goalController's computeProgress), inlined
+// here rather than imported so this stays a plain read like every other part.
+const audienceFieldFor = (platform) => (platform === 'YouTube' ? 'subscribers' : 'followers');
+
+const goalAttainment = async (orgs, from, to) => {
+  const orgIds = orgs.map((o) => o._id);
+  const goals = await Goal.find({
+    organization: { $in: orgIds },
+    startDate: { $lte: to },
+    endDate: { $gte: from },
+  }).lean();
+
+  const orgById = new Map(orgs.map((o) => [String(o._id), o]));
+  const rows = [];
+  for (const goal of goals) {
+    const org = orgById.get(String(goal.organization));
+    if (!org) continue;
+    const field = audienceFieldFor(goal.platform);
+    const [latest, baselineSnap, postsPublished] = await Promise.all([
+      Analytics.findOne({ organization: goal.organization, platform: goal.platform, [field]: { $gt: 0 } }).sort({ date: -1 }).lean(),
+      Analytics.findOne({ organization: goal.organization, platform: goal.platform, [field]: { $gt: 0 }, date: { $lte: goal.startDate } }).sort({ date: -1 }).lean(),
+      ApprovalRequest.countDocuments({
+        organization: goal.organization, platform: goal.platform, status: 'POSTED',
+        postedAt: { $gte: goal.startDate, $lte: goal.endDate },
+      }),
+    ]);
+    const currentFollowers = latest?.[field] || 0;
+    const baselineFollowers = baselineSnap?.[field] || 0;
+    const gainedFollowers = Math.max(0, currentFollowers - baselineFollowers);
+
+    rows.push({
+      organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
+      platform: goal.platform,
+      targetFollowers: goal.targetFollowers,
+      gainedFollowers,
+      followerProgress: goal.targetFollowers ? pct(gainedFollowers, goal.targetFollowers) : null,
+      targetPosts: goal.targetPosts,
+      postsPublished,
+      postProgress: goal.targetPosts ? pct(postsPublished, goal.targetPosts) : null,
+      startDate: goal.startDate,
+      endDate: goal.endDate,
+    });
+  }
+
+  return {
+    rows,
+    totals: {
+      goals: rows.length,
+      targetFollowers: sum(rows, 'targetFollowers'),
+      gainedFollowers: sum(rows, 'gainedFollowers'),
+      targetPosts: sum(rows, 'targetPosts'),
+      postsPublished: sum(rows, 'postsPublished'),
+    },
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Timeline — the period itself, broken into days (windows up to two weeks) or
+// weeks, with how much happened in each: design requests raised, designs
+// delivered (accepted by the coordinator), and social posts published. The
+// totals elsewhere say how much; this says when.
+// ---------------------------------------------------------------------------
+const activityTimeline = async (orgs, from, to, platformFilter) => {
+  const orgIds = orgs.map((o) => o._id);
+  const days = Math.max(1, Math.round((to - from) / DAY) + 1);
+  const step = days <= 14 ? 1 : 7;
+  const span = step * DAY;
+  const buckets = [];
+  for (let t = from.getTime(); t <= to.getTime(); t += span) {
+    buckets.push({ from: new Date(t), to: new Date(Math.min(t + span - 1, to.getTime())), requests: 0, delivered: 0, posts: 0 });
+  }
+  const includeLinkedIn = !platformFilter || platformFilter === 'LinkedIn';
+
+  const [requests, delivered, posts, liPosts] = await Promise.all([
+    InstitutionRequest.find({ organization: { $in: orgIds }, postOnly: { $ne: true }, createdAt: inWindow(from, to) }).select('organization createdAt').lean(),
+    InstitutionRequest.find({ organization: { $in: orgIds }, designAcceptedAt: inWindow(from, to) }).select('organization designAcceptedAt').lean(),
+    SocialPost.find({ organization: { $in: orgIds }, publishedAt: inWindow(from, to), ...(platformFilter ? { platform: platformFilter } : {}) }).select('organization publishedAt').lean(),
+    includeLinkedIn ? LinkedInPost.find({ organization: { $in: orgIds }, createdDate: inWindow(from, to) }).select('organization createdDate').lean() : [],
+  ]);
+  // The same buckets per college, for each college's own page.
+  const byOrg = {};
+  const orgSeries = (doc) => {
+    const key = String(doc.organization);
+    return byOrg[key] || (byOrg[key] = buckets.map(() => ({ requests: 0, delivered: 0, posts: 0 })));
+  };
+  const tally = (list, dateOf, field) => {
+    for (const d of list) {
+      const i = Math.floor((new Date(dateOf(d)) - from) / span);
+      if (!buckets[i]) continue;
+      buckets[i][field] += 1;
+      orgSeries(d)[i][field] += 1;
+    }
+  };
+  tally(requests, (r) => r.createdAt, 'requests');
+  tally(delivered, (r) => r.designAcceptedAt, 'delivered');
+  tally(posts, (p) => p.publishedAt, 'posts');
+  tally(liPosts, (p) => p.createdDate, 'posts');
+
+  return {
+    granularity: step === 1 ? 'day' : 'week',
+    buckets: buckets.map((b) => ({ ...b, from: b.from.toISOString().slice(0, 10), to: b.to.toISOString().slice(0, 10) })),
+    byOrg,
+  };
+};
 
 /**
  * Build the whole report for a window.
@@ -500,20 +812,26 @@ const teamOutput = async (orgs, from, to) => {
  * @param {Date} from   start of the period (inclusive)
  * @param {Date} to     end of the period (inclusive)
  * @param {Array} orgIds  limit to these organizations; omit for every active one
+ * @param {String} platform  narrow Part 3 (Social organic) to one platform only —
+ *   design/web/ads/team have no platform dimension of their own, so this only
+ *   ever affects the social section (see socialOrganic above).
  */
-export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
+export const buildPeriodReport = async ({ from, to, orgIds, platform } = {}) => {
   const query = { isActive: true };
   if (orgIds?.length) {
     query._id = { $in: orgIds.map((id) => new mongoose.Types.ObjectId(String(id))) };
   }
   const orgs = await Organization.find(query).select('name code color').sort({ name: 1 }).lean();
 
-  const [design, web, social, ads, team] = await Promise.all([
+  const [design, web, social, ads, team, publishing, goals, timeline] = await Promise.all([
     designOutput(orgs, from, to),
     webDevelopment(orgs, from, to),
-    socialOrganic(orgs, from, to),
+    socialOrganic(orgs, from, to, platform),
     paidAds(orgs, from, to),
     teamOutput(orgs, from, to),
+    publishingPipeline(orgs, from, to),
+    goalAttainment(orgs, from, to),
+    activityTimeline(orgs, from, to, platform),
   ]);
 
   // The headline tiles, taken straight off the five parts so they can never
@@ -524,8 +842,10 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
     webTasksDone: { value: web.totals.completed, of: web.totals.tasksReceived },
     postsPublished: social.totals.posts,
     engagementRate: social.totals.engagementRate,
+    likes: social.totals.likes,
     adSpend: ads.totals.spend,
     designPending: design.totals.pending,
+    designsCompleted: design.totals.designsCompleted,
     designCancelled: design.totals.cancelled,
     avgTurnaroundDays: design.totals.avgTurnaroundDays,
     firstPassRate: design.totals.firstPassRate,
@@ -544,7 +864,6 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
   if (!web.totals.tasksReceived) gaps.push('No web tasks recorded for this period.');
   if (!ads.totals.spend) gaps.push('No ad campaigns recorded for this period, so the paid section is empty.');
   else if (!ads.totals.leads) gaps.push('Ad spend is recorded but no leads, so cost per lead cannot be worked out.');
-  if (!social.totals.impressions) gaps.push('No post impressions in this period, so engagement rate cannot be normalised.');
 
   return {
     period: {
@@ -560,6 +879,9 @@ export const buildPeriodReport = async ({ from, to, orgIds } = {}) => {
     social,
     ads,
     team,
+    publishing,
+    goals,
+    timeline,
     gaps,
   };
 };

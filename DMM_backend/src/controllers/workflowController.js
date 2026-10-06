@@ -1047,7 +1047,7 @@ export const markWorkflowPosted = asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------------
 
 /**
- * @route PUT /api/workflow/:id/cancel   body: { reason? }
+ * @route PUT /api/workflow/:id/cancel   body: { reason } (required)
  *
  * An Admin (or the super admin) can pull a request back, but only while it is
  * still unclaimed — DESIGN_OPEN or POST_OPEN, with nobody acknowledged. Once a
@@ -1069,6 +1069,7 @@ export const cancelWorkflowItem = asyncHandler(async (req, res) => {
   }
 
   const reason = String(req.body.reason || '').trim();
+  if (reason.length < 3) { res.status(400); throw new Error('Please write the reason for cancelling — the coordinator will see it'); }
   // Same optimistic lock acknowledgeWorkflowItem races against: the stage plus a
   // clear designer/handler, so a designer or handler claiming this at the same
   // instant cannot be silently overridden by a cancel that started a moment earlier.
@@ -1077,7 +1078,7 @@ export const cancelWorkflowItem = asyncHandler(async (req, res) => {
     { $set: {
       workflowStage: 'CANCELLED',
       status: 'DECLINED',
-      response: reason || 'Cancelled before it was picked up.',
+      response: reason,
       reviewedBy: req.user._id,
       reviewedAt: new Date(),
     } },
@@ -1087,13 +1088,13 @@ export const cancelWorkflowItem = asyncHandler(async (req, res) => {
 
   await logActivity({
     user: req.user._id, organization: idOf(won.organization), action: ACTIVITY_ACTIONS.REQUEST_REVIEWED,
-    description: `Cancelled "${won.title}"${reason ? `: ${reason}` : ''}`,
+    description: `Cancelled "${won.title}": ${reason}`,
     entityType: 'InstitutionRequest', entityId: won._id,
   });
   await notifyUser(won.raisedBy, won, {
     type: NOTIFICATION_TYPES.REQUEST_DECLINED,
     title: 'Your request was cancelled',
-    message: `${req.user.name} cancelled "${won.title}"${reason ? ` — ${reason}` : ''}`,
+    message: `${req.user.name} cancelled "${won.title}" — ${reason}`,
   });
 
   const fresh = await populateRequest(InstitutionRequest.findById(won._id)).lean();

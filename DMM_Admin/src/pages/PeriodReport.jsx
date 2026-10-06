@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  FileBarChart, Download, Info, TriangleAlert, RefreshCw,
+  FileBarChart, Download, FileText, Info, TriangleAlert, RefreshCw,
 } from 'lucide-react';
 import { periodReportApi } from '../api/endpoints.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
+import { BmReportPdfModal } from '../components/reports/BmReportPdfModal.jsx';
 import { cn, formatNumber } from '../lib/utils.js';
 import { useAuthStore } from '../store/authStore.js';
 
@@ -156,6 +157,7 @@ export default function PeriodReport() {
   const [downloading, setDownloading] = useState(false);
   const [platform, setPlatform] = useState('LinkedIn');
   const [platformDownloading, setPlatformDownloading] = useState(false);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
 
   const query = preset ? { preset } : { from, to };
   const ready = !!preset || (!!from && !!to);
@@ -223,9 +225,14 @@ export default function PeriodReport() {
             <Button loading={downloading} onClick={download}>
               <Download className="h-4 w-4" /> Download Excel
             </Button>
+            <Button variant="outline" onClick={() => setPdfModalOpen(true)}>
+              <FileText className="h-4 w-4" /> Download PDF
+            </Button>
           </div>
         )}
       />
+
+      <BmReportPdfModal open={pdfModalOpen} onClose={() => setPdfModalOpen(false)} />
 
       {/* Window picker */}
       <Card className="mb-5 space-y-3 p-4">
@@ -290,13 +297,13 @@ export default function PeriodReport() {
             <Tile label="Delivered on time" value={h.deliveredOnTimeRate == null ? '—' : `${h.deliveredOnTimeRate}%`} accent="text-emerald-600 dark:text-emerald-400" />
             <Tile label="Web tasks done" value={formatNumber(h.webTasksDone.value)} sub={`/${h.webTasksDone.of}`} accent="text-sky-600 dark:text-sky-400" />
             <Tile label="Posts published" value={formatNumber(h.postsPublished)} accent="text-rose-600 dark:text-rose-400" />
-            <Tile label="Engagement rate" value={h.engagementRate == null ? '—' : `${h.engagementRate}%`} accent="text-indigo-600 dark:text-indigo-400" />
+            <Tile label="Likes" value={formatNumber(h.likes)} accent="text-indigo-600 dark:text-indigo-400" />
             <Tile label="Ad spend" value={money(h.adSpend)} accent="text-amber-600 dark:text-amber-400" />
           </div>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
             <Tile label="Design pending" value={formatNumber(h.designPending)} />
             <Tile label="Design cancelled" value={formatNumber(h.designCancelled)} accent="text-slate-400" />
-            <Tile label="Avg turnaround" value={h.avgTurnaroundDays == null ? '—' : `${h.avgTurnaroundDays} d`} />
+            <Tile label="Designs completed" value={formatNumber(h.designsCompleted)} />
             <Tile label="First-pass approval" value={h.firstPassRate == null ? '—' : `${h.firstPassRate}%`} />
             <Tile label="Avg revisions" value={dash(h.avgRevisionRounds)} />
             <Tile label="Organic reach" value={formatNumber(h.organicReach)} />
@@ -325,7 +332,7 @@ export default function PeriodReport() {
           <PartTable
             title="Part 1 — Design output"
             right={`${data.design.totals.completed} designs delivered to ${data.organizations.length} institutions`}
-            note="Turnaround and revision averages on the total row are weighted by volume."
+            note="Revision averages on the total row are weighted by volume."
             columns={[
               { key: 'org', label: 'Institution', render: (r) => r.organization.name, total: () => 'ALL INSTITUTIONS' },
               { key: 'rec', label: 'Requests', align: 'right', render: (r) => r.requestsReceived, total: (t) => t.requestsReceived },
@@ -336,7 +343,6 @@ export default function PeriodReport() {
               { key: 'otr', label: 'On-time rate', align: 'right', render: (r) => (r.onTimeRate == null ? '—' : `${r.onTimeRate}%`), total: (t) => (t.onTimeRate == null ? '—' : `${t.onTimeRate}%`) },
               { key: 'fp', label: 'First pass', align: 'right', render: (r) => r.approvedFirstPass, total: (t) => t.approvedFirstPass },
               { key: 'fpr', label: 'First-pass rate', align: 'right', render: (r) => (r.firstPassRate == null ? '—' : `${r.firstPassRate}%`), total: (t) => (t.firstPassRate == null ? '—' : `${t.firstPassRate}%`) },
-              { key: 'ta', label: 'Turnaround (d)', align: 'right', render: (r) => dash(r.avgTurnaroundDays), total: (t) => dash(t.avgTurnaroundDays) },
               { key: 'rev', label: 'Revisions', align: 'right', render: (r) => dash(r.avgRevisionRounds), total: (t) => dash(t.avgRevisionRounds) },
             ]}
             rows={data.design.rows}
@@ -367,8 +373,7 @@ export default function PeriodReport() {
           {/* Part 3 */}
           <PartTable
             title="Part 3 — Social media, organic"
-            right={`${formatNumber(data.social.totals.posts)} posts · ${formatNumber(data.social.totals.reach)} reach${data.social.totals.engagementRate == null ? '' : ` · ${data.social.totals.engagementRate}% engagement`}`}
-            note="Engagement rate is normalised as (likes + comments + shares) ÷ impressions everywhere, so the comparison is fair."
+            right={`${formatNumber(data.social.totals.posts)} posts · ${formatNumber(data.social.totals.reach)} reach · ${formatNumber(data.social.totals.likes)} likes`}
             columns={[
               { key: 'org', label: 'Account', render: (r) => r.organization.name, total: () => 'ALL ACCOUNTS' },
               { key: 'posts', label: 'Posts', align: 'right', render: (r) => r.posts, total: (t) => t.posts },
@@ -378,7 +383,6 @@ export default function PeriodReport() {
               { key: 'comm', label: 'Comments', align: 'right', render: (r) => formatNumber(r.comments), total: (t) => formatNumber(t.comments) },
               { key: 'shares', label: 'Shares', align: 'right', render: (r) => formatNumber(r.shares), total: (t) => formatNumber(t.shares) },
               { key: 'inter', label: 'Interactions', align: 'right', render: (r) => formatNumber(r.interactions), total: (t) => formatNumber(t.interactions) },
-              { key: 'er', label: 'Engagement', align: 'right', render: (r) => (r.engagementRate == null ? '—' : `${r.engagementRate}%`), total: (t) => (t.engagementRate == null ? '—' : `${t.engagementRate}%`) },
               { key: 'fol', label: 'Followers', align: 'right', render: (r) => formatNumber(r.followers), total: (t) => formatNumber(t.followers) },
               { key: 'gro', label: 'Growth', align: 'right', render: (r) => `+${formatNumber(r.followerGrowth)}`, total: (t) => `+${formatNumber(t.followerGrowth)}` },
             ]}
@@ -390,7 +394,7 @@ export default function PeriodReport() {
             {data.social.leaderboard.length > 0 && (
               <Card className="overflow-hidden">
                 <h3 className="px-5 pt-5 text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Ranked by normalised engagement
+                  Ranked by likes
                 </h3>
                 <table className="mt-3 w-full text-sm">
                   <tbody>
@@ -399,7 +403,7 @@ export default function PeriodReport() {
                         <td className="px-5 py-2 text-xs font-bold text-slate-400">{l.rank}</td>
                         <td className="py-2 font-semibold text-slate-800 dark:text-white">{l.organization.name}</td>
                         <td className="py-2 text-right text-slate-500 dark:text-slate-400">{formatNumber(l.reach)}</td>
-                        <td className="px-5 py-2 text-right font-bold tabular-nums text-slate-700 dark:text-slate-200">{l.engagementRate}%</td>
+                        <td className="px-5 py-2 text-right font-bold tabular-nums text-slate-700 dark:text-slate-200">{formatNumber(l.likes)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -414,8 +418,8 @@ export default function PeriodReport() {
                 { key: 'org', label: 'Account', render: (r) => r.organization?.name || '—' },
                 { key: 'plat', label: 'Platform', render: (r) => r.platform },
                 { key: 'post', label: 'Post', render: (r) => r.title },
-                { key: 'reach', label: 'Reach', align: 'right', render: (r) => formatNumber(r.reach) },
-                { key: 'er', label: 'Engagement', align: 'right', render: (r) => `${r.engagementRate}%` },
+                { key: 'reach', label: 'Audience', align: 'right', render: (r) => `${formatNumber(r.audienceCount ?? r.reach)} ${r.audienceLabel || 'reach'}` },
+                { key: 'likes', label: 'Likes', align: 'right', render: (r) => formatNumber(r.likes) },
               ]}
               rows={data.social.topPosts}
             />

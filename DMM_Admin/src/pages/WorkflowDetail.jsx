@@ -395,7 +395,7 @@ function ApproveConfirmModal({ half, coordinatorName, onClose, onConfirm, saving
  * someone off work they have already started — it means telling the
  * coordinator their ask is not going ahead, not stopping a job mid-way.
  */
-function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
+export function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
   const [reason, setReason] = useState('');
   return (
     <Modal open onClose={onClose} title="Cancel this request?">
@@ -410,14 +410,14 @@ function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
         </p>
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
-            Reason <span className="font-normal text-slate-400">· optional, shown to the coordinator</span>
+            Reason <span className="font-normal text-rose-600">* required</span> <span className="font-normal text-slate-400">· shown to the coordinator</span>
           </span>
-          <textarea className="input-base min-h-[90px]" value={reason} onChange={(e) => setReason(e.target.value)}
+          <textarea className="input-base min-h-[90px]" required value={reason} onChange={(e) => setReason(e.target.value)}
             placeholder="e.g. Not in our scope of work, not relevant to the Branding/Social Media Team, duplicate request" />
         </label>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Keep it</Button>
-          <Button variant="danger" loading={saving} onClick={() => onConfirm(reason.trim())}>
+          <Button variant="danger" loading={saving} disabled={reason.trim().length < 3} onClick={() => onConfirm(reason.trim())}>
             <Ban className="h-4 w-4" /> Cancel the request
           </Button>
         </div>
@@ -432,21 +432,30 @@ function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
  * request, its approvals and any work assignments built on it are gone for
  * good, which is why it asks twice as loudly as Cancel does.
  */
-function DeleteConfirmModal({ onClose, onConfirm, saving }) {
+function DeleteConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
+  const [reason, setReason] = useState('');
   return (
-    <Modal open onClose={onClose} title="Delete this request?">
+    <Modal open onClose={onClose} title="Cancel this request?">
       <div className="space-y-4">
         <p className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50/70 p-3 text-sm text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
           <Trash2 className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             This permanently removes the request, along with any design/post approvals and work
-            assignments built on it. This cannot be undone.
+            assignments built on it, and tells{' '}
+            <span className="font-bold">{coordinatorName || 'the coordinator'}</span> why. This cannot be undone.
           </span>
         </p>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300">
+            Reason <span className="font-normal text-rose-600">* required</span> <span className="font-normal text-slate-400">· shown to the coordinator</span>
+          </span>
+          <textarea className="input-base min-h-[90px]" required value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="Why is this request being cancelled?" />
+        </label>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Keep it</Button>
-          <Button variant="danger" loading={saving} onClick={onConfirm}>
-            <Trash2 className="h-4 w-4" /> Delete permanently
+          <Button variant="danger" loading={saving} disabled={reason.trim().length < 3} onClick={() => onConfirm(reason.trim())}>
+            <Trash2 className="h-4 w-4" /> Cancel request
           </Button>
         </div>
       </div>
@@ -492,9 +501,9 @@ export default function WorkflowDetail() {
     onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
   });
   const deleteMut = useMutation({
-    mutationFn: () => institutionRequestApi.remove(id),
+    mutationFn: (reason) => institutionRequestApi.remove(id, reason),
     onSuccess: () => {
-      toast.success('Request deleted');
+      toast.success('Request cancelled');
       qc.invalidateQueries({ queryKey: ['admin-workflow'] });
       const stage = data?.item?.workflowStage;
       navigate(POST_TRACK.includes(stage) ? '/workflow/to-be-posted' : '/workflow/designs');
@@ -562,7 +571,7 @@ export default function WorkflowDetail() {
             )}
             {canDelete && (
               <Button variant="danger" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="h-4 w-4" /> Delete request
+                <Trash2 className="h-4 w-4" /> Cancel request
               </Button>
             )}
           </div>
@@ -727,9 +736,10 @@ export default function WorkflowDetail() {
       )}
       {deleteOpen && (
         <DeleteConfirmModal
+          coordinatorName={item.raisedBy?.name}
           saving={deleteMut.isPending}
           onClose={() => setDeleteOpen(false)}
-          onConfirm={() => deleteMut.mutate()}
+          onConfirm={(reason) => deleteMut.mutate(reason)}
         />
       )}
 

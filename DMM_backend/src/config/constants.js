@@ -13,9 +13,17 @@ export const USER_TYPES = {
   // picks the designer. The finished design is either posted by a social
   // handler or delivered back to this coordinator.
   COORDINATOR: 'COORDINATOR',
+  // Shared pool, bookable by any college — see photographerController.js.
+  PHOTOGRAPHER: 'PHOTOGRAPHER',
 };
 
 export const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
+
+// A photographer's day, in fixed bookable blocks rather than arbitrary time
+// ranges — simple to book, simple to see clashes on at a glance. Booking
+// FULL_DAY blocks the other three for that date and vice versa (enforced in
+// photographerController.js), so a photographer is never double-booked.
+export const PHOTOGRAPHER_SLOTS = ['MORNING', 'AFTERNOON', 'EVENING', 'FULL_DAY'];
 
 // The social-handlers directory also tracks X (Twitter) accounts, which the
 // analytics/competitor features (core 4 platforms) don't.
@@ -170,6 +178,8 @@ export const NOTIFICATION_TYPES = {
   // account failed — the request stays APPROVED rather than falsely showing
   // as posted, and this is the only signal anyone gets that it needs a look.
   PUBLISH_FAILED: 'PUBLISH_FAILED',
+  // Someone booked a photographer's slot — sent to the photographer.
+  PHOTOGRAPHER_BOOKED: 'PHOTOGRAPHER_BOOKED',
 };
 
 export const ACTIVITY_ACTIONS = {
@@ -206,6 +216,12 @@ export const ACTIVITY_ACTIONS = {
   DESIGN_DELIVERED: 'DESIGN_DELIVERED', // approved design delivered to the coordinator
   WORK_SUBMITTED: 'WORK_SUBMITTED',   // assignee asked for their work to be signed off
   WORK_COMPLETED: 'WORK_COMPLETED',   // sign-off granted; the assignment is done
+  PHOTOGRAPHER_SLOT_BOOKED: 'PHOTOGRAPHER_SLOT_BOOKED',
+  // Logged only when the actor is a photographer, so the super admin's
+  // photographer heatmap (photographerController.js) can filter to exactly
+  // this — distinct from EVENT_UPDATED, which every event create/edit logs
+  // regardless of who did it.
+  PHOTOGRAPHER_WORK_POSTED: 'PHOTOGRAPHER_WORK_POSTED',
 };
 
 // Physical signage (campus banner stands). A location is the fixed stand/frame;

@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, FileImage, Images, CheckSquare, BarChart3, CalendarDays,
   FileText, Bell, Settings, X, TrendingUp, Palette, Share2, ShoppingBag, Camera, ClipboardList, Sparkles, Flag, CircleUser, BriefcaseBusiness,
-  UsersRound, MessageSquarePlus, Send,
+  UsersRound, MessageSquarePlus, Send, Aperture,
 } from 'lucide-react';
 import { cn, roleLabel } from '../../lib/utils.js';
 import { useAuthStore } from '../../store/authStore.js';
@@ -24,6 +24,7 @@ const NAV_SECTIONS = [
       { to: '/assets', label: 'Assets', icon: Images },
       { to: '/brand-library', label: 'Brand Library', icon: Palette },
       { to: '/events', label: 'Events', icon: Camera },
+      { to: '/photographers', label: 'Photographers', icon: Aperture },
       { to: '/signage', label: 'Signage', icon: Flag },
     ],
   },
@@ -90,14 +91,21 @@ const NAV_SECTIONS = [
 const COORDINATOR_PATHS = [
   '/dashboard', '/notifications', '/profile', '/settings',
   '/templates', '/assets', '/brand-library', '/events',
-  '/social-analytics', '/requests',
+  '/social-analytics', '/requests', '/photographers',
   '/people', '/workflow/designs', '/workflow/to-be-posted',
+];
+
+// A photographer sees only these.
+const PHOTOGRAPHER_PATHS = [
+  '/dashboard', '/notifications', '/profile', '/settings',
+  '/events', '/photographers', '/people',
 ];
 
 export default function Sidebar({ open, onClose }) {
   const { user } = useAuthStore();
   const org = user?.organization;
   const isCoordinator = user?.role === 'USER' && user?.userType === 'COORDINATOR';
+  const isPhotographer = user?.role === 'USER' && user?.userType === 'PHOTOGRAPHER';
 
   const linkClass = ({ isActive }) => cn('sidebar-link', isActive && 'sidebar-link-active');
 
@@ -146,7 +154,8 @@ export default function Sidebar({ open, onClose }) {
               .filter((i) => (!i.roles && !i.userTypes)
                 || (i.roles || []).includes(user?.role)
                 || (i.userTypes || []).includes(user?.userType))
-              .filter((i) => !isCoordinator || COORDINATOR_PATHS.includes(i.to));
+              .filter((i) => !isCoordinator || COORDINATOR_PATHS.includes(i.to))
+              .filter((i) => !isPhotographer || PHOTOGRAPHER_PATHS.includes(i.to));
             if (!items.length) return null;
             return (
               <div key={section.title || si}>

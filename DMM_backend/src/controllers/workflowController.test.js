@@ -93,6 +93,16 @@ const raiseRequest = async ({
   // itself, or a narrower list for a test that cares which ones.
   platforms = ['LinkedIn'],
 }) => {
+  // A coordinator cannot raise a new ask while an earlier one of theirs is
+  // sitting at *_COORDINATOR_REVIEW awaiting their own accept/decline
+  // (institutionRequestController.js) — this fixture raises many independent
+  // requests as the same shared "Coco" across the whole suite, so each one
+  // first resolves whatever of hers is still waiting on her, same as her
+  // actually confirming it.
+  await InstitutionRequest.updateMany(
+    { raisedBy: ids.coordinator, workflowStage: { $in: ['DESIGN_COORDINATOR_REVIEW', 'POST_COORDINATOR_REVIEW'] } },
+    { $set: { workflowStage: 'COMPLETED', status: 'APPROVED' } }
+  );
   const fd = new FormData();
   fd.append('title', title);
   fd.append('details', `Please make ${title}`);
@@ -149,6 +159,41 @@ test('a raised request appears in Designs to be Done straight away', async () =>
   assert.equal(board.status, 200);
   assert.ok(board.body.items.some((i) => i._id === reqDoc._id), 'the designer sees it waiting');
   assert.equal(board.body.counts.DESIGN_OPEN >= 1, true, 'and it counts toward the board tile');
+});
+
+test('a coordinator cannot raise another request while an earlier one awaits their own accept/decline', async () => {
+  const first = await raiseRequest({ title: 'First ask' });
+  // Raising a second one is fine before that — nothing is waiting on Coco yet.
+  const early = await raiseRequest({ title: 'Still fine, nothing pending' });
+  assert.equal(early.title, 'Still fine, nothing pending');
+
+  // Drive the first all the way to DESIGN_COORDINATOR_REVIEW — the admin has
+  // approved it, and now it is waiting on the coordinator's own confirm.
+  await api(tok.designer, `/api/workflow/${first._id}/acknowledge`, { method: 'PUT' });
+  await submit(tok.designer, first._id);
+  await api(tok.su, `/api/workflow/${first._id}/review`, { method: 'PUT', body: { action: 'APPROVE' } });
+  assert.equal(await stageOf(first._id), 'DESIGN_COORDINATOR_REVIEW');
+
+  // Raised directly (not through the raiseRequest helper, which resolves any
+  // pending confirmation first) so this actually exercises the refusal.
+  const fd = new FormData();
+  fd.append('title', 'Second ask');
+  fd.append('details', 'Please make Second ask');
+  fd.append('workType', 'DIGITAL_MEDIA');
+  fd.append('category', 'Content');
+  fd.append('workCategory', 'Social Media');
+  fd.append('workItem', 'Social Media Posts');
+  fd.append('department', 'CSE');
+  fd.append('platforms', 'LinkedIn');
+  const res = await fetch(`${origin}/api/requests`, { method: 'POST', headers: { Authorization: `Bearer ${tok.coordinator}` }, body: fd });
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.match(body.message, /waiting for your approval/i);
+
+  // Once Coco confirms it, raising another is allowed again.
+  await api(tok.coordinator, `/api/workflow/${first._id}/confirm`, { method: 'PUT', body: { action: 'DONE', platforms: ['LinkedIn'] } });
+  const second = await raiseRequest({ title: 'Second ask, now allowed' });
+  assert.equal(second.title, 'Second ask, now allowed');
 });
 
 test('the designer sees the details the coordinator already gave, not a new form', async () => {
