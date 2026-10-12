@@ -109,7 +109,7 @@ export default function Login() {
       navigate('/dashboard');
     } catch (err) {
       if (err instanceof NotAdminError) toast.error(err.message);
-      else toast.error(err.response?.data?.message || 'Login failed');
+      else toast.error(err.response?.data?.message || (err.response ? 'Login failed' : 'Cannot reach the server. Check your internet connection and try again.'));
     } finally { setLoading(false); }
   };
 

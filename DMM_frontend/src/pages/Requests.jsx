@@ -7,7 +7,7 @@ import {
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
   Paperclip, ExternalLink, List, LayoutGrid, Send, Palette, Sparkles, Download, AlertTriangle,
 } from 'lucide-react';
-import { institutionRequestApi, organizationApi } from '../api/endpoints.js';
+import { institutionRequestApi, organizationApi, turnaroundApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
@@ -196,6 +196,26 @@ const DEFAULT_BRIEF = {
  * of it. Separate from content approvals on purpose: that flow is about a post
  * on its way out, this one is about something the college needs done.
  */
+const TIER_STYLE = {
+  BASIC: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  MEDIUM: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  HEAVY: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+};
+const prettyDate = (key) => new Date(`${key}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+
+// What the portal makes of the chosen design: how big a job it is, how long the
+// design itself takes, and the first day it can be delivered.
+function TurnaroundPanel({ plan }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', TIER_STYLE[plan.tier])}>{plan.tierLabel} request</span>
+      <span className="text-slate-600 dark:text-slate-300">Design time: <b>{plan.designTime}</b></span>
+      <span className="text-slate-600 dark:text-slate-300">Earliest delivery: <b>{prettyDate(plan.earliestDelivery)}</b></span>
+      <span className="basis-full text-xs text-slate-400">Minimum {plan.minWorkingDays} working days (Monday to Saturday) — Sundays and holidays are skipped.</span>
+    </div>
+  );
+}
+
 export default function Requests() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -888,6 +908,16 @@ function AskModal({ onClose, onSaved }) {
     onError: (e) => toast.error(e.response?.data?.message || 'Could not send that'),
   });
 
+  // The job's class, design time and earliest delivery date, as soon as a design type is picked.
+  const planWorkItem = !postOnly ? (form.workType === 'DIGITAL_MEDIA' ? selectedDigitalItem : form.workItem) : '';
+  const { data: planData } = useQuery({
+    queryKey: ['turnaround-plan', planWorkItem, form.workCategory],
+    queryFn: () => turnaroundApi.plan({ workItem: planWorkItem, workCategory: form.workCategory }),
+    enabled: !!planWorkItem,
+    staleTime: 60000,
+  });
+  const plan = planData?.plan;
+
   const summary = postOnly
     ? `Social Media Posting · ${form.postItem}`
     : form.workType === 'PRINT_MEDIA'
@@ -1040,6 +1070,8 @@ function AskModal({ onClose, onSaved }) {
           </>
         )}
 
+        {plan && <TurnaroundPanel plan={plan} />}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <Input label="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
             placeholder="e.g. Independence Day Banner & Reels Pack" />
@@ -1048,9 +1080,12 @@ function AskModal({ onClose, onSaved }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <Input label="Needed by (optional)" type="date" value={form.neededBy}
-            min={new Date().toISOString().slice(0, 10)}
-            onChange={(e) => setForm({ ...form, neededBy: e.target.value })} />
+          <div>
+            <Input label="Needed by (optional)" type="date" value={form.neededBy}
+              min={plan?.earliestDelivery || new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setForm({ ...form, neededBy: e.target.value })} />
+            {plan && <p className="mt-1 text-xs text-slate-400">Earliest possible: <b className="text-slate-600 dark:text-slate-300">{prettyDate(plan.earliestDelivery)}</b></p>}
+          </div>
           <div />
         </div>
 

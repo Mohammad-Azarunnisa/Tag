@@ -95,6 +95,11 @@ const institutionRequestSchema = new mongoose.Schema(
     priority: { type: String, enum: REQUEST_PRIORITY, default: 'NORMAL', index: true },
     // What the college needs by, when that matters.
     neededBy: { type: Date },
+    // The portal's own reading of the job when it was raised: how big it is (from
+    // the design type), and the earliest date it can be expected — 2 working days
+    // on, skipping Sundays and holidays. Fixed at raise time.
+    designTier: { type: String, enum: ['BASIC', 'MEDIUM', 'HEAVY', ''], default: '' },
+    earliestDeliveryAt: { type: Date },
     status: { type: String, enum: REQUEST_STATUS, default: 'OPEN', index: true },
     raisedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     linkedApproval: { type: mongoose.Schema.Types.ObjectId, ref: 'ApprovalRequest', default: null, index: true },

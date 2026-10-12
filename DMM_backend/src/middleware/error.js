@@ -17,6 +17,16 @@ export const errorHandler = (err, req, res, next) => {
     message = `Upload error: ${err.message}`;
   }
 
+  // The database itself is unreachable (DNS/network drop, Atlas down). Say so
+  // plainly rather than a vague 500, so a sign-in screen can tell the person
+  // it is the connection, not their password.
+  const dbDown = ['MongoNetworkError', 'MongoServerSelectionError', 'MongooseServerSelectionError', 'MongoNetworkTimeoutError'].includes(err.name)
+    || /buffering timed out|ENOTFOUND|EAI_AGAIN|getaddrinfo|ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|Server selection timed out/i.test(err.message || '');
+  if (dbDown) {
+    statusCode = 503;
+    message = 'The database cannot be reached right now. Please check the internet connection and try again in a moment.';
+  }
+
   // Mongoose bad ObjectId
   if (err.name === 'CastError' && err.kind === 'ObjectId') {
     statusCode = 404;

@@ -371,3 +371,39 @@ export const workflowApi = {
   // the console's own intervention point, gone once someone has taken it on.
   cancel: (id, reason) => api.put(`/workflow/${id}/cancel`, { reason }).then((r) => r.data),
 };
+
+// ---- People directory: student and faculty photos + details ----
+const mp = { headers: { 'Content-Type': 'multipart/form-data' } };
+const saveTemplate = async (path, filename) => {
+  const res = await api.get(path, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+export const peopleDataApi = {
+  students: (params) => api.get('/people-data/students', { params }).then((r) => r.data),
+  createStudent: (fd) => api.post('/people-data/students', fd, mp).then((r) => r.data),
+  updateStudent: (id, fd) => api.put(`/people-data/students/${id}`, fd, mp).then((r) => r.data),
+  removeStudent: (id) => api.delete(`/people-data/students/${id}`).then((r) => r.data),
+  uploadStudentPhotos: (fd) => api.post('/people-data/students/photos', fd, mp).then((r) => r.data),
+  importStudents: (fd) => api.post('/people-data/students/import', fd, mp).then((r) => r.data),
+  studentTemplate: () => saveTemplate('/people-data/students/template', 'students-template.xlsx'),
+  faculty: (params) => api.get('/people-data/faculty', { params }).then((r) => r.data),
+  createFaculty: (fd) => api.post('/people-data/faculty', fd, mp).then((r) => r.data),
+  updateFaculty: (id, fd) => api.put(`/people-data/faculty/${id}`, fd, mp).then((r) => r.data),
+  removeFaculty: (id) => api.delete(`/people-data/faculty/${id}`).then((r) => r.data),
+  importFaculty: (fd) => api.post('/people-data/faculty/import', fd, mp).then((r) => r.data),
+  facultyTemplate: () => saveTemplate('/people-data/faculty/template', 'faculty-template.xlsx'),
+};
+
+// ---- Turnaround: design classes, earliest delivery date and the holiday list ----
+export const turnaroundApi = {
+  plan: (params) => api.get('/turnaround/plan', { params }).then((r) => r.data),
+};
+export const holidayApi = {
+  list: (params) => api.get('/holidays', { params }).then((r) => r.data),
+  add: (data) => api.post('/holidays', data).then((r) => r.data),
+  remove: (id) => api.delete(`/holidays/${id}`).then((r) => r.data),
+};

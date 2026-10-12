@@ -113,12 +113,16 @@ export const dashboardApi = {
   activity: (organizationId) => api.get('/dashboard/activity', { params: { organizationId: organizationId || undefined } }).then((r) => r.data),
   topPlatform: (organizationId) => api.get('/dashboard/top-platform', { params: { organizationId: organizationId || undefined } }).then((r) => r.data),
   myUploads: () => api.get('/dashboard/my-uploads').then((r) => r.data),
+  today: (organizationId) => api.get('/dashboard/today', { params: { organizationId: organizationId || undefined } }).then((r) => r.data),
 };
 
 // ---- Calendar (posting calendar — auto-scoped to the user's org) ----
 export const calendarApi = {
   month: (month) => api.get('/calendar', { params: { month } }).then((r) => r.data),
   day: (date) => api.get('/calendar/day', { params: { date } }).then((r) => r.data),
+  addNote: (data) => api.post('/calendar/notes', data).then((r) => r.data),
+  updateNote: (id, data) => api.put(`/calendar/notes/${id}`, data).then((r) => r.data),
+  removeNote: (id) => api.delete(`/calendar/notes/${id}`).then((r) => r.data),
 };
 
 // ---- Templates ----
@@ -317,4 +321,40 @@ export const workflowApi = {
     api.put(`/workflow/${id}/confirm`, { action, feedbackPoints, platforms }).then((r) => r.data),
   markPosted: (id, { postedAt, scheduledFor } = {}) =>
     api.put(`/workflow/${id}/posted`, { postedAt, scheduledFor }).then((r) => r.data),
+};
+
+// ---- People directory: student and faculty photos + details ----
+const mp = { headers: { 'Content-Type': 'multipart/form-data' } };
+const saveTemplate = async (path, filename) => {
+  const res = await api.get(path, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+export const peopleDataApi = {
+  students: (params) => api.get('/people-data/students', { params }).then((r) => r.data),
+  createStudent: (fd) => api.post('/people-data/students', fd, mp).then((r) => r.data),
+  updateStudent: (id, fd) => api.put(`/people-data/students/${id}`, fd, mp).then((r) => r.data),
+  removeStudent: (id) => api.delete(`/people-data/students/${id}`).then((r) => r.data),
+  uploadStudentPhotos: (fd) => api.post('/people-data/students/photos', fd, mp).then((r) => r.data),
+  importStudents: (fd) => api.post('/people-data/students/import', fd, mp).then((r) => r.data),
+  studentTemplate: () => saveTemplate('/people-data/students/template', 'students-template.xlsx'),
+  faculty: (params) => api.get('/people-data/faculty', { params }).then((r) => r.data),
+  createFaculty: (fd) => api.post('/people-data/faculty', fd, mp).then((r) => r.data),
+  updateFaculty: (id, fd) => api.put(`/people-data/faculty/${id}`, fd, mp).then((r) => r.data),
+  removeFaculty: (id) => api.delete(`/people-data/faculty/${id}`).then((r) => r.data),
+  importFaculty: (fd) => api.post('/people-data/faculty/import', fd, mp).then((r) => r.data),
+  facultyTemplate: () => saveTemplate('/people-data/faculty/template', 'faculty-template.xlsx'),
+};
+
+// ---- Turnaround: design classes, earliest delivery date and the holiday list ----
+export const turnaroundApi = {
+  plan: (params) => api.get('/turnaround/plan', { params }).then((r) => r.data),
+};
+export const holidayApi = {
+  list: (params) => api.get('/holidays', { params }).then((r) => r.data),
+  add: (data) => api.post('/holidays', data).then((r) => r.data),
+  remove: (id) => api.delete(`/holidays/${id}`).then((r) => r.data),
 };

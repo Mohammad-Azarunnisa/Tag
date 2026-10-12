@@ -189,11 +189,10 @@ export const listDesigners = asyncHandler(async (req, res) => {
 /**
  * @route GET /api/users/directory — who you work with, and how to reach them.
  *
- * Everyone can see the people in their own college. A DESIGNER sees more,
- * because they are the one role that works across the whole network: briefs
- * reach them from any college's coordinator, so that coordinator's number is the
- * one they actually need. They also get the Admins over their college, who are
- * who you escalate to.
+ * Everyone can see the people in their own college. A DESIGNER sees everyone:
+ * they are the one role that works across the whole network, so the coordinator
+ * who sends a brief, the handler who posts the result, a colleague designer and
+ * the photographer may all be in any college.
  *
  * The super admin is never listed — see getUsers; other logins are told one
  * exists and nothing more. Global oversight accounts (role ADMIN, e.g. the
@@ -214,24 +213,16 @@ export const listDirectory = asyncHandler(async (req, res) => {
   if (myOrgs.length) {
     clauses.push({ organization: { $in: myOrgs } }, { 'handles.organization': { $in: myOrgs } });
   }
-  if (isDesigner) {
-    // Every coordinator, whichever college — any of them can send this designer
-    // a brief, and they need to be able to talk to whoever did.
-    clauses.push({ role: ROLES.USER, userType: USER_TYPES.COORDINATOR });
-    // And the Admins who hold their college, by either route.
-    if (ownOrg) {
-      clauses.push({ role: ROLES.CEO, $or: [{ organization: ownOrg }, { managedOrganizations: ownOrg }] });
-    }
-  }
-  // An account attached to nothing would otherwise match everyone.
-  if (!clauses.length) return res.json({ success: true, count: 0, people: [] });
+  // An account attached to nothing would otherwise match everyone — except a
+  // designer, who is meant to see everyone.
+  if (!isDesigner && !clauses.length) return res.json({ success: true, count: 0, people: [] });
 
   const query = {
     isActive: true,
     isSuperAdmin: { $ne: true },
     // A global oversight account is not a colleague to list.
     role: { $ne: ROLES.ADMIN },
-    $or: clauses,
+    ...(isDesigner ? {} : { $or: clauses }),
   };
   const { search } = req.query;
   if (search) {

@@ -16,6 +16,8 @@ import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
 import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, SOCIAL_POST_WORK_CATEGORIES, SOCIAL_POST_WORK_ITEMS } from '../config/constants.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { platformsForOrganization } from '../utils/platforms.js';
+import { planDesign, istDateKey } from '../utils/turnaround.js';
+import { holidaySet } from './holidayController.js';
 
 const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
 // Kept in sync with the frontend's textarea maxLength (Requests.jsx).
@@ -300,6 +302,17 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     if (Number.isNaN(due.getTime())) { res.status(400); throw new Error('That "needed by" date is not valid'); }
   }
 
+  // Every design request carries a minimum of 2 working days (Mon–Sat, holidays
+  // skipped). Ready-made creatives (postOnly) have no design to wait for.
+  let plan = null;
+  if (!isPostOnly) {
+    plan = planDesign({ workItem, workCategory: finalWorkCategory, raisedAt: new Date(), holidays: await holidaySet() });
+    if (due && istDateKey(due) < plan.earliestDelivery) {
+      res.status(400);
+      throw new Error(`The earliest delivery date for this ${plan.tierLabel} request is ${plan.earliestDelivery} (${plan.minWorkingDays} working days, Sundays and holidays skipped). Choose that date or later.`);
+    }
+  }
+
   const created = await InstitutionRequest.create({
     organization: org._id,
     title: finalTitle,
@@ -316,6 +329,8 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     category,
     priority,
     neededBy: due,
+    designTier: plan?.tier || '',
+    earliestDeliveryAt: plan ? new Date(`${plan.earliestDelivery}T00:00:00.000+05:30`) : undefined,
     raisedBy: req.user._id,
     postOnly: isPostOnly,
     // Everything else starts on Designs to be Done, untouched. A postOnly ask

@@ -277,6 +277,12 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
                           <Flame className="h-3 w-3" /> {URGENCY[i.priority].label}
                         </span>
                       )}
+                      {/* The portal's class for this design — Basic / Medium / Heavy — and how long it takes. */}
+                      {i.designTier && (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${{ BASIC: 'bg-emerald-100 text-emerald-700', MEDIUM: 'bg-amber-100 text-amber-700', HEAVY: 'bg-rose-100 text-rose-700' }[i.designTier]}`}>
+                          {{ BASIC: 'Basic · 1–1.5 hrs', MEDIUM: 'Medium · 2–3 hrs', HEAVY: 'Heavy · 1–2 days' }[i.designTier]}
+                        </span>
+                      )}
                       {/* Already had the creative — this never touched a designer. */}
                       {i.postOnly && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[11px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">

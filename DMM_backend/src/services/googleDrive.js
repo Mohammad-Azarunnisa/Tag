@@ -105,3 +105,66 @@ export async function deleteDriveFile(fileId) {
     if (err.code !== 404) throw err;
   }
 }
+
+// ---------------------------------------------------------------------------
+// People directory (student / faculty photos)
+// ---------------------------------------------------------------------------
+// Photos live in a folder tree under GOOGLE_DRIVE_PEOPLE_ROOT_PATH, mirroring the
+// directory:  Students/<college>/<pass-out year>/<branch>/<roll no>.jpg
+//             Faculty/<college>/<employee id>/photo.jpg
+const PEOPLE_ROOT_PATH = process.env.GOOGLE_DRIVE_PEOPLE_ROOT_PATH || 'Tag-application/People Data';
+const folderCache = new Map();
+
+// Creates (or reuses) every folder along `segments` under the people root and
+// returns the id of the last one. Cached, so a bulk upload does not re-list the
+// same folders for every photo.
+export async function ensurePeopleFolder(segments) {
+  const parts = [...PEOPLE_ROOT_PATH.split('/'), ...segments].map((s) => String(s).trim()).filter(Boolean);
+  let parentId = null;
+  let key = '';
+  for (const part of parts) {
+    key += `/${part}`;
+    if (!folderCache.has(key)) folderCache.set(key, findOrCreateFolder(part, parentId));
+    try { parentId = await folderCache.get(key); } catch (e) { folderCache.delete(key); throw e; }
+  }
+  return parentId;
+}
+
+// Uploads a photo into a folder under a given name and makes it viewable by link.
+export async function uploadPersonPhoto(folderId, buffer, fileName, mimetype) {
+  const { data: file } = await getDrive().files.create({
+    requestBody: { name: fileName, parents: [folderId] },
+    media: { mimeType: mimetype || 'image/jpeg', body: Readable.from(buffer) },
+    fields: 'id',
+  });
+  await shareWithLink(file.id);
+  return file.id;
+}
+
+// Moves a file to another folder (and renames it) without re-uploading.
+export async function moveDriveFile(fileId, newFolderId, newName) {
+  const { data } = await getDrive().files.get({ fileId, fields: 'parents' });
+  const previous = (data.parents || []).join(',');
+  await getDrive().files.update({
+    fileId,
+    addParents: newFolderId,
+    removeParents: previous,
+    requestBody: { name: newName },
+    fields: 'id',
+  });
+}
+
+// The links a browser can use for a link-shared Drive file.
+export const driveLinks = (fileId) => ({
+  url: `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`,
+  downloadUrl: `https://drive.google.com/uc?export=download&id=${fileId}`,
+  viewUrl: `https://drive.google.com/file/d/${fileId}/view`,
+});
+
+// Pulls the file id out of any ordinary Drive share link, or null.
+export const driveFileIdFromLink = (link = '') => {
+  const s = String(link).trim();
+  if (!/^https?:\/\/(drive|docs)\.google\.com\//i.test(s)) return null;
+  const m = s.match(/\/d\/([A-Za-z0-9_-]{10,})/) || s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  return m ? m[1] : null;
+};

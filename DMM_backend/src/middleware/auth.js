@@ -33,6 +33,9 @@ const COORDINATOR_ALLOWED = [
   // controller pins any booking they make to their own college regardless of
   // what's sent, the same way pinnedWriteOrg does elsewhere.
   /^\/api\/photographers(\/|$)/,
+  // Their own college's student and faculty directory — they upload and edit it
+  // (the controller pins every write to their college).
+  /^\/api\/people-data(\/|$)/,
 ];
 
 // Their college's material. Uploading to the shared libraries is allowed - it
@@ -46,6 +49,8 @@ const COORDINATOR_UPLOADS = [
 
 // Their college's material: readable, but they do not curate the libraries.
 const COORDINATOR_READABLE = [
+  /^\/api\/holidays(\/|$)/, // the holiday list behind every delivery date
+  /^\/api\/turnaround(\/|$)/, // a design type's class and earliest delivery date
   /^\/api\/templates(\/|$)/,
   /^\/api\/assets(\/|$)/,
   /^\/api\/brand(\/|$)/,

@@ -279,7 +279,7 @@ function UploadSlot({ slot, orgId, status, onDone }) {
       }
       onDone(all);
     },
-    onError: (e) => toast.error(e.response?.data?.message || `${slot.label} import failed`),
+    onError: (e) => toast.error(e.response?.data?.message || (e.response ? `${slot.label} import failed` : 'The upload did not reach the server. Check that the backend is running and your internet connection, then try again.')),
   });
 
   const queueFiles = (list) => {

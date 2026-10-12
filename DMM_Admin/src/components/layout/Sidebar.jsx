@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart, Palette, Send, Aperture } from 'lucide-react';
+import { LayoutDashboard, BriefcaseBusiness, Building2, Users, Activity, BarChart3, CalendarDays, Settings, X, ShieldCheck, CheckSquare, Images, Share2, ShoppingBag, Target, Globe, Camera, ClipboardList, Sparkles, Flag, HardHat, LayoutTemplate, Package, Bell, MessageSquarePlus, FileBarChart, Palette, Send, Aperture, GraduationCap, CalendarOff } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
 import { useAuthStore } from '../../store/authStore.js';
 
@@ -32,6 +32,7 @@ const NAV_SECTIONS = [
       { to: '/brand-library', label: 'Brand Library', icon: Images },
       { to: '/events', label: 'Events', icon: Camera },
       { to: '/photographers', label: 'Photographers', icon: Aperture },
+      { to: '/people-data', label: 'People Directory', icon: GraduationCap },
       { to: '/signage', label: 'Signage', icon: Flag },
     ],
   },
@@ -67,6 +68,8 @@ const NAV_SECTIONS = [
       { to: '/branding-register', label: 'Branding Register', icon: HardHat, superAdminOnly: true },
       { to: '/social-accounts', label: 'Social Handlers', icon: Share2 },
       { to: '/websites', label: 'Websites', icon: Globe },
+      // The days design delivery dates skip. Everyone can see it; the super admin keeps it.
+      { to: '/holidays', label: 'Holidays', icon: CalendarOff },
       { to: '/purchases', label: 'Premium Packs', icon: ShoppingBag },
     ],
   },

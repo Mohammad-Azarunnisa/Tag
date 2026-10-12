@@ -226,6 +226,7 @@ export const exportPeriodReport = asyncHandler(async (req, res) => {
 
 const LOGO_DIR = path.join(__dirname, '..', 'assets', 'logos');
 const LETTERHEAD_LOGO_PATH = path.join(LOGO_DIR, 'ngi.png');
+const TAG_LOGO_PATH = path.join(LOGO_DIR, 'tag.png');
 
 const NAVY = '#0f1f3d';
 const ORANGE = '#f5822a';
@@ -245,6 +246,19 @@ const RULE = '#d8dce6';
 // visible, not a different blue.
 const BAR_COLORS = [ORANGE, '#267ad9'];
 
+const HILITE_RED = '#e11d48';
+// The order institutions appear in the report: the overview charts and one page
+// per college follow this list. Names are matched ignoring case, spaces and
+// punctuation; anything not listed comes after, largest audience first.
+const ORG_FLOW = [
+  ['ncet'], ['ncms'], ['ndc'], ['toriiminds', 'toriimindsllp'], ['npucyelahanka'], ['npuccbpur'], ['educare'],
+  ['nagarjunavidyaniketan', 'nagarjunavidyanikethan'],
+];
+const flowIndex = (name) => {
+  const key = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const i = ORG_FLOW.findIndex((aliases) => aliases.includes(key));
+  return i === -1 ? ORG_FLOW.length : i;
+};
 const PAGE_MARGIN = 40;
 const FOOTER_RESERVE = 34;
 const ROW_H = 15;
@@ -283,6 +297,13 @@ const makeHeaderDrawer = (generatedLabel) => (doc) => {
   const rightBlockX = doc.page.width - PAGE_MARGIN - rightBlockW;
 
   drawLogo(doc, LETTERHEAD_LOGO_PATH, PAGE_MARGIN, logoBoxW, logoBoxH, 'left');
+
+  // t@g mark in the top-right corner with "by Toriiminds LLP" beneath it
+  if (fs.existsSync(TAG_LOGO_PATH)) {
+    try { doc.image(TAG_LOGO_PATH, rightBlockX, top, { fit: [rightBlockW, 28], align: 'right', valign: 'top' }); } catch { /* skip an unreadable logo */ }
+  }
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GREY);
+  doc.text('by Toriiminds LLP', rightBlockX, top + 32, { width: rightBlockW, align: 'right', lineBreak: false });
 
   doc.fontSize(8.5).font('Helvetica').fillColor(GREY);
   doc.text(`Generated on ${generatedLabel}`, rightBlockX, textY, { width: rightBlockW, align: 'right' });
@@ -1747,8 +1768,13 @@ const drawOrgPage = (doc, ctx) => {
     });
   }
 
-  panel(doc, rx3, y, rw3, ORG_PAGE.row3);
-  panelHeader(doc, rx3, y, 'share', 'Social media, platform by platform');
+  // The featured card: soft rose tint, a rounded red border that follows the
+  // card's own corners, and a short heavy red tab on the top edge.
+  doc.save();
+  doc.lineWidth(1.6).roundedRect(rx3, y, rw3, ORG_PAGE.row3, 9).fillAndStroke('#fff5f7', HILITE_RED);
+  doc.restore();
+  doc.roundedRect(rx3 + 16, y - 1.6, 64, 3.4, 1.7).fill(HILITE_RED);
+  panelHeader(doc, rx3, y, 'share', 'Social media, platform by platform', 'critical', '#be123c');
   {
     const ix = rx3 + 12; const iw = rw3 - 24;
     const platforms = s?.platforms || [];
@@ -1761,8 +1787,13 @@ const drawOrgPage = (doc, ctx) => {
       const cols = [['Platform', 68, 'left'], ['Posts', 24, 'right'], ['Impr.', 40, 'right'], ['Likes', 34, 'right'], ['Followers', 42, 'right'], ['Growth', iw - 208, 'right']];
       let ty = y + 74;
       let cx = ix;
-      cols.forEach(([h, cw, al]) => {
-        doc.fontSize(6.8).font('Helvetica-Bold').fillColor(GREY).text(h, cx, ty, { width: cw, align: al, lineBreak: false });
+      // The red frame round Likes needs clear air on both sides, so the Impr. and
+      // Likes figures stop a little short of their column edge.
+      const padRight = { 2: 5, 3: 9 };
+      const likesX = ix + cols[0][1] + cols[1][1] + cols[2][1];
+      doc.roundedRect(likesX + 1, ty - 4, cols[3][1] - 2, 11 + 16 * Math.min(platforms.length, 5) + 4, 4).fill('#ffdce4');
+      cols.forEach(([h, cw, al], hi) => {
+        doc.fontSize(6.8).font('Helvetica-Bold').fillColor(hi === 3 ? HILITE_RED : GREY).text(h, cx, ty, { width: cw - (padRight[hi] || 0), align: al, lineBreak: false });
         cx += cw;
       });
       ty += 11;
@@ -1778,8 +1809,8 @@ const drawOrgPage = (doc, ctx) => {
         cells.forEach(([v, al], ci) => {
           const [, cw] = cols[ci];
           const isGrowth = ci === 5 && pl.followerGrowth > 0;
-          doc.fontSize(7.4).font(ci === 0 ? 'Helvetica-Bold' : 'Helvetica').fillColor(isGrowth ? ORANGE : NAVY)
-            .text(v, ci === 0 ? ccx + 14 : ccx, ty + 3, { width: ci === 0 ? cw - 14 : cw, align: al, lineBreak: false });
+          doc.fontSize(ci === 3 ? 8.2 : 7.4).font(ci === 0 || ci === 3 ? 'Helvetica-Bold' : 'Helvetica').fillColor(ci === 3 ? '#be123c' : (isGrowth ? ORANGE : NAVY))
+            .text(v, ci === 0 ? ccx + 14 : ccx, ty + 3, { width: ci === 0 ? cw - 14 : cw - (padRight[ci] || 0), align: al, lineBreak: false });
           ccx += cw;
         });
         ty += 16;
@@ -1971,6 +2002,155 @@ const ddmmyyyy = (isoDate) => isoDate.split('-').reverse().join('-');
 // Its own filters, independent of whatever the report page currently shows —
 // "All Organisations"/"All Social Media Accounts" when the query param is
 // absent or "all".
+// ---------------------------------------------------------------------------
+// The cover page: the first page of the PDF, before the letterhead pages.
+// The dates, counts and figures all come from the window the user picked.
+// ---------------------------------------------------------------------------
+const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// '2026-09-01' -> '01 September 2026'
+const longDate = (iso) => {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return `${String(d).padStart(2, '0')} ${LONG_MONTHS[m - 1]} ${y}`;
+};
+// Indian style for big audience numbers: 2.74 L (lakh), 1.2 Cr (crore).
+const compactIndian = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 10000000) return `${(v / 10000000).toFixed(2)} Cr`;
+  if (v >= 100000) return `${(v / 100000).toFixed(2)} L`;
+  return v.toLocaleString('en-US');
+};
+
+const COVER_BG = '#131d3b';
+const COVER_CARD = '#1c2a52';
+const COVER_EDGE = '#3a4a75';
+const COVER_MUTED = '#8f9cbd';
+
+const drawCoverPage = (doc, { r, platformLabel }) => {
+  const W = doc.page.width;
+  const H = doc.page.height;
+  const L = 48;
+  // The cover is laid out by hand; stop pdfkit adding a page if a line sits low.
+  doc.page.margins.bottom = 0;
+
+  // ---- white top band: logo left, confidentiality note right
+  doc.rect(0, 0, W, 190).fill('#ffffff');
+  if (fs.existsSync(LETTERHEAD_LOGO_PATH)) {
+    try { doc.image(LETTERHEAD_LOGO_PATH, L, 44, { fit: [150, 100], align: 'left', valign: 'top' }); } catch { /* skip */ }
+  }
+  // t@g mark top-right with "by Toriiminds LLP", the confidentiality note below it
+  if (fs.existsSync(TAG_LOGO_PATH)) {
+    try { doc.image(TAG_LOGO_PATH, W - L - 220, 42, { fit: [220, 46], align: 'right', valign: 'top' }); } catch { /* skip */ }
+  }
+  doc.fontSize(8.5).font('Helvetica-Oblique').fillColor(GREY)
+    .text('by Toriiminds LLP', W - L - 220, 94, { width: 220, align: 'right', lineBreak: false });
+  doc.fontSize(8).font('Helvetica').fillColor(ORANGE)
+    .text('CONFIDENTIAL', W - L - 220, 130, { width: 220, align: 'right', characterSpacing: 2.4, lineBreak: false });
+  doc.fontSize(9.5).font('Helvetica').fillColor(GREY)
+    .text('For institutional use only', W - L - 220, 145, { width: 220, align: 'right', lineBreak: false });
+  doc.rect(0, 190, W, 5).fill(ORANGE);
+
+  // ---- dark body with soft shapes and a bar motif
+  doc.rect(0, 195, W, H - 195).fill(COVER_BG);
+  doc.save();
+  doc.rect(0, 195, W, H - 195).clip();
+  doc.circle(W - 20, 250, 175).fill('#16264f');
+  doc.circle(-20, 640, 120).fill('#16264f');
+  [[345, 482, 36, 118, '#222d4c'], [392, 440, 36, 160, ORANGE], [439, 531, 36, 69, '#222d4c'],
+    [486, 521, 36, 79, '#222d4c'], [533, 468, 36, 132, '#222d4c']].forEach(([x, y, w, h, c]) => doc.roundedRect(x, y, w, h, 5).fill(c));
+  doc.restore();
+
+  // ---- kicker, title
+  doc.rect(L, 266, 26, 2.5).fill(ORANGE);
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(ORANGE)
+    .text('PERFORMANCE REVIEW', L + 36, 261, { characterSpacing: 3, lineBreak: false });
+  doc.fontSize(46).font('Helvetica-Bold').fillColor('#ffffff')
+    .text('Branding &', L, 292, { lineBreak: false });
+  doc.text('Marketing', L, 342, { lineBreak: false });
+  doc.fontSize(46).font('Helvetica').fillColor('#c9d3f0')
+    .text('Report', L, 392, { lineBreak: false });
+
+  // ---- the period the person picked
+  const period = `${longDate(r.period.from)} – ${longDate(r.period.to)}`;
+  doc.fontSize(11).font('Helvetica');
+  const pillW = doc.widthOfString(period) + 36;
+  doc.roundedRect(L, 462, pillW, 28, 14).fillAndStroke('#1c2748', COVER_EDGE);
+  doc.fillColor('#ffffff').text(period, L + 18, 471, { lineBreak: false });
+  const n = r.organizations.length;
+  doc.fontSize(9.5).font('Helvetica').fillColor(COVER_MUTED)
+    .text(`${r.period.days} day${r.period.days === 1 ? '' : 's'}  ·  ${n} institution${n === 1 ? '' : 's'}  ·  ${platformLabel}`, L + 2, 504, { lineBreak: false });
+
+  // ---- at a glance
+  const t = r.social.totals;
+  doc.fontSize(7.5).font('Helvetica').fillColor(COVER_MUTED)
+    .text('AT A GLANCE', L, 636, { characterSpacing: 2, lineBreak: false });
+  const stats = [
+    [fmt(t.posts), 'Posts published', '#12a36b'],
+    [compactIndian(t.reach), 'Organic reach', '#2f6bff'],
+    [fmt(t.likes), 'Likes earned', ORANGE],
+    [`${t.followerGrowth >= 0 ? '+' : ''}${fmt(t.followerGrowth)}`, 'New followers', '#7a5af8'],
+  ];
+  const gap = 12;
+  const cardW = (W - L * 2 - gap * 3) / 4;
+  stats.forEach(([value, label, color], i) => {
+    const x = L + i * (cardW + gap);
+    doc.roundedRect(x, 654, cardW, 70, 6).fill(COVER_CARD);
+    doc.rect(x, 654, cardW, 3).fill(color);
+    doc.fontSize(20).font('Helvetica-Bold').fillColor('#ffffff').text(value, x + 14, 670, { width: cardW - 20, lineBreak: false });
+    doc.fontSize(8.5).font('Helvetica').fillColor(COVER_MUTED).text(label, x + 14, 698, { width: cardW - 20, lineBreak: false });
+  });
+
+  // ---- institutions in scope, in the agreed order
+  doc.fontSize(7.5).font('Helvetica').fillColor(COVER_MUTED)
+    .text('INSTITUTIONS IN SCOPE', L, 742, { characterSpacing: 2, lineBreak: false });
+  const names = [...r.organizations].sort((a, b) => flowIndex(a.name) - flowIndex(b.name)).map((o) => sanitizeForPdf(o.name));
+  doc.fontSize(7.6).font('Helvetica');
+  let cx = L; let cy = 758;
+  names.forEach((name) => {
+    const w = doc.widthOfString(name) + 16;
+    if (cx + w > W - L) { cx = L; cy += 26; }
+    doc.roundedRect(cx, cy, w, 20, 10).lineWidth(0.8).stroke(COVER_EDGE);
+    doc.fillColor('#dfe5f6').text(name, cx + 8, cy + 6.8, { lineBreak: false });
+    cx += w + 6;
+  });
+
+  // ---- footer
+  doc.moveTo(L, 806).lineTo(W - L, 806).lineWidth(0.5).strokeColor('#2a3558').stroke();
+  doc.fontSize(8).font('Helvetica').fillColor(COVER_MUTED)
+    .text('Nagarjuna Group of Institutions  ·  Branding & Marketing Department', L, 815, { lineBreak: false });
+  const gen = new Date();
+  doc.text(`Generated on ${gen.getUTCDate()} ${LONG_MONTHS[gen.getUTCMonth()]} ${gen.getUTCFullYear()}`, W - L - 200, 815, { width: 200, align: 'right', lineBreak: false });
+};
+
+// An institution with nothing at all to show this period — no social analytics
+// on any platform, no design, web or ad activity — is left out of the PDF
+// altogether (no page, no chip, no row), rather than printing a page of zeros.
+const orgIdOf = (o) => String(o?._id || o);
+const orgHasData = (r, org) => {
+  const id = orgIdOf(org);
+  const mine = (section) => (r[section]?.rows || []).find((x) => orgIdOf(x.organization) === id);
+  const so = mine('social');
+  const social = so && (so.followers > 0 || so.posts > 0 || so.reach > 0 || so.impressions > 0 || so.likes > 0
+    || (so.platforms || []).some((p) => p.followers > 0 || p.posts > 0 || p.reach > 0 || p.impressions > 0 || p.likes > 0));
+  const de = mine('design');
+  const design = de && (de.requestsReceived > 0 || de.cancelled > 0 || de.designsCompleted > 0);
+  const ad = mine('ads');
+  const ads = ad && (ad.spend > 0 || ad.reach > 0 || ad.leads > 0);
+  const we = mine('web');
+  const web = we && we.tasksReceived > 0;
+  const pu = mine('publishing');
+  const publishing = pu && (pu.posted > 0 || pu.scheduled > 0);
+  return !!(social || design || ads || web || publishing);
+};
+const dropEmptyOrganizations = (r) => {
+  const keep = new Set(r.organizations.filter((o) => orgHasData(r, o)).map(orgIdOf));
+  if (!keep.size || keep.size === r.organizations.length) return;
+  const kept = (x) => keep.has(orgIdOf(x.organization));
+  r.organizations = r.organizations.filter((o) => keep.has(orgIdOf(o)));
+  ['design', 'web', 'social', 'ads', 'publishing'].forEach((sec) => { if (r[sec]?.rows) r[sec].rows = r[sec].rows.filter(kept); });
+  if (r.goals?.rows) r.goals.rows = r.goals.rows.filter(kept);
+  if (r.social?.leaderboard) r.social.leaderboard = r.social.leaderboard.filter(kept).map((x, i) => ({ ...x, rank: i + 1 }));
+};
+
 export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   const { from, to } = resolveWindow(req, res);
   const allowed = accessibleOrgIds(req.user);
@@ -1997,6 +2177,8 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   const platformLabel = requestedPlatform || 'All Social Media Accounts';
 
   const r = await buildPeriodReport({ from, to, orgIds, platform: requestedPlatform || undefined });
+  // A report for one chosen institution always keeps it; otherwise empty ones go.
+  if (!requestedOrgId) dropEmptyOrganizations(r);
 
   // design/web/social/ads all carry one row per organization in scope even when
   // that college recorded nothing this window, so an empty-data check has to
@@ -2031,7 +2213,9 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
   doc.pipe(res);
 
-  drawHeader(doc);
+  // Cover first; the next page picks up the letterhead through 'pageAdded'.
+  drawCoverPage(doc, { r, platformLabel });
+  doc.addPage();
   drawTitleBlock(doc, 'BRANDING & MARKETING REPORT');
   drawMetaBar(doc, [
     { label: 'Report Period', value: periodLabel },
@@ -2094,9 +2278,12 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   const singleOrg = r.organizations.length === 1;
   const orgKey = (o) => String(o?._id || o);
   const rowFor = (section, org) => r[section].rows.find((x) => orgKey(x.organization) === orgKey(org));
-  // Colleges in order of audience, largest first: the order of their pages.
-  const orderedOrgs = [...r.organizations]
+  // Colleges in the agreed flow (ORG_FLOW) — the order of the charts and pages.
+  // The "#n by followers" badge is still a true audience rank.
+  const byAudience = [...r.organizations]
     .sort((a, b) => (rowFor('social', b)?.followers || 0) - (rowFor('social', a)?.followers || 0));
+  const audienceRank = new Map(byAudience.map((o, i) => [orgKey(o), i + 1]));
+  const orderedOrgs = [...byAudience].sort((a, b) => flowIndex(a.name) - flowIndex(b.name));
 
   // One college's slice of the report, in the same shape the section
   // insight builders read for the whole report.
@@ -2118,7 +2305,7 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   if (!singleOrg) {
     doc.addPage();
     sectionTitle(doc, 'All Colleges at a Glance');
-    sectionSubtitle(doc, `Every college side by side for ${periodLabel}, largest audience first. Each college then has a page of its own.`);
+    sectionSubtitle(doc, `Every college side by side for ${periodLabel}. Each college then has a page of its own.`);
 
     const followerItems = orderedOrgs.map((o) => ({ label: o.name, followers: rowFor('social', o)?.followers || 0 }));
     if (anyPositive(followerItems, 'followers')) {
@@ -2168,7 +2355,7 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
     }
   }
 
-  // ---- One page per college, largest audience first. Every page has the
+  // ---- One page per college, in the agreed order. Every page has the
   // same cards in the same places (see drawOrgPage).
   orderedOrgs.forEach((org, i) => {
     doc.addPage();
@@ -2179,7 +2366,7 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
     const orgAdsActive = !!(a && (a.spend > 0 || a.reach > 0 || a.leads > 0));
     drawOrgPage(doc, {
       org,
-      rank: singleOrg ? null : i + 1,
+      rank: singleOrg ? null : audienceRank.get(orgKey(org)),
       total: orderedOrgs.length,
       d: rowFor('design', org),
       p: rowFor('publishing', org),
@@ -2195,17 +2382,6 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
       ], new Set(), 3),
     });
   });
-
-  // Stamp "Page X of Y" on every buffered page now that the
-  // total page count is known.
-  const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i += 1) {
-    doc.switchToPage(i);
-    const pageNum = i - range.start + 1;
-    const y = doc.page.height - PAGE_MARGIN - 14;
-    doc.fontSize(8).font('Helvetica').fillColor(GREY);
-    doc.text(`Page ${pageNum} of ${range.count}`, doc.page.width - PAGE_MARGIN - 200, y, { width: 200, align: 'right', lineBreak: false });
-  }
 
   doc.end();
 });

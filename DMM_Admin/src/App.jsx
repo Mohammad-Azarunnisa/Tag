@@ -20,9 +20,11 @@ import Templates from './pages/Templates.jsx';
 import Assets from './pages/Assets.jsx';
 import Events from './pages/Events.jsx';
 import Photographers from './pages/Photographers.jsx';
+import PeopleData from './pages/PeopleData.jsx';
 import Signage from './pages/Signage.jsx';
 import SocialAccounts from './pages/SocialAccounts.jsx';
 import Websites from './pages/Websites.jsx';
+import Holidays from './pages/Holidays.jsx';
 import Purchases from './pages/Purchases.jsx';
 import Goals from './pages/Goals.jsx';
 import Planners from './pages/Planners.jsx';
@@ -82,10 +84,12 @@ export default function App() {
         <Route path="/assets" element={<Assets />} />
         <Route path="/events" element={<Events />} />
         <Route path="/photographers" element={<Photographers />} />
+        <Route path="/people-data" element={<PeopleData />} />
         <Route path="/signage" element={<Signage />} />
         <Route path="/branding-register" element={<BrandingRegister />} />
         <Route path="/social-accounts" element={<SocialAccounts />} />
         <Route path="/websites" element={<Websites />} />
+        <Route path="/holidays" element={<Holidays />} />
         <Route path="/purchases" element={<Purchases />} />
         <Route path="/goals" element={<Goals />} />
         <Route path="/planners" element={<Planners />} />

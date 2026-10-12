@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, FileImage, Images, CheckSquare, BarChart3, CalendarDays,
   FileText, Bell, Settings, X, TrendingUp, Palette, Share2, ShoppingBag, Camera, ClipboardList, Sparkles, Flag, CircleUser, BriefcaseBusiness,
-  UsersRound, MessageSquarePlus, Send, Aperture,
+  UsersRound, MessageSquarePlus, Send, Aperture, GraduationCap,
 } from 'lucide-react';
 import { cn, roleLabel } from '../../lib/utils.js';
 import { useAuthStore } from '../../store/authStore.js';
@@ -25,6 +25,7 @@ const NAV_SECTIONS = [
       { to: '/brand-library', label: 'Brand Library', icon: Palette },
       { to: '/events', label: 'Events', icon: Camera },
       { to: '/photographers', label: 'Photographers', icon: Aperture },
+      { to: '/people-data', label: 'People Directory', icon: GraduationCap },
       { to: '/signage', label: 'Signage', icon: Flag },
     ],
   },
@@ -91,7 +92,7 @@ const NAV_SECTIONS = [
 const COORDINATOR_PATHS = [
   '/dashboard', '/notifications', '/profile', '/settings',
   '/templates', '/assets', '/brand-library', '/events',
-  '/social-analytics', '/requests', '/photographers',
+  '/social-analytics', '/requests', '/photographers', '/people-data',
   '/people', '/workflow/designs', '/workflow/to-be-posted',
 ];
 

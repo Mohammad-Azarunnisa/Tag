@@ -748,6 +748,8 @@ export default function WorkflowDetail() {
               {item.designer?.name && <Detail label="Designer">{item.designer.name}</Detail>}
               {item.handler?.name && <Detail label="Social media handler">{item.handler.name}</Detail>}
               {item.neededBy && <Detail label="Needed by">{formatDate(item.neededBy)}</Detail>}
+              {item.designTier && <Detail label="Design class">{{ BASIC: 'Basic · 1–1.5 hrs', MEDIUM: 'Medium · 2–3 hrs', HEAVY: 'Heavy · 1–2 full working days' }[item.designTier]}</Detail>}
+              {item.earliestDeliveryAt && <Detail label="Earliest delivery">{formatDate(item.earliestDeliveryAt)}</Detail>}
               {/* Where the college said it goes — chosen when they accepted the design. */}
               {(item.postPlatforms?.length || 0) > 0 && (
                 <Detail label="Pages to post on">{item.postPlatforms.join(', ')}</Detail>

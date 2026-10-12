@@ -327,7 +327,7 @@ test('the directory shows each role the people they actually work with', async (
   const dNames = asDesigner.body.people.map((p) => p.name);
   assert.ok(dNames.includes('DirCoord') && dNames.includes('DirHandler') && dNames.includes('DirAdmin'), 'their own college');
   assert.ok(dNames.includes('FarCoord'), 'every coordinator can brief a designer, so every coordinator is reachable');
-  assert.ok(!dNames.includes('FarDesigner'), 'but not another college’s designers');
+  assert.ok(dNames.includes('FarDesigner'), 'a designer works across every college, so everyone is reachable');
   assert.ok(!dNames.includes('Dir Boss'), 'the super admin is never listed');
   assert.ok(!dNames.includes('Dir Chair'), 'nor a global oversight account');
   // Contact details are the point of the screen.

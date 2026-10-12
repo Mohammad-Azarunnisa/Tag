@@ -640,6 +640,8 @@ export default function WorkflowDetail() {
               <Detail label="Designer">{item.designer?.name || 'Not taken yet'}</Detail>
               <Detail label="Social media handler">{item.handler?.name || (onPostHalf ? 'Not taken yet' : '—')}</Detail>
               {item.neededBy && <Detail label="Needed by">{formatDate(item.neededBy)}</Detail>}
+              {item.designTier && <Detail label="Design class">{{ BASIC: 'Basic · 1–1.5 hrs', MEDIUM: 'Medium · 2–3 hrs', HEAVY: 'Heavy · 1–2 full working days' }[item.designTier]}</Detail>}
+              {item.earliestDeliveryAt && <Detail label="Earliest delivery">{formatDate(item.earliestDeliveryAt)}</Detail>}
               {(item.postPlatforms?.length || 0) > 0 && (
                 <Detail label="Pages to post on">{item.postPlatforms.join(', ')}</Detail>
               )}

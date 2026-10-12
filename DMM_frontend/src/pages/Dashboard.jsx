@@ -14,6 +14,7 @@ import GoalCard from '../components/dashboard/GoalCard.jsx';
 import ActivityHeatmapCard from '../components/dashboard/ActivityHeatmapCard.jsx';
 import ActivityTimeline from '../components/dashboard/ActivityTimeline.jsx';
 import MyUploads from '../components/dashboard/MyUploads.jsx';
+import TodayCard from '../components/dashboard/TodayCard.jsx';
 import { MonthlyTrendChart, FollowerTrendChart, PlatformBarChart, StatusPieChart } from '../components/dashboard/Charts.jsx';
 import { Card, Skeleton } from '../components/ui/primitives.jsx';
 import OrgSelect from '../components/ui/OrgSelect.jsx';
@@ -109,6 +110,9 @@ export default function Dashboard() {
           )}
         </div>
       </motion.div>
+
+      {/* A coordinator's daily statistics: what happened today and what needs them */}
+      {isCoordinator && orgId && <TodayCard orgId={orgId} />}
 
       {/* Yearly goal progress (only shows when a goal is set) */}
       {orgId && <GoalCard orgId={orgId} />}

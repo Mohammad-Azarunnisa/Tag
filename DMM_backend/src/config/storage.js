@@ -39,11 +39,46 @@ function ensureStorageReady() {
  * @param {Buffer} buffer
  * @param {object} opts { folder, originalName, mimetype }
  */
-async function uploadBuffer(buffer, { folder = 'misc', originalName = 'file' }) {
+async function uploadBuffer(buffer, { folder = 'misc', originalName = 'file', exactName = '' }) {
   if (driver === 'cloudinary') {
     return uploadToCloudinary(buffer, folder, originalName);
   }
+  // exactName stores the file under precisely that name (replacing any file
+  // already there) instead of a generated unique one — used where the file name
+  // itself is the record, e.g. a student photo named by roll number.
+  if (exactName) return uploadToLocalExact(buffer, folder, exactName);
   return uploadToLocal(buffer, folder, originalName);
+}
+
+// A path segment safe to use as a folder or file name on the storage volume.
+const safeSegment = (value, fallback = 'unknown') => {
+  const clean = String(value ?? '').normalize('NFKC').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._]+|[._]+$/g, '').slice(0, 60);
+  return clean || fallback;
+};
+
+function uploadToLocalExact(buffer, folder, fileName) {
+  const dir = path.join(UPLOAD_ROOT, folder);
+  fs.mkdirSync(dir, { recursive: true });
+  const relPath = path.posix.join(folder, fileName);
+  fs.writeFileSync(path.join(dir, fileName), buffer);
+  return { url: `/uploads/${relPath}`, publicId: relPath };
+}
+
+// Move a stored file to another folder/name (local driver only). Returns the
+// new { url, publicId }, or the old one untouched if nothing could be moved.
+function moveStoredFile(publicId, newFolder, newFileName) {
+  if (!publicId || driver === 'cloudinary') return null;
+  const from = path.join(UPLOAD_ROOT, publicId);
+  const withinRoot = from.startsWith(UPLOAD_ROOT + path.sep);
+  if (!withinRoot || !fs.existsSync(from)) return null;
+  const dir = path.join(UPLOAD_ROOT, newFolder);
+  fs.mkdirSync(dir, { recursive: true });
+  const to = path.join(dir, newFileName);
+  if (to === from) return { url: `/uploads/${publicId}`, publicId };
+  fs.copyFileSync(from, to);
+  fs.unlinkSync(from);
+  const relPath = path.posix.join(newFolder, newFileName);
+  return { url: `/uploads/${relPath}`, publicId: relPath };
 }
 
 async function deleteFile(publicId) {
@@ -106,4 +141,4 @@ async function uploadToCloudinary(buffer, folder, originalName) {
   });
 }
 
-export { uploadBuffer, deleteFile, driver, UPLOAD_ROOT, ensureStorageReady };
+export { uploadBuffer, deleteFile, moveStoredFile, safeSegment, driver, UPLOAD_ROOT, ensureStorageReady };

@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 import ApprovalRequest from '../models/ApprovalRequest.js';
+import InstitutionRequest from '../models/InstitutionRequest.js';
 import Template from '../models/Template.js';
 import Asset from '../models/Asset.js';
 import Analytics from '../models/Analytics.js';
@@ -190,4 +191,72 @@ export const getTopPlatform = asyncHandler(async (req, res) => {
     if (!top || score > top.engagementRate) top = { platform, engagementRate: score, followers: doc.followers, reach: doc.reach };
   }
   res.json({ success: true, topPlatform: top });
+});
+
+// ---------------------------------------------------------------------------
+// Today's work summary (the coordinator's daily statistics)
+// ---------------------------------------------------------------------------
+// Days are IST calendar days — the day the colleges actually work in — whatever
+// timezone the server runs in.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const istDayStart = (daysAgo = 0, now = new Date()) => {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  ist.setUTCHours(0, 0, 0, 0);
+  return new Date(ist.getTime() - IST_OFFSET_MS - daysAgo * 86400000);
+};
+const istDateKey = (d) => new Date(new Date(d).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+
+// @route GET /api/dashboard/today — what happened today and what needs doing,
+// plus the last seven days as a small trend. A coordinator sees their own
+// requests (the same set their work boards list); everyone else sees the college's.
+export const getTodaySummary = asyncHandler(async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  const start = istDayStart(0);
+  const end = new Date(start.getTime() + 86400000);
+  const weekStart = istDayStart(6);
+  const inToday = { $gte: start, $lt: end };
+  const isCoord = req.user.role === ROLES.USER && req.user.userType === USER_TYPES.COORDINATOR;
+  const base = { organization: orgId, ...(isCoord ? { raisedBy: req.user._id } : {}) };
+  const finished = ['POSTED', 'COMPLETED', 'CANCELLED'];
+
+  const waitingFilter = {
+    ...base,
+    workflowStage: { $in: ['DESIGN_COORDINATOR_REVIEW', 'POST_COORDINATOR_REVIEW'] },
+  };
+
+  const [raised, delivered, cancelled, waitingCount, waitingList, withDesigners, dueToday, overdue, week] = await Promise.all([
+    InstitutionRequest.countDocuments({ ...base, createdAt: inToday }),
+    InstitutionRequest.countDocuments({ ...base, designAcceptedAt: inToday, workflowStage: { $ne: 'CANCELLED' } }),
+    InstitutionRequest.countDocuments({ ...base, workflowStage: 'CANCELLED', updatedAt: inToday }),
+    InstitutionRequest.countDocuments(waitingFilter),
+    InstitutionRequest.find(waitingFilter).sort({ updatedAt: -1 }).limit(5).select('title workflowStage').lean(),
+    InstitutionRequest.countDocuments({ ...base, workflowStage: { $in: ['DESIGN_OPEN', 'DESIGN_IN_PROGRESS', 'DESIGN_ADMIN_REVIEW'] } }),
+    InstitutionRequest.countDocuments({ ...base, neededBy: inToday, workflowStage: { $nin: finished } }),
+    InstitutionRequest.countDocuments({ ...base, neededBy: { $lt: start }, workflowStage: { $nin: finished } }),
+    InstitutionRequest.find({
+      ...base,
+      $or: [{ createdAt: { $gte: weekStart } }, { designAcceptedAt: { $gte: weekStart } }],
+    }).select('createdAt designAcceptedAt workflowStage').lean(),
+  ]);
+
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = istDayStart(6 - i);
+    return { date: istDateKey(d), raised: 0, delivered: 0 };
+  });
+  const slot = (date) => days.find((d) => d.date === (date ? istDateKey(date) : ''));
+  week.forEach((r) => {
+    const a = slot(r.createdAt); if (a) a.raised += 1;
+    if (r.workflowStage !== 'CANCELLED') { const b = slot(r.designAcceptedAt); if (b) b.delivered += 1; }
+  });
+
+  res.json({
+    success: true,
+    today: {
+      date: istDateKey(start), raised, delivered, cancelled,
+      waitingOnYou: { count: waitingCount, items: waitingList.map((w) => ({ _id: w._id, title: w.title, stage: w.workflowStage })) },
+      withDesigners, dueToday, overdue,
+    },
+    week: days,
+    scope: isCoord ? 'coordinator' : 'college',
+  });
 });

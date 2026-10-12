@@ -1,10 +1,12 @@
 import User from '../models/User.js';
 import { ROLES } from './constants.js';
 
-// Ensures exactly one built-in super admin exists. Runs on every startup:
+// Ensures the built-in super admin exists. Runs on every startup:
 // - If the configured account exists, it is (re)promoted to super admin.
 // - Otherwise it is created with a temporary password (change it after first
-//   login). Any other stray super-admin flags are cleared so there is only one.
+//   login).
+// Other super admins, added by a super admin in User Management, are left alone —
+// this used to clear their flag at every restart, which silently demoted them.
 //
 // Configure via env: SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_NAME.
 export const seedSuperAdmin = async () => {
@@ -20,13 +22,10 @@ export const seedSuperAdmin = async () => {
     if (!existing.isActive) { existing.isActive = true; changed = true; }
     if (existing.organization) { existing.organization = null; changed = true; }
     if (changed) await existing.save();
-    // Make sure no one else carries the super-admin flag.
-    await User.updateMany({ _id: { $ne: existing._id }, isSuperAdmin: true }, { isSuperAdmin: false });
     console.log(`   Super admin: ${email}`);
     return;
   }
 
-  await User.updateMany({ isSuperAdmin: true }, { isSuperAdmin: false });
   await User.create({ name, email, password, role: ROLES.ADMIN, isSuperAdmin: true, jobTitle: 'Super Administrator' });
   console.log(`   Super admin created: ${email} — temporary password "${password}" (change it after first login)`);
 };

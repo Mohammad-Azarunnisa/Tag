@@ -18,6 +18,7 @@ import Assets from './pages/Assets.jsx';
 import BrandLibrary from './pages/BrandLibrary.jsx';
 import Events from './pages/Events.jsx';
 import Photographers from './pages/Photographers.jsx';
+import PeopleData from './pages/PeopleData.jsx';
 import Signage from './pages/Signage.jsx';
 import Profile from './pages/Profile.jsx';
 import SocialHandlers from './pages/SocialHandlers.jsx';
@@ -146,6 +147,7 @@ export default function App() {
         <Route path="/brand-library" element={<BrandLibrary />} />
         <Route path="/events" element={<Events />} />
         <Route path="/photographers" element={<Photographers />} />
+        <Route path="/people-data" element={<PeopleData />} />
         <Route path="/signage" element={<Signage />} />
         <Route path="/social-handlers" element={<SocialHandlers />} />
         <Route path="/premium-packs" element={<PremiumPacks />} />
