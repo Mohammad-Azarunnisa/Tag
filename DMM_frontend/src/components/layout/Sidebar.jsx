@@ -24,7 +24,7 @@ const NAV_SECTIONS = [
       { to: '/assets', label: 'Assets', icon: Images },
       { to: '/brand-library', label: 'Brand Library', icon: Palette },
       { to: '/events', label: 'Events', icon: Camera },
-      { to: '/photographers', label: 'Photographers', icon: Aperture },
+      // { to: '/photographers', label: 'Photographers', icon: Aperture }, // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
       { to: '/people-data', label: 'People Directory', icon: GraduationCap },
       { to: '/signage', label: 'Signage', icon: Flag },
     ],

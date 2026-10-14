@@ -41,7 +41,7 @@ import workflowRoutes from './routes/workflowRoutes.js';
 import webTaskRoutes from './routes/webTaskRoutes.js';
 import adCampaignRoutes from './routes/adCampaignRoutes.js';
 import brandingRegisterRoutes from './routes/brandingRegisterRoutes.js';
-import photographerRoutes from './routes/photographerRoutes.js';
+// import photographerRoutes from './routes/photographerRoutes.js'; // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
 import peopleDataRoutes from './routes/peopleDataRoutes.js';
 import holidayRoutes from './routes/holidayRoutes.js';
 import pushRoutes from './push/pushRoutes.js';
@@ -129,7 +129,7 @@ app.use('/api/social-accounts', socialAccountRoutes);
 app.use('/api/websites', websiteRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/calendar', calendarRoutes);
-app.use('/api/photographers', photographerRoutes);
+// app.use('/api/photographers', photographerRoutes); // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
 app.use('/api/people-data', peopleDataRoutes);
 app.use('/api/holidays', holidayRoutes);
 app.use('/api/turnaround', holidayRoutes);

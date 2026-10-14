@@ -2,7 +2,7 @@ import asyncHandler from 'express-async-handler';
 import { verifyToken } from '../utils/token.js';
 import User from '../models/User.js';
 import Organization from '../models/Organization.js';
-import { ROLES, USER_TYPES } from '../config/constants.js';
+import { ROLES, USER_TYPES, PHOTOGRAPHERS_ENABLED } from '../config/constants.js';
 
 export const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
 
@@ -126,6 +126,14 @@ export const protect = asyncHandler(async (req, res, next) => {
   if (!user || !user.isActive) {
     res.status(401);
     throw new Error('Not authorized, user not found');
+  }
+
+  // PHOTOGRAPHERS ON HOLD (PHOTOGRAPHERS_ENABLED in config/constants.js): a
+  // photographer account cannot use the app, including a session that was already
+  // signed in.
+  if (!PHOTOGRAPHERS_ENABLED && user.role === ROLES.USER && user.userType === USER_TYPES.PHOTOGRAPHER) {
+    res.status(403);
+    throw new Error('Photographer access is switched off for now.');
   }
 
   // A disabled organization has to disappear for its people immediately, not at

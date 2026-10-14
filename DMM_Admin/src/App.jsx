@@ -19,7 +19,7 @@ import BrandLibrary from './pages/BrandLibrary.jsx';
 import Templates from './pages/Templates.jsx';
 import Assets from './pages/Assets.jsx';
 import Events from './pages/Events.jsx';
-import Photographers from './pages/Photographers.jsx';
+// import Photographers from './pages/Photographers.jsx'; // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
 import PeopleData from './pages/PeopleData.jsx';
 import Signage from './pages/Signage.jsx';
 import SocialAccounts from './pages/SocialAccounts.jsx';
@@ -83,7 +83,7 @@ export default function App() {
         <Route path="/templates" element={<Templates />} />
         <Route path="/assets" element={<Assets />} />
         <Route path="/events" element={<Events />} />
-        <Route path="/photographers" element={<Photographers />} />
+        {/* <Route path="/photographers" element={<Photographers />} /> */}{/* PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true. */}
         <Route path="/people-data" element={<PeopleData />} />
         <Route path="/signage" element={<Signage />} />
         <Route path="/branding-register" element={<BrandingRegister />} />

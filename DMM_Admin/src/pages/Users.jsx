@@ -24,7 +24,7 @@ const ROLE_FILTERS = [
   { value: 'COORDINATOR', label: 'Coordinator' },
   { value: 'DESIGNER', label: 'Designer' },
   { value: 'SOCIAL_HANDLER', label: 'Social Handler' },
-  { value: 'PHOTOGRAPHER', label: 'Photographer' },
+  // { value: 'PHOTOGRAPHER', label: 'Photographer' }, // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
 ];
 // Roles the super admin can assign. 'SUPER' → ADMIN + isSuperAdmin (Branding
 // Director). 'CHAIRMAN' → global ADMIN + viewOnly (read-only oversight).
@@ -38,7 +38,7 @@ const USER_TYPES = [
   { value: 'DESIGNER', label: 'Designer' },
   { value: 'SOCIAL_HANDLER', label: 'Social Handler' },
   { value: 'COORDINATOR', label: 'Coordinator' },
-  { value: 'PHOTOGRAPHER', label: 'Photographer' },
+  // { value: 'PHOTOGRAPHER', label: 'Photographer' }, // PHOTOGRAPHERS ON HOLD — switched off for now; to bring them back, restore this line / set PHOTOGRAPHERS_ENABLED to true.
 ];
 const PAGE_PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook', 'X (Twitter)'];
 const AZAR_HANDLE_ORGS = ['Torii Minds', 'NCET', 'NCMS', 'NDC', 'Technical Hub'];

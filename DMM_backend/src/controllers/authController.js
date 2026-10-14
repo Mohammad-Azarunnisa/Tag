@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import Organization from '../models/Organization.js';
 import { generateToken } from '../utils/token.js';
 import { sendEmail, isEmailConfigured } from '../utils/email.js';
-import { ROLES, USER_TYPES } from '../config/constants.js';
+import { ROLES, USER_TYPES, PHOTOGRAPHERS_ENABLED } from '../config/constants.js';
 
 // The two front-ends are separate products for separate audiences: the console
 // (DMM_Admin) belongs to the platform's ADMIN accounts, the product app
@@ -114,6 +114,12 @@ export const login = asyncHandler(async (req, res) => {
   if (!user.isActive) {
     res.status(403);
     throw new Error('Your account has been deactivated. Contact your administrator.');
+  }
+  // PHOTOGRAPHERS ON HOLD (PHOTOGRAPHERS_ENABLED in config/constants.js): no
+  // photographer sign-in for now.
+  if (!PHOTOGRAPHERS_ENABLED && user.role === ROLES.USER && user.userType === USER_TYPES.PHOTOGRAPHER) {
+    res.status(403);
+    throw new Error('Photographer access is switched off for now.');
   }
   // Right credentials, wrong door — see PORTALS above.
   assertPortal(user, req.body.portal, res);

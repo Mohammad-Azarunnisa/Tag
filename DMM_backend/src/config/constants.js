@@ -23,6 +23,12 @@ export const PLATFORMS = ['LinkedIn', 'Instagram', 'YouTube', 'Facebook'];
 // ranges — simple to book, simple to see clashes on at a glance. Booking
 // FULL_DAY blocks the other three for that date and vice versa (enforced in
 // photographerController.js), so a photographer is never double-booked.
+// PHOTOGRAPHERS ARE ON HOLD. While this is false the photographer booking API is
+// not mounted, photographer accounts cannot sign in, and photographers are left
+// out of the user lists. Set it to true (and restore the lines marked
+// "PHOTOGRAPHERS ON HOLD" in app.js and the two front ends) to bring them back.
+export const PHOTOGRAPHERS_ENABLED = false;
+
 export const PHOTOGRAPHER_SLOTS = ['MORNING', 'AFTERNOON', 'EVENING', 'FULL_DAY'];
 
 // The social-handlers directory also tracks X (Twitter) accounts, which the

@@ -9,7 +9,7 @@ import { logActivity } from '../utils/logActivity.js';
 import { resolveJobTitle } from '../utils/jobTitle.js';
 import { createNotification } from '../utils/notify.js';
 import { sendEmail } from '../utils/email.js';
-import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
+import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, PHOTOGRAPHERS_ENABLED } from '../config/constants.js';
 
 const sanitize = (u) => ({
   _id: u._id,
@@ -222,6 +222,8 @@ export const listDirectory = asyncHandler(async (req, res) => {
     isSuperAdmin: { $ne: true },
     // A global oversight account is not a colleague to list.
     role: { $ne: ROLES.ADMIN },
+    // PHOTOGRAPHERS ON HOLD (PHOTOGRAPHERS_ENABLED in config/constants.js)
+    ...(PHOTOGRAPHERS_ENABLED ? {} : { userType: { $ne: USER_TYPES.PHOTOGRAPHER } }),
     ...(isDesigner ? {} : { $or: clauses }),
   };
   const { search } = req.query;
@@ -269,6 +271,9 @@ export const getUsers = asyncHandler(async (req, res) => {
   // happens to hide them because the account belongs to no college.
   const viewerIsSuperAdmin = !!req.user.isSuperAdmin;
   if (!viewerIsSuperAdmin) query.isSuperAdmin = { $ne: true };
+  // PHOTOGRAPHERS ON HOLD (PHOTOGRAPHERS_ENABLED in config/constants.js): left out
+  // of the list and of every count.
+  if (!PHOTOGRAPHERS_ENABLED) query.userType = { $ne: USER_TYPES.PHOTOGRAPHER };
 
   // The stat tiles are a standing count of who exists in view (scoped by
   // organization/permissions), not a live reflection of the search box —
@@ -294,7 +299,7 @@ export const getUsers = asyncHandler(async (req, res) => {
   let listQuery = query;
   if (role && role !== 'All') {
     if (role === 'SUPER') listQuery = viewerIsSuperAdmin ? { ...query, isSuperAdmin: true } : null;
-    else if (Object.values(USER_TYPES).includes(role)) listQuery = { ...query, role: ROLES.USER, userType: role };
+    else if (Object.values(USER_TYPES).includes(role) && (PHOTOGRAPHERS_ENABLED || role !== USER_TYPES.PHOTOGRAPHER)) listQuery = { ...query, role: ROLES.USER, userType: role };
     else listQuery = { ...query, role };
   }
 
@@ -373,6 +378,11 @@ export const createUser = asyncHandler(async (req, res) => {
   const wantViewOnly = (viewOnly === true || viewOnly === 'true') && !wantSuper;
   const finalRole = (wantSuper || wantViewOnly) ? ROLES.ADMIN : (role || ROLES.USER);
   const finalUserType = finalRole === ROLES.USER ? normalizeUserType(userType) : undefined;
+  // PHOTOGRAPHERS ON HOLD (PHOTOGRAPHERS_ENABLED in config/constants.js)
+  if (!PHOTOGRAPHERS_ENABLED && finalUserType === USER_TYPES.PHOTOGRAPHER) {
+    res.status(400);
+    throw new Error('Photographer accounts are switched off for now.');
+  }
   if (!Object.values(ROLES).includes(finalRole)) {
     res.status(400);
     throw new Error('Invalid role');
