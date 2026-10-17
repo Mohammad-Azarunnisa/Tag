@@ -8,6 +8,9 @@ import {
   confirmWorkflowItem,
   markWorkflowPosted,
   cancelWorkflowItem,
+  requestEditToItem,
+  decideEditToItem,
+  withdrawEditToItem,
 } from '../controllers/workflowController.js';
 import { protect } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
@@ -41,5 +44,12 @@ router.put('/:id/posted', markWorkflowPosted);
 // Admin / Super Admin: pull the request back, but only before a designer or
 // handler has acknowledged it — see cancelWorkflowItem for the stage guard.
 router.put('/:id/cancel', cancelWorkflowItem);
+
+// A coordinator asking to change their own request before a designer has taken it, and
+// an Admin / the super admin approving or rejecting that. Until it is decided, nobody
+// can acknowledge the request.
+router.post('/:id/edit-request', requestEditToItem);
+router.put('/:id/edit-request/decide', decideEditToItem);
+router.delete('/:id/edit-request', withdrawEditToItem);
 
 export default router;

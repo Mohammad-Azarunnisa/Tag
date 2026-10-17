@@ -10,6 +10,11 @@ import { format, formatDistanceToNow } from 'date-fns';
 // them into sessionStorage under `key`, so the list looks exactly as the user
 // left it. Session-scoped (not localStorage) on purpose: a stale filter from
 // days ago shouldn't outlive the tab.
+// A row of stat tiles that always fills its width: one equal column per tile on wide
+// screens, however many there are (the class names are written out so Tailwind keeps them).
+const LG_COLS = { 1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6', 7: 'lg:grid-cols-7', 8: 'lg:grid-cols-8' };
+export const lgCols = (n) => LG_COLS[Math.min(Math.max(Number(n) || 1, 1), 8)];
+
 export function useSessionState(key, initialValue) {
   const [state, setState] = useState(() => {
     try {

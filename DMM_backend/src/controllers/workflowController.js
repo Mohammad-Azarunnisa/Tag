@@ -11,6 +11,8 @@ import { logActivity } from '../utils/logActivity.js';
 import { resolvePostedAt } from '../utils/postedAt.js';
 import { canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import { platformsForOrganization } from '../utils/platforms.js';
+import { istDateKey, isWorkingDay } from '../utils/turnaround.js';
+import { holidaySet } from './holidayController.js';
 import {
   ROLES, USER_TYPES, APPROVAL_STATUS, APPROVAL_TYPES,
   ACTIVITY_ACTIONS, NOTIFICATION_TYPES, FEEDBACK_CATEGORIES,
@@ -416,10 +418,18 @@ export const listWorkflow = asyncHandler(async (req, res) => {
   }
 
   const board = req.query.board === 'POST' ? 'POST' : 'DESIGN';
+  /**
+   * `?board=POST&upcoming=1` is the handler's look ahead: the social media requests that
+   * are still with the designers — including the ones no designer has acknowledged yet —
+   * so a handler can find and plan for work before it reaches To Be Posted. Read-only:
+   * nothing here can be acknowledged by a handler, and the same page scoping applies.
+   */
+  const upcoming = board === 'POST' && (req.query.upcoming === '1' || req.query.upcoming === 'true')
+    && (isHandler(req.user) || isAdministrator(req.user));
   // Once something is actually POSTED it is done, not "to be posted" — leaving
   // it in this query would mean everyone who has ever posted anything keeps
   // seeing it here forever, on top of everything still outstanding.
-  const stages = board === 'POST' ? POST_STAGES : DESIGN_STAGES;
+  const stages = upcoming ? DESIGN_STAGES : (board === 'POST' ? POST_STAGES : DESIGN_STAGES);
 
   if (board === 'DESIGN' && !(isDesigner(req.user) || isAdministrator(req.user) || req.user.userType === USER_TYPES.COORDINATOR)) {
     res.status(403); throw new Error('Designs to be Done is for designers and admins');
@@ -439,7 +449,17 @@ export const listWorkflow = asyncHandler(async (req, res) => {
   // they accepted the design, so a handler is shown the work for the pages they
   // actually run — their own college's Instagram, not another college's, and not
   // a channel somebody else handles. Admins still see everything for oversight.
-  if (board === 'POST' && isHandler(req.user)) query.$or = postBoardScopeFor(req.user);
+  if (board === 'POST' && isHandler(req.user)) {
+    // The look ahead is for the colleges and pages the handler runs; the handler's own
+    // already-claimed work (the last clause) is not part of a design-stage list.
+    query.$or = upcoming ? postBoardScopeFor(req.user).slice(0, -1) : postBoardScopeFor(req.user);
+    if (upcoming && !query.$or.length) query.$or = [{ _id: null }];
+  }
+  if (upcoming) {
+    // Only work that will end up with a handler: social media design requests.
+    query.workType = 'DIGITAL_MEDIA';
+    query.$and = [{ $or: [{ workCategory: { $in: SOCIAL_POST_WORK_CATEGORIES } }, { workItem: { $in: SOCIAL_POST_WORK_ITEMS } }] }];
+  }
 
   if (req.query.stage && stages.includes(req.query.stage)) query.workflowStage = req.query.stage;
   if (req.query.search) query.title = { $regex: String(req.query.search), $options: 'i' };
@@ -457,7 +477,7 @@ export const listWorkflow = asyncHandler(async (req, res) => {
   const counts = stages.reduce((acc, s) => ({ ...acc, [s]: 0 }), {});
   rows.forEach((r) => { counts[r._id] = r.n; });
 
-  res.json({ success: true, board, items, counts });
+  res.json({ success: true, board, upcoming, items, counts });
 });
 
 /**
@@ -484,6 +504,7 @@ export const getWorkflowItem = asyncHandler(async (req, res) => {
   const amDesigner = idOf(item.designer) === me;
   const amHandler = idOf(item.handler) === me;
   const admin = isAdministrator(req.user) && !req.user.viewOnly;
+  const editPending = item.editRequest?.status === 'PENDING';
 
   // What this viewer can actually do here, decided server-side so neither app has
   // to re-derive the pipeline rules.
@@ -492,13 +513,17 @@ export const getWorkflowItem = asyncHandler(async (req, res) => {
     // Admin can pull the request back while nobody has acknowledged it yet.
     // Once a designer or handler has it, this is gone — talk to whoever holds it.
     cancel: admin && ['DESIGN_OPEN', 'POST_OPEN'].includes(stage),
-    acknowledgeDesign: !req.user.viewOnly && isDesigner(req.user) && stage === 'DESIGN_OPEN',
+    // Nobody can take the work while the coordinator's edit request is waiting on an admin.
+    acknowledgeDesign: !req.user.viewOnly && isDesigner(req.user) && stage === 'DESIGN_OPEN' && !editPending,
+    requestEdit: !req.user.viewOnly && amCoordinator && ['DESIGN_OPEN', 'POST_OPEN'].includes(stage) && !editPending && !item.designer && !item.handler,
+    decideEdit: admin && editPending,
+    withdrawEdit: !req.user.viewOnly && amCoordinator && editPending,
     submitDesign: !req.user.viewOnly && amDesigner && stage === 'DESIGN_IN_PROGRESS',
     reviewDesign: admin && stage === 'DESIGN_ADMIN_REVIEW',
     acceptDesign: !req.user.viewOnly && amCoordinator && stage === 'DESIGN_COORDINATOR_REVIEW',
     // Posting work belongs to whoever runs the pages the coordinator chose, so a
     // handler for another channel sees the item but is not offered the claim.
-    acknowledgePost: !req.user.viewOnly && isHandler(req.user) && stage === 'POST_OPEN'
+    acknowledgePost: !req.user.viewOnly && isHandler(req.user) && stage === 'POST_OPEN' && !editPending
       && handlesPagesFor(req.user, item),
     submitPost: !req.user.viewOnly && amHandler && stage === 'POST_IN_PROGRESS',
     reviewPost: admin && stage === 'POST_ADMIN_REVIEW',
@@ -550,6 +575,10 @@ export const acknowledgeWorkflowItem = asyncHandler(async (req, res) => {
       ? `${holder.name} has already taken this on`
       : 'This is not waiting to be picked up');
   }
+  if (item.editRequest?.status === 'PENDING') {
+    res.status(409);
+    throw new Error('The coordinator has asked to change this request. It can be picked up once an Admin approves or rejects the change.');
+  }
   if (designHalf && !isDesigner(req.user)) { res.status(403); throw new Error('Only a designer can take design work'); }
   if (postHalf && !isHandler(req.user)) { res.status(403); throw new Error('Only a social media handler can take posting work'); }
   // The board already hides other people's pages; this is the same rule enforced
@@ -568,11 +597,15 @@ export const acknowledgeWorkflowItem = asyncHandler(async (req, res) => {
 
   // The stage in the filter is the lock: whoever loses the race matches nothing.
   const won = await InstitutionRequest.findOneAndUpdate(
-    { _id: item._id, workflowStage: designHalf ? 'DESIGN_OPEN' : 'POST_OPEN' },
+    { _id: item._id, workflowStage: designHalf ? 'DESIGN_OPEN' : 'POST_OPEN', 'editRequest.status': { $ne: 'PENDING' } },
     { $set: claim },
     { new: true }
   );
   if (!won) {
+    const now = await InstitutionRequest.findById(item._id).select('editRequest').lean();
+    if (now?.editRequest?.status === 'PENDING') {
+      res.status(409); throw new Error('The coordinator has asked to change this request. It can be picked up once an Admin approves or rejects the change.');
+    }
     const holder = await InstitutionRequest.findById(item._id).populate('designer handler', 'name').lean();
     const name = (designHalf ? holder?.designer?.name : holder?.handler?.name) || 'Someone else';
     res.status(409); throw new Error(`${name} acknowledged this first`);
@@ -1060,6 +1093,172 @@ export const markWorkflowPosted = asyncHandler(async (req, res) => {
  * exactly like any other declined request, with the reason (if one was given)
  * in the reply — no new UI needed on their side.
  */
+// ---------------------------------------------------------------------------
+// Editing a request — the coordinator asks, an Admin / the super admin decides
+// ---------------------------------------------------------------------------
+
+const EDIT_TEXT_FIELDS = ['title', 'details', 'department', 'eventName', 'place', 'eventCoordinatorName'];
+const EDIT_DETAILS_MAX = 400;
+
+/**
+ * Check the changes a coordinator proposes and keep only the ones that are real
+ * changes. Same rules as raising a request: the needed-by date must be a working day
+ * and not earlier than the earliest date fixed when the request was raised.
+ */
+const readEditChanges = async (item, raw, res) => {
+  const changes = {};
+  const src = raw && typeof raw === 'object' ? raw : {};
+  for (const key of EDIT_TEXT_FIELDS) {
+    if (src[key] === undefined) continue;
+    if (!item.event && ['eventName', 'place', 'eventCoordinatorName'].includes(key)) continue;
+    const value = String(src[key] ?? '').trim();
+    if (key === 'title' && !value) { res.status(400); throw new Error('The title cannot be empty'); }
+    if (key === 'department' && !value) { res.status(400); throw new Error('The department cannot be empty'); }
+    if (key === 'details' && value.length > EDIT_DETAILS_MAX) { res.status(400); throw new Error(`Notes must be ${EDIT_DETAILS_MAX} characters or fewer`); }
+    if (value !== String(item[key] ?? '')) changes[key] = value;
+  }
+  if (src.priority !== undefined) {
+    if (!['LOW', 'NORMAL', 'HIGH', 'URGENT'].includes(src.priority)) { res.status(400); throw new Error('That priority is not valid'); }
+    if (src.priority !== item.priority) changes.priority = src.priority;
+  }
+  if (src.eventDate !== undefined && item.event) {
+    const d = new Date(src.eventDate);
+    if (Number.isNaN(d.getTime())) { res.status(400); throw new Error('That event date is not valid'); }
+    if (istDateKey(d) !== (item.eventDate ? istDateKey(item.eventDate) : '')) changes.eventDate = d.toISOString();
+  }
+  if (src.neededBy !== undefined) {
+    const due = new Date(src.neededBy);
+    if (!src.neededBy || Number.isNaN(due.getTime())) { res.status(400); throw new Error('Choose a valid "Needed by" date'); }
+    const dueKey = istDateKey(due);
+    if (!isWorkingDay(dueKey, await holidaySet())) {
+      res.status(400); throw new Error('The "Needed by" date cannot be a Sunday or a holiday. Please pick a working day.');
+    }
+    const earliest = item.earliestDeliveryAt ? istDateKey(item.earliestDeliveryAt) : null;
+    if (earliest && dueKey < earliest) {
+      res.status(400); throw new Error('That "Needed by" date is too soon for this kind of request. Please choose a later date.');
+    }
+    if (dueKey !== (item.neededBy ? istDateKey(item.neededBy) : '')) changes.neededBy = due.toISOString();
+  }
+  return changes;
+};
+
+/**
+ * @route POST /api/workflow/:id/edit-request  { reason, changes }
+ * The coordinator who raised it asks to change it — only while nobody has taken it.
+ * It goes to the Admin(s) of the college and the super admin; the designer cannot
+ * acknowledge the request until it has been approved or rejected.
+ */
+export const requestEditToItem = asyncHandler(async (req, res) => {
+  const item = await loadItem(req, res, { populate: false });
+  if (req.user.viewOnly) { res.status(403); throw new Error('This is a view-only account — changes are not permitted.'); }
+  if (idOf(item.raisedBy) !== String(req.user._id)) { res.status(403); throw new Error('Only the person who raised this can ask to change it'); }
+  if (!['DESIGN_OPEN', 'POST_OPEN'].includes(item.workflowStage) || item.designer || item.handler) {
+    res.status(409); throw new Error('A designer has already taken this on, so it can no longer be changed here — please talk to the Admin');
+  }
+  if (item.editRequest?.status === 'PENDING') { res.status(409); throw new Error('You have already asked to change this — it is waiting for an Admin'); }
+
+  const reason = String(req.body.reason || '').trim();
+  if (reason.length < 3) { res.status(400); throw new Error('Say why you want to change this'); }
+  const changes = await readEditChanges(item, req.body.changes, res);
+  if (!Object.keys(changes).length) { res.status(400); throw new Error('Change at least one thing before sending'); }
+
+  // The conditions are the lock: a designer taking it at the same instant wins or
+  // loses cleanly, and a second edit request cannot overwrite a pending one.
+  const won = await InstitutionRequest.findOneAndUpdate(
+    { _id: item._id, workflowStage: item.workflowStage, designer: null, handler: null, 'editRequest.status': { $ne: 'PENDING' } },
+    { $set: { editRequest: { status: 'PENDING', reason, changes, requestedBy: req.user._id, requestedAt: new Date() } } },
+    { new: true }
+  );
+  if (!won) { res.status(409); throw new Error('A designer has just taken this on, so it can no longer be changed here'); }
+
+  await logActivity({
+    user: req.user._id, organization: idOf(won.organization), action: ACTIVITY_ACTIONS.REQUEST_RAISED,
+    description: `Asked to change "${won.title}": ${reason}`,
+    entityType: 'InstitutionRequest', entityId: won._id,
+  });
+  await notifyAdmins(won, {
+    type: NOTIFICATION_TYPES.EDIT_REQUESTED,
+    title: 'A coordinator wants to change a request',
+    message: `${req.user.name} asked to change "${won.title}" — ${reason}. Nobody can pick it up until you decide.`,
+  });
+  const fresh = await populateRequest(InstitutionRequest.findById(won._id)).lean();
+  res.status(201).json({ success: true, item: fresh });
+});
+
+/**
+ * @route PUT /api/workflow/:id/edit-request/decide  { action: 'APPROVE' | 'REJECT', note }
+ * An Admin or the super admin answers. Approving applies the changes; rejecting
+ * leaves the request exactly as it was (a note saying why is required). Either way
+ * the request can be picked up by a designer again.
+ */
+export const decideEditToItem = asyncHandler(async (req, res) => {
+  const item = await loadItem(req, res, { populate: false });
+  if (!isAdministrator(req.user) || req.user.viewOnly) { res.status(403); throw new Error('Only an Admin or the super admin can decide this'); }
+  if (!canAccessOrg(req.user, idOf(item.organization))) { res.status(404); throw new Error('Workflow item not found'); }
+  if (item.editRequest?.status !== 'PENDING') { res.status(409); throw new Error('There is no change waiting for a decision'); }
+
+  const action = String(req.body.action || '').toUpperCase();
+  if (!['APPROVE', 'REJECT'].includes(action)) { res.status(400); throw new Error('action must be APPROVE or REJECT'); }
+  const note = String(req.body.note || '').trim();
+  if (action === 'REJECT' && note.length < 3) { res.status(400); throw new Error('Say why you are rejecting it — the coordinator will see it'); }
+
+  const set = {
+    'editRequest.status': action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+    'editRequest.decidedBy': req.user._id,
+    'editRequest.decidedAt': new Date(),
+    'editRequest.decisionNote': note,
+  };
+  if (action === 'APPROVE') {
+    const c = item.editRequest.changes || {};
+    for (const key of [...EDIT_TEXT_FIELDS, 'priority']) if (c[key] !== undefined) set[key] = c[key];
+    if (c.neededBy) set.neededBy = new Date(c.neededBy);
+    if (c.eventDate) set.eventDate = new Date(c.eventDate);
+  }
+  const done = await InstitutionRequest.findOneAndUpdate(
+    { _id: item._id, 'editRequest.status': 'PENDING' }, { $set: set }, { new: true }
+  );
+  if (!done) { res.status(409); throw new Error('Someone has already decided this'); }
+
+  const approved = action === 'APPROVE';
+  await logActivity({
+    user: req.user._id, organization: idOf(done.organization), action: ACTIVITY_ACTIONS.REQUEST_REVIEWED,
+    description: `${approved ? 'Approved' : 'Rejected'} the change to "${done.title}"${note ? `: ${note}` : ''}`,
+    entityType: 'InstitutionRequest', entityId: done._id,
+  });
+  await notifyUser(done.raisedBy, done, {
+    type: NOTIFICATION_TYPES.EDIT_DECIDED,
+    title: approved ? 'Your change was approved' : 'Your change was rejected',
+    message: approved
+      ? `${req.user.name} approved the change to "${done.title}"${note ? ` — ${note}` : ''}`
+      : `${req.user.name} rejected the change to "${done.title}" — ${note}`,
+  });
+  const fresh = await populateRequest(InstitutionRequest.findById(done._id)).lean();
+  res.json({ success: true, item: fresh });
+});
+
+/**
+ * @route DELETE /api/workflow/:id/edit-request
+ * The coordinator takes their own pending change back, which frees the request for
+ * a designer again.
+ */
+export const withdrawEditToItem = asyncHandler(async (req, res) => {
+  const item = await loadItem(req, res, { populate: false });
+  if (idOf(item.raisedBy) !== String(req.user._id)) { res.status(403); throw new Error('Only the person who asked can take it back'); }
+  const done = await InstitutionRequest.findOneAndUpdate(
+    { _id: item._id, 'editRequest.status': 'PENDING' },
+    { $set: { 'editRequest.status': '' }, $unset: { 'editRequest.changes': 1 } },
+    { new: true }
+  );
+  if (!done) { res.status(409); throw new Error('There is no change waiting to be taken back'); }
+  await notifyAdmins(done, {
+    type: NOTIFICATION_TYPES.EDIT_DECIDED,
+    title: 'A change request was taken back',
+    message: `${req.user.name} withdrew the request to change "${done.title}"`,
+  });
+  const fresh = await populateRequest(InstitutionRequest.findById(done._id)).lean();
+  res.json({ success: true, item: fresh });
+});
+
 export const cancelWorkflowItem = asyncHandler(async (req, res) => {
   const item = await loadItem(req, res, { populate: false });
   if (!isAdministrator(req.user)) { res.status(403); throw new Error('Only an Admin or the super admin can cancel this'); }

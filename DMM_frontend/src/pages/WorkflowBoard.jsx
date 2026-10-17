@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -7,11 +7,12 @@ import {
   UserCheck, Flame, CalendarClock, CalendarRange, Paperclip, Sparkles, AlertTriangle, X,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
+import { EditRequestModal } from '../components/requests/EditRequest.jsx';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, EmptyState, Input, Select, Skeleton, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, inDateRange, timeAgo, useSessionState } from '../lib/utils.js';
+import { cn, formatDate, inDateRange, timeAgo, useSessionState, lgCols } from '../lib/utils.js';
 
 // What each stage means to the person reading the board. Two boards, one record —
 // the stage is the whole answer to "whose move is it?".
@@ -40,6 +41,15 @@ const DATE_FIELDS = [
   { value: 'neededBy', label: 'Needed by' },
 ];
 
+// The handler's look ahead — social media requests that have not reached To Be Posted yet.
+const UPCOMING_CFG = {
+  title: 'Coming up',
+  subtitle: 'Social media requests still with the designers, for the pages you handle — including the ones no designer has taken yet. You can search and open them, but only act once they reach To Be Posted.',
+  icon: Palette,
+  stages: ['DESIGN_OPEN', 'DESIGN_IN_PROGRESS', 'DESIGN_ADMIN_REVIEW', 'DESIGN_COORDINATOR_REVIEW'],
+  empty: 'No social media requests are with the designers right now.',
+};
+
 const BOARDS = {
   DESIGN: {
     title: 'Designs to be Done',
@@ -67,13 +77,18 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const [savedFilters, setFilters] = useSessionState(`workflow-filters:${board}`, FILTER_DEFAULTS);
+  // A handler can also look ahead at social media requests still with the designers.
+  const isHandlerUser = user?.userType === 'SOCIAL_HANDLER';
+  const [view, setView] = useSessionState('workflow-view:POST', 'POST');
+  const upcoming = board === 'POST' && isHandlerUser && view === 'UPCOMING';
+  const activeCfg = upcoming ? UPCOMING_CFG : cfg;
   // A tab that saved its filters before the date range existed has no
   // from/to/dateField keys; the defaults fill them in.
   const filters = { ...FILTER_DEFAULTS, ...savedFilters };
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['workflow', board],
-    queryFn: () => workflowApi.list({ board }),
+    queryKey: ['workflow', board, upcoming],
+    queryFn: () => workflowApi.list({ board, ...(upcoming ? { upcoming: 1 } : {}) }),
   });
 
   const items = data?.items || [];
@@ -109,6 +124,13 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
+  // The coordinator's own requests are listed here too, and they can ask to change one
+  // from the card until a designer takes it.
+  const [editing, setEditing] = useState(null);
+  const isCoordinatorUser = user?.userType === 'COORDINATOR';
+  const canAskEdit = (i) => isCoordinatorUser && !user?.viewOnly && ['DESIGN_OPEN', 'POST_OPEN'].includes(i.workflowStage)
+    && !i.designer && !i.handler && i.editRequest?.status !== 'PENDING'
+    && String(i.raisedBy?._id || i.raisedBy) === String(user?._id);
   const ackMut = useMutation({
     mutationFn: (id) => workflowApi.acknowledge(id),
     onSuccess: () => {
@@ -146,15 +168,27 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
 
   const canAcknowledge = (i) => i.workflowStage === (board === 'DESIGN' ? 'DESIGN_OPEN' : 'POST_OPEN')
     && !user?.viewOnly
+    // the coordinator has asked to change this request; it waits for an Admin's decision
+    && i.editRequest?.status !== 'PENDING'
     && user?.userType === (board === 'DESIGN' ? 'DESIGNER' : 'SOCIAL_HANDLER');
 
   return (
     <div>
-      <PageHeader title={cfg.title} subtitle={cfg.subtitle} />
+      <PageHeader title={activeCfg.title} subtitle={activeCfg.subtitle} />
+
+      {board === 'POST' && isHandlerUser && (
+        <div className="mb-4 inline-flex rounded-xl bg-slate-100 p-1 text-sm font-semibold dark:bg-slate-800">
+          {[['POST', 'To be posted'], ['UPCOMING', 'Coming up — still with the designers']].map(([k, label]) => (
+            <button key={k} type="button"
+              onClick={() => { setView(k); setFilters(FILTER_DEFAULTS); }}
+              className={cn('rounded-lg px-3 py-1.5 transition-colors', view === k ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-900 dark:text-brand-400' : 'text-slate-500')}>{label}</button>
+          ))}
+        </div>
+      )}
 
       {/* One tile per stage, so it is obvious where the queue is backing up. */}
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {cfg.stages.map((s) => {
+      <div className={cn('mb-5 grid gap-3 sm:grid-cols-2', lgCols(activeCfg.stages.length))}>
+        {activeCfg.stages.map((s) => {
           const meta = STAGE_META[s];
           const active = filters.stage === s;
           return (
@@ -179,7 +213,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
           <Select className="w-full sm:w-56" value={filters.stage}
             onChange={(e) => setFilters((f) => ({ ...f, stage: e.target.value }))}>
             <option value="All">Every stage</option>
-            {cfg.stages.map((s) => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
+            {activeCfg.stages.map((s) => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
           </Select>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -210,7 +244,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
           description="There was a problem loading this workflow board — check your connection and try again."
           action={<Button variant="outline" onClick={() => refetch()}>Try again</Button>} />
       ) : shown.length === 0 ? (
-        <EmptyState icon={cfg.icon} title={cfg.empty}
+        <EmptyState icon={activeCfg.icon} title={activeCfg.empty}
           description="Requests appear here as soon as a college raises them." />
       ) : (
         <div className="space-y-3">
@@ -251,6 +285,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
                       <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${i._id}`)}>
                         <Eye className="h-4 w-4" /> Open
                       </Button>
+                      {canAskEdit(i) && <Button size="sm" variant="outline" onClick={() => setEditing(i)}>Ask to change</Button>}
                       {canAcknowledge(i) && (
                         <Button size="sm" loading={ackMut.isPending && ackMut.variables === i._id}
                           onClick={() => ackMut.mutate(i._id)}>
@@ -277,10 +312,13 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
                           <Flame className="h-3 w-3" /> {URGENCY[i.priority].label}
                         </span>
                       )}
-                      {/* The portal's class for this design — Basic / Medium / Heavy — and how long it takes. */}
+                      {i.editRequest?.status === 'PENDING' && (
+                        <span title="The coordinator has asked to change this request. It can be picked up once an Admin decides." className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">Change requested — on hold</span>
+                      )}
+                      {/* The portal's class for this design — Basic / Medium / Heavy. */}
                       {i.designTier && (
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${{ BASIC: 'bg-emerald-100 text-emerald-700', MEDIUM: 'bg-amber-100 text-amber-700', HEAVY: 'bg-rose-100 text-rose-700' }[i.designTier]}`}>
-                          {{ BASIC: 'Basic · 1–1.5 hrs', MEDIUM: 'Medium · 2–3 hrs', HEAVY: 'Heavy · 1–2 days' }[i.designTier]}
+                          {{ BASIC: 'Basic', MEDIUM: 'Medium', HEAVY: 'Heavy' }[i.designTier]}
                         </span>
                       )}
                       {/* Already had the creative — this never touched a designer. */}
@@ -334,6 +372,7 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
                   <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${i._id}`)}>
                     <Eye className="h-4 w-4" /> Open
                   </Button>
+                  {canAskEdit(i) && <Button size="sm" variant="outline" onClick={() => setEditing(i)}>Ask to change</Button>}
                   {canAcknowledge(i) && (
                     <Button size="sm" loading={ackMut.isPending && ackMut.variables === i._id}
                       onClick={() => ackMut.mutate(i._id)}>
@@ -350,6 +389,11 @@ export default function WorkflowBoard({ board = 'DESIGN' }) {
             );
           })}
         </div>
+      )}
+
+      {editing && (
+        <EditRequestModal request={editing} onClose={() => setEditing(null)}
+          onSent={() => { setEditing(null); qc.invalidateQueries({ queryKey: ['workflow'] }); }} />
       )}
     </div>
   );

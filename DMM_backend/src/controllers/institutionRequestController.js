@@ -16,7 +16,7 @@ import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
 import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, SOCIAL_POST_WORK_CATEGORIES, SOCIAL_POST_WORK_ITEMS } from '../config/constants.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { platformsForOrganization } from '../utils/platforms.js';
-import { planDesign, istDateKey } from '../utils/turnaround.js';
+import { planDesign, istDateKey, isWorkingDay } from '../utils/turnaround.js';
 import { holidaySet } from './holidayController.js';
 
 const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
@@ -296,8 +296,10 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     if (unknown.length) { res.status(400); throw new Error(`Your college does not have ${unknown.join(', ')} set up`); }
   }
 
+  // "Needed by" is required on every request.
+  if (!neededBy) { res.status(400); throw new Error('Choose the date you need this by'); }
   let due;
-  if (neededBy) {
+  {
     due = new Date(neededBy);
     if (Number.isNaN(due.getTime())) { res.status(400); throw new Error('That "needed by" date is not valid'); }
   }
@@ -307,9 +309,16 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
   let plan = null;
   if (!isPostOnly) {
     plan = planDesign({ workItem, workCategory: finalWorkCategory, raisedAt: new Date(), holidays: await holidaySet() });
-    if (due && istDateKey(due) < plan.earliestDelivery) {
+    const dueKey = istDateKey(due);
+    const holidays = await holidaySet();
+    if (!isWorkingDay(dueKey, holidays)) {
       res.status(400);
-      throw new Error(`The earliest delivery date for this ${plan.tierLabel} request is ${plan.earliestDelivery} (${plan.minWorkingDays} working days, Sundays and holidays skipped). Choose that date or later.`);
+      throw new Error('The "Needed by" date cannot be a Sunday or a holiday. Please pick a working day.');
+    }
+    if (due && dueKey < plan.earliestDelivery) {
+      res.status(400);
+      // Coordinators are not told the delivery date or design time, so the message stays general.
+      throw new Error('That "Needed by" date is too soon for this kind of request. Please choose a later date.');
     }
   }
 

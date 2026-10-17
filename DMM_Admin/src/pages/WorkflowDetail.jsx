@@ -395,6 +395,66 @@ function ApproveConfirmModal({ half, coordinatorName, onClose, onConfirm, saving
  * someone off work they have already started — it means telling the
  * coordinator their ask is not going ahead, not stopping a job mid-way.
  */
+const EDIT_LABELS = {
+  title: 'Title', details: 'Notes', department: 'Department', priority: 'Priority', neededBy: 'Needed by',
+  eventName: 'Event name', eventDate: 'Event date', place: 'Place', eventCoordinatorName: 'Event coordinator',
+};
+const showValue = (key, value) => {
+  if (key === 'neededBy' || key === 'eventDate') return value ? formatDate(value) : '—';
+  if (key === 'priority') return value ? String(value).charAt(0) + String(value).slice(1).toLowerCase() : '—';
+  return String(value ?? '') || '—';
+};
+
+/**
+ * A coordinator wants to change a request no designer has taken yet. Shows what
+ * they want to change (old → new) and why; approving applies it, rejecting needs a
+ * reason. Until one of the two, nobody can pick the request up.
+ */
+function EditDecisionPanel({ item, canDecide, deciding, onDecide }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState('');
+  const e = item.editRequest;
+  const rows = Object.entries(e?.changes || {});
+  return (
+    <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+      <p className="font-bold text-amber-900 dark:text-amber-200">{item.raisedBy?.name || 'The coordinator'} wants to change this request</p>
+      <p className="mt-0.5 text-sm text-amber-800 dark:text-amber-300">Nobody can pick it up until you approve or reject the change.</p>
+      {e.reason && <p className="mt-2 text-sm text-slate-700 dark:text-slate-200"><b>Reason:</b> {e.reason}</p>}
+      <div className="mt-3 divide-y divide-amber-100 overflow-hidden rounded-xl border border-amber-100 bg-white dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900">
+        {rows.map(([k, v]) => (
+          <div key={k} className="grid gap-1 px-3 py-2 text-sm sm:grid-cols-[9rem_1fr_1fr]">
+            <span className="font-semibold text-slate-500">{EDIT_LABELS[k] || k}</span>
+            <span className="text-slate-400 line-through decoration-slate-300">{showValue(k, item[k])}</span>
+            <span className="font-medium text-emerald-700 dark:text-emerald-400">{showValue(k, v)}</span>
+          </div>
+        ))}
+      </div>
+      {canDecide && (
+        <div className="mt-3">
+          {rejecting && (
+            <div className="mb-3">
+              <Input label="Why are you rejecting it? (the coordinator will see this)" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="e.g. The brief is fine as it is" />
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {!rejecting ? (
+              <>
+                <Button variant="success" loading={deciding === 'APPROVE'} onClick={() => onDecide('APPROVE', '')}><Check className="h-4 w-4" /> Approve the change</Button>
+                <Button variant="danger" onClick={() => setRejecting(true)}><X className="h-4 w-4" /> Reject</Button>
+              </>
+            ) : (
+              <>
+                <Button variant="danger" loading={deciding === 'REJECT'} disabled={note.trim().length < 3} onClick={() => onDecide('REJECT', note.trim())}>Send rejection</Button>
+                <Button variant="outline" onClick={() => setRejecting(false)}>Back</Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CancelConfirmModal({ coordinatorName, onClose, onConfirm, saving }) {
   const [reason, setReason] = useState('');
   return (
@@ -500,6 +560,11 @@ export default function WorkflowDetail() {
     onSuccess: () => done('Request cancelled'),
     onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
   });
+  const editMut = useMutation({
+    mutationFn: ({ action, note }) => workflowApi.decideEdit(id, action, note),
+    onSuccess: (_r, vars) => done(vars.action === 'APPROVE' ? 'Change approved and applied — designers can pick it up now' : 'Change rejected — the coordinator has been told'),
+    onError: (e) => toast.error(e.response?.data?.message || 'That did not work'),
+  });
   const deleteMut = useMutation({
     mutationFn: (reason) => institutionRequestApi.remove(id, reason),
     onSuccess: () => {
@@ -536,6 +601,11 @@ export default function WorkflowDetail() {
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200">
         <ArrowLeft className="h-4 w-4" /> Back
       </button>
+
+      {item.editRequest?.status === 'PENDING' && (
+        <EditDecisionPanel item={item} canDecide={!!can.decideEdit && !user?.viewOnly} deciding={editMut.isPending ? editMut.variables?.action : null}
+          onDecide={(action, note) => editMut.mutate({ action, note })} />
+      )}
 
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">

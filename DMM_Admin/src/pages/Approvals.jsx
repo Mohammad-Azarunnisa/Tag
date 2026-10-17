@@ -10,7 +10,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Avatar, Badge, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import WorkAssignmentModal from '../components/approvals/WorkAssignmentModal.jsx';
-import { formatDate, cn, isVideo, isDoc, platformsOf } from '../lib/utils.js';
+import { formatDate, cn, isVideo, isDoc, platformsOf, lgCols } from '../lib/utils.js';
 
 export const STATUS_STYLES = {
   IN_DESIGN: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
@@ -214,7 +214,7 @@ export default function Approvals() {
       </div>
 
       {/* Stat tiles — click to jump to that status tab */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+      <div className={cn('mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3', lgCols(TILES.filter((t) => !t.design || filters.type === 'DESIGN').length))}>
         {TILES.filter((t) => !t.design || filters.type === 'DESIGN').map((t) => {
           const Icon = t.icon;
           const active = filters.status === t.tab;

@@ -13,7 +13,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Badge, Avatar, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import CreateApprovalModal from '../components/approvals/CreateApprovalModal.jsx';
-import { cn, formatDate, isVideo, isDoc, platformsOf } from '../lib/utils.js';
+import { cn, formatDate, isVideo, isDoc, platformsOf, lgCols } from '../lib/utils.js';
 
 // Design briefs move through an extra IN_DESIGN stage and can end DELIVERED;
 // standalone posts don't, so each pipeline shows its own status tabs.
@@ -178,7 +178,7 @@ export default function Approvals() {
       </div>
 
       {/* Stat tiles — click to jump to that status tab */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className={cn('mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3', lgCols(TILES.filter((t) => !t.design || filters.type === 'DESIGN').length))}>
         {TILES.filter((t) => !t.design || filters.type === 'DESIGN').map((t, i) => (
           <motion.button
             key={t.key} type="button" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}

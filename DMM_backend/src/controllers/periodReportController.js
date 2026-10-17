@@ -115,7 +115,7 @@ export const exportPeriodReport = asyncHandler(async (req, res) => {
   overview.addRow(['Metric', 'Value']).font = { bold: true };
   const h = r.headline;
   [
-    ['Designs delivered', `${h.designsDelivered.value} / ${h.designsDelivered.of}`],
+    ['Requests raised', h.requestsRaised],
     ['Delivered on time', h.deliveredOnTimeRate == null ? '—' : `${h.deliveredOnTimeRate}%`],
     ['Web tasks done', `${h.webTasksDone.value} / ${h.webTasksDone.of}`],
     ['Posts published', h.postsPublished],
@@ -144,15 +144,22 @@ export const exportPeriodReport = asyncHandler(async (req, res) => {
 
   // Part 1
   addSheet(wb, '1 Design output',
-    ['Institution', 'Requests received', 'Completed', 'Pending', 'Cancelled', 'Delivered on time', 'On-time rate %',
+    ['Institution', 'Requests raised', 'Designs completed', 'of which accepted', 'Pending', 'Cancelled', 'Delivered on time', 'On-time rate %',
       'Approved first pass', 'First-pass rate %', 'Avg revision rounds'],
-    r.design.rows.map((x) => [x.organization.name, x.requestsReceived, x.completed, x.pending, x.cancelled,
+    r.design.rows.map((x) => [x.organization.name, x.requestsRaised, x.designsCompleted, x.completed, x.pending, x.cancelled,
       dash(x.deliveredOnTime), dash(x.onTimeRate), x.approvedFirstPass, dash(x.firstPassRate),
       dash(x.avgRevisionRounds)]),
-    ['ALL INSTITUTIONS', r.design.totals.requestsReceived, r.design.totals.completed, r.design.totals.pending,
+    ['ALL INSTITUTIONS', r.design.totals.requestsRaised, r.design.totals.designsCompleted, r.design.totals.completed, r.design.totals.pending,
       r.design.totals.cancelled, dash(r.design.totals.deliveredOnTime), dash(r.design.totals.onTimeRate),
       r.design.totals.approvedFirstPass, dash(r.design.totals.firstPassRate),
       dash(r.design.totals.avgRevisionRounds)]);
+
+  addSheet(wb, '1c Coordinators', ['Institution', 'Coordinator', 'Requests raised', 'Designs completed'],
+    r.coordinators.rows.flatMap((row) => [
+      ...row.coordinators.map((c) => [row.organization.name, c.name, c.requestsRaised, c.designsCompleted]),
+      ...(row.other ? [[row.organization.name, 'Others (admin / past coordinators)', row.other.requestsRaised, row.other.designsCompleted]] : []),
+    ]),
+    ['ALL INSTITUTIONS', '', r.coordinators.totals.requestsRaised, r.coordinators.totals.designsCompleted]);
 
   if (r.design.mix.length) {
     addSheet(wb, '1b What designs were', ['Type', 'Count', 'Share %'],
@@ -1146,8 +1153,8 @@ const buildInsights = (r) => {
     if (d.firstPassRate >= 70) strength.push(`${d.firstPassRate}% of designs cleared on the first pass.`);
     else if (d.firstPassRate < 40) critical.push(`Just ${d.firstPassRate}% of designs cleared on the first pass.`);
   }
-  if (d.requestsReceived > 0 && d.pending > 0) {
-    const share = sharePct(d.pending, d.requestsReceived);
+  if (d.requestsRaised > 0 && d.pending > 0) {
+    const share = sharePct(d.pending, d.requestsRaised);
     const line = `${d.pending} design request(s) (${share}%) still pending.`;
     if (share >= 30) critical.push(line); else watch.push(line);
   }
@@ -1199,12 +1206,12 @@ const bucketsOf = (strength, watch, critical) => {
 const designInsights = (r, perCollege = false) => {
   const strength = []; const watch = []; const critical = [];
   const d = r.design.totals;
-  if (!d.requestsReceived) return bucketsOf(strength, ['No design requests were raised this period.'], critical);
+  if (!d.requestsRaised) return bucketsOf(strength, ['No design requests were raised this period.'], critical);
 
-  const doneShare = pctOf(d.completed, d.requestsReceived);
-  if (doneShare >= 70) strength.push(`${doneShare}% of requests received were completed.`);
-  else if (doneShare < 40) critical.push(`Only ${doneShare}% of requests received were completed.`);
-  else watch.push(`${doneShare}% of requests received were completed — push the rest through.`);
+  const doneShare = pctOf(d.designsCompleted, d.requestsRaised);
+  if (doneShare >= 70) strength.push(`${doneShare}% of requests raised were completed.`);
+  else if (doneShare < 40) critical.push(`Only ${doneShare}% of requests raised were completed.`);
+  else watch.push(`${doneShare}% of requests raised were completed — push the rest through.`);
 
   if (d.onTimeRate != null) {
     if (d.onTimeRate >= 80) strength.push(`${d.onTimeRate}% of designs delivered on time.`);
@@ -1221,7 +1228,7 @@ const designInsights = (r, perCollege = false) => {
   }
 
   if (d.pending > 0) {
-    const share = pctOf(d.pending, d.requestsReceived);
+    const share = pctOf(d.pending, d.requestsRaised);
     (share >= 30 ? critical : watch).push(`${d.pending} request(s) (${share}%) are still pending.`);
     const topStage = pendingStageItems(d.pendingByStage)[0];
     if (topStage) watch.push(`Most pending work is at "${topStage.label}" (${topStage.count}).`);
@@ -1232,10 +1239,10 @@ const designInsights = (r, perCollege = false) => {
   }
 
   if (d.cancelled > 0) {
-    const share = pctOf(d.cancelled, d.requestsReceived);
+    const share = pctOf(d.cancelled, d.requestsRaised);
     (share >= 20 ? critical : watch).push(`${d.cancelled} request(s) (${share}%) were cancelled.`);
   }
-  const idle = r.design.rows.filter((x) => !x.requestsReceived && !x.completed && !x.pending);
+  const idle = r.design.rows.filter((x) => !x.requestsRaised);
   if (idle.length && r.design.rows.length > 1) watch.push(`No design requests from ${namesOf(idle)}.`);
   return bucketsOf(strength, watch, critical);
 };
@@ -1438,6 +1445,10 @@ const drawIcon = (doc, kind, x, y, tint = 'default') => {
       doc.circle(cx - 2, cy - 2.2, 2.2).stroke();
       doc.moveTo(cx - 6, cy + 5).bezierCurveTo(cx - 6, cy + 0.5, cx + 2, cy + 0.5, cx + 2, cy + 5).stroke();
       doc.circle(cx + 3.6, cy - 1.4, 1.6).stroke();
+      break;
+    case 'person':
+      doc.circle(cx, cy - 2.6, 2.6).stroke();
+      doc.moveTo(cx - 5.5, cy + 5.5).bezierCurveTo(cx - 5.5, cy + 0.8, cx + 5.5, cy + 0.8, cx + 5.5, cy + 5.5).stroke();
       break;
     case 'palette':
       doc.circle(cx, cy, 5.5).stroke();
@@ -1656,10 +1667,47 @@ const drawTakeawayCard = (doc, x, y, w, h, kind, title, items, emptyText) => {
   }
 };
 
-const ORG_PAGE = { banner: 48, row1: 66, row2: 156, row3: 214, row4: 118, gap: 10 };
+// One college's coordinators: a name, how many design requests they raised for the
+// college, and how many of those are completed. If there are more names than rows,
+// the last row sums the rest so the column still adds up to the college's figures.
+const drawCoordinators = (doc, x, y, w, h, co) => {
+  const all = co?.coordinators || [];
+  const list = all.filter((c) => c.requestsRaised > 0);
+  const idle = all.length - list.length;
+  if (co?.other) list.push({ name: 'Others (admin / past coordinators)', ...co.other });
+  if (!all.length && !list.length) { emptyNote(doc, x, y + 18, w, h - 18, 'No coordinator is linked to this institution.'); return; }
+  if (!list.length) { emptyNote(doc, x, y + 18, w, h - 18, `${all.length} coordinator${all.length === 1 ? '' : 's'} — no design requests raised this period.`); return; }
+  const numW = 42;
+  const raisedX = x + w - 12 - numW * 2; const doneX = x + w - 12 - numW;
+  doc.fontSize(6.4).font('Helvetica-Bold').fillColor(GREY)
+    .text('RAISED', raisedX, y + 29, { width: numW, align: 'right', lineBreak: false })
+    .text('COMPLETED', doneX, y + 29, { width: numW, align: 'right', lineBreak: false });
+  const rowH = 10.2; const top = y + 40; const cap = Math.max(1, Math.floor((h - 40 - 5) / rowH));
+  let shown = list;
+  if (idle > 0 && list.length < cap) shown = [...list, { name: `${idle} with no requests`, requestsRaised: null, designsCompleted: null, muted: true }];
+  else if (list.length > cap) {
+    const rest = list.slice(cap - 1);
+    shown = [...list.slice(0, cap - 1), {
+      name: `+${rest.length} more coordinator${rest.length === 1 ? '' : 's'}`,
+      requestsRaised: rest.reduce((t, c) => t + c.requestsRaised, 0),
+      designsCompleted: rest.reduce((t, c) => t + c.designsCompleted, 0),
+    }];
+  }
+  shown.forEach((c, i) => {
+    const ry = top + i * rowH;
+    doc.fontSize(7.4).font(c.muted ? 'Helvetica-Oblique' : 'Helvetica').fillColor(c.muted ? GREY : INK)
+      .text(sanitizeForPdf(c.name), x + 12, ry, { width: raisedX - (x + 12) - 4, height: 9, ellipsis: true, lineBreak: false });
+    if (c.muted) return;
+    doc.fontSize(7.8).font('Helvetica-Bold').fillColor(NAVY)
+      .text(fmt(c.requestsRaised), raisedX, ry, { width: numW, align: 'right', lineBreak: false })
+      .text(fmt(c.designsCompleted), doneX, ry, { width: numW, align: 'right', lineBreak: false });
+  });
+};
+
+const ORG_PAGE = { banner: 48, row1: 108, row2: 140, row3: 214, row4: 118, gap: 10 };
 
 const drawOrgPage = (doc, ctx) => {
-  const { org, rank, total, d, p, s, best, labels, series } = ctx;
+  const { org, rank, total, d, s, best, labels, series, co } = ctx;
   const L = PAGE_MARGIN; const W = doc.page.width - PAGE_MARGIN * 2; const G = ORG_PAGE.gap;
   let y = doc.y;
 
@@ -1676,7 +1724,7 @@ const drawOrgPage = (doc, ctx) => {
   if (rank) stat(`#${rank} of ${total}`, 'by followers', L + W - 120);
   y += ORG_PAGE.banner + G;
 
-  // Row 1: social media + design headline figures
+  // Row 1: social media + the college's coordinators
   const lw = Math.round(W * 0.62); const rw = W - lw - G;
   const socialEmpty = !s || (!s.posts && !s.followers && !s.reach);
   const designEmpty = !d || !(d.requestsReceived || d.completed || d.pending || d.cancelled);
@@ -1684,25 +1732,18 @@ const drawOrgPage = (doc, ctx) => {
   panelHeader(doc, L, y, 'people', 'Social media');
   if (socialEmpty) emptyNote(doc, L, y + 18, lw, ORG_PAGE.row1 - 18, 'No social media activity recorded this period.');
   else {
-    metricRow(doc, L + 12, y + 33, lw - 24, [
+    metricRow(doc, L + 12, y + 46, lw - 24, [
       { value: fmt(s.followers), label: 'Followers' },
       { value: `${s.followerGrowth >= 0 ? '+' : ''}${fmt(s.followerGrowth)}`, label: 'Follower growth', accent: true },
       { value: fmt(s.posts), label: 'Posts published' },
       { value: fmt(s.reach), label: 'Reach' },
       { value: fmt(s.likes), label: 'Likes' },
-    ], 13.5);
+    ], 16);
   }
   const rx = L + lw + G;
   panel(doc, rx, y, rw, ORG_PAGE.row1);
-  panelHeader(doc, rx, y, 'palette', 'Design');
-  if (designEmpty) emptyNote(doc, rx, y + 18, rw, ORG_PAGE.row1 - 18, 'No design requests this period.');
-  else {
-    metricRow(doc, rx + 12, y + 33, rw - 24, [
-      { value: fmt(d.completed), unit: `/ ${fmt(d.requestsReceived)}`, label: 'Designs delivered' },
-      { value: d.onTimeRate == null ? '—' : String(d.onTimeRate), unit: d.onTimeRate == null ? '' : '%', label: 'Delivered on time' },
-      { value: fmt(d.pending), label: 'Design pending', accent: true },
-    ], 13.5);
-  }
+  panelHeader(doc, rx, y, 'person', 'Coordinators');
+  drawCoordinators(doc, rx, y, rw, ORG_PAGE.row1, co);
   y += ORG_PAGE.row1 + G;
 
   // Row 2: activity chart + best posts
@@ -1713,7 +1754,7 @@ const drawOrgPage = (doc, ctx) => {
   else {
     drawComboChart(doc, L + 12, y + 38, lw - 24, ORG_PAGE.row2 - 46, labels, [
       { name: 'Design requests raised', color: CATEGORICAL_COLORS[0], values: series.map((b) => b.requests) },
-      { name: 'Designs delivered', color: CATEGORICAL_COLORS[1], values: series.map((b) => b.delivered) },
+      { name: 'Designs completed', color: CATEGORICAL_COLORS[1], values: series.map((b) => b.delivered) },
       { name: 'Social posts published', color: CATEGORICAL_COLORS[2], values: series.map((b) => b.posts) },
     ]);
   }
@@ -1731,11 +1772,12 @@ const drawOrgPage = (doc, ctx) => {
   else {
     const ix = L + 12; const iw = lw3 - 24;
     metricRow(doc, ix, y + 36, iw, [
-      { value: fmt(d.requestsReceived + d.cancelled), label: 'request(s) raised' },
+      { value: fmt(d.requestsRaised), label: 'requests raised' },
       { value: fmt(d.designsCompleted), label: 'designs completed' },
+      { value: d.onTimeRate == null ? '—' : String(d.onTimeRate), unit: d.onTimeRate == null ? '' : '%', label: 'delivered on time' },
       { value: d.firstPassRate == null ? '—' : String(d.firstPassRate), unit: d.firstPassRate == null ? '' : '%', label: 'first-pass approval' },
-    ], 13);
-    const whole = Math.max(d.requestsReceived + d.cancelled, 1);
+    ], 12.5);
+    const whole = Math.max(d.requestsRaised, 1);
     const status = [
       ['Completed', d.designsCompleted],
       ...pendingStageItems(d.pendingByStage).map((st) => [`Pending: ${st.label.toLowerCase()}`, st.count]),
@@ -1751,10 +1793,12 @@ const drawOrgPage = (doc, ctx) => {
       doc.fontSize(6.8).font('Helvetica').fillColor(GREY).text(`${Math.round((count / whole) * 1000) / 10}%`, ix + labelW + barW + countW + 4, by + 0.5, { width: shareW, align: 'right', lineBreak: false });
       by += 13.5;
     });
-    const mixTop = y + 76 + 6 * 13.5 + 2;
+    const mixTop = by + 4;
     doc.moveTo(ix, mixTop).lineTo(ix + iw, mixTop).lineWidth(0.5).strokeColor(RULE).stroke();
     doc.fontSize(8).font('Helvetica-Bold').fillColor(NAVY).text('What was designed', ix, mixTop + 6, { lineBreak: false });
-    const mix = (d.mix || []).slice(0, 6);
+    // as many types as fit in what is left of the card (two per line)
+    const mixRoom = Math.max(1, Math.floor((y + ORG_PAGE.row3 - 10 - (mixTop + 20)) / 13));
+    const mix = (d.mix || []).slice(0, mixRoom * 2);
     if (!mix.length) {
       doc.fontSize(7.3).font('Helvetica-Oblique').fillColor(GREY).text('Nothing delivered yet this period.', ix, mixTop + 20, { lineBreak: false });
     }
@@ -1816,18 +1860,11 @@ const drawOrgPage = (doc, ctx) => {
         ty += 16;
       });
     }
-    // Publishing, always in the same place at the foot of the card
-    const pubY = y + ORG_PAGE.row3 - 44;
-    doc.moveTo(ix, pubY - 6).lineTo(ix + iw, pubY - 6).lineWidth(0.5).strokeColor(RULE).stroke();
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(NAVY).text('Publishing', ix, pubY + 4, { lineBreak: false });
-    if (!p || !(p.posted || p.scheduled)) {
-      doc.fontSize(7.4).font('Helvetica-Oblique').fillColor(GREY).text('No posting activity this period.', ix + 70, pubY + 5, { lineBreak: false });
-    } else {
-      metricRow(doc, ix + 66, pubY, iw - 66, [
-        { value: fmt(p.posted), label: 'published' },
-        { value: fmt(p.scheduled), label: 'scheduled' },
-      ], 12);
-    }
+    // A line on where these figures come from. (The old "Publishing" block counted only
+    // posts that went through t@g's own workflow — a different thing from the platform
+    // figures above it, and it never added up to them — so it is no longer printed.)
+    doc.fontSize(6.6).font('Helvetica-Oblique').fillColor('#9a4a58')
+      .text('Posts, likes, impressions and followers come from each platform\'s own analytics for this period.', ix, y + ORG_PAGE.row3 - 26, { width: iw, lineBreak: true });
   }
   y += ORG_PAGE.row3 + G;
 
@@ -2228,10 +2265,10 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   // to two weeks) or week by week, with what happened in each stretch.
   const tl = r.timeline;
   sectionTitle(doc, 'Report Timeline', 14 + TIMELINE_PANEL_H);
-  sectionSubtitle(doc, `What happened in each ${tl.granularity === 'day' ? 'day' : 'week'} of ${periodLabel} (${r.period.days} days). Each panel has its own scale; the darkest column is the busiest ${tl.granularity === 'day' ? 'day' : 'week'}.`);
+  sectionSubtitle(doc, `What happened in each ${tl.granularity === 'day' ? 'day' : 'week'} of ${periodLabel} (${r.period.days} days). Designs are counted in the ${tl.granularity === 'day' ? 'day' : 'week'} their request was raised. Each panel has its own scale; the darkest column is the busiest ${tl.granularity === 'day' ? 'day' : 'week'}.`);
   drawTimelinePanels(doc, tl.buckets.map(bucketLabel), [
     { name: 'Design requests raised', color: CATEGORICAL_COLORS[0], values: tl.buckets.map((b) => b.requests) },
-    { name: 'Designs delivered', color: CATEGORICAL_COLORS[1], values: tl.buckets.map((b) => b.delivered) },
+    { name: 'Designs completed', color: CATEGORICAL_COLORS[1], values: tl.buckets.map((b) => b.delivered) },
     { name: 'Social posts published', color: CATEGORICAL_COLORS[2], values: tl.buckets.map((b) => b.posts) },
   ]);
 
@@ -2247,13 +2284,13 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   // filling the grid with 0 / 0.
   const h = r.headline;
   const overviewCards = [
-    { label: 'Designs delivered', value: `${h.designsDelivered.value} / ${h.designsDelivered.of}`, color: ACCENT.orange },
+    { label: 'Requests raised', value: fmt(h.requestsRaised), color: ACCENT.orange },
+    { label: 'Designs completed', value: fmt(h.designsCompleted), color: ACCENT.sky },
+    { label: 'Design pending', value: fmt(h.designPending), color: ACCENT.navy },
+    { label: 'Design cancelled', value: fmt(h.designCancelled), color: ACCENT.slate },
     { label: 'Delivered on time', value: h.deliveredOnTimeRate == null ? '—' : `${h.deliveredOnTimeRate}%`, color: ACCENT.emerald },
     { label: 'Posts published', value: fmt(h.postsPublished), color: ACCENT.rose },
     { label: 'Likes', value: fmt(h.likes), color: ACCENT.indigo },
-    { label: 'Design pending', value: fmt(h.designPending), color: ACCENT.navy },
-    { label: 'Design cancelled', value: fmt(h.designCancelled), color: ACCENT.slate },
-    { label: 'Designs completed', value: fmt(h.designsCompleted), color: ACCENT.sky },
     { label: 'First-pass approval', value: h.firstPassRate == null ? '—' : `${h.firstPassRate}%`, color: ACCENT.emerald },
     { label: 'Avg revision rounds', value: dashOrText(h.avgRevisionRounds), color: ACCENT.amber },
     { label: 'Organic reach', value: fmt(h.organicReach), color: ACCENT.indigo },
@@ -2268,7 +2305,7 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
     ...(r.team.rows.length > 0 ? [{ label: 'Team tasks done', value: `${h.teamTasksDone.value} / ${h.teamTasksDone.of}`, color: ACCENT.orange }] : []),
   ];
   sectionTitle(doc, 'Overview', 14 + cardGridHeightOf(overviewCards.length));
-  sectionSubtitle(doc, `${fmt(h.postsPublished)} post(s) published and ${h.designsDelivered.value} design(s) delivered across ${r.organizations.length} institution(s) this period.`);
+  sectionSubtitle(doc, `${fmt(h.postsPublished)} post(s) published and ${fmt(h.designsCompleted)} design(s) completed across ${r.organizations.length} institution(s) this period.`);
   drawCardGrid(doc, overviewCards);
 
   const overallInsights = buildInsights(r);
@@ -2369,13 +2406,13 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
       rank: singleOrg ? null : audienceRank.get(orgKey(org)),
       total: orderedOrgs.length,
       d: rowFor('design', org),
-      p: rowFor('publishing', org),
+      co: rowFor('coordinators', org),
       s: rowFor('social', org),
       best: r.social.topPostsByOrg?.[orgKey(org)] || [],
       labels: r.timeline.buckets.map(bucketLabel),
       series: r.timeline.byOrg?.[orgKey(org)],
       insights: mergeBuckets([
-        designInsights(view, true), publishingInsights(view), socialInsights(view),
+        designInsights(view, true), socialInsights(view),
         ...(orgAdsActive ? [adsInsights(view, false)] : []),
         ...(w && w.tasksReceived > 0 ? [webInsights(view)] : []),
         ...(goals.length ? [goalInsights(view, asOf)] : []),

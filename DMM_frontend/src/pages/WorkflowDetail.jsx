@@ -7,6 +7,7 @@ import {
   CheckCircle2, UserCheck, CalendarClock, FileText, Paperclip, Clock3, Sparkles, Download,
 } from 'lucide-react';
 import { workflowApi } from '../api/endpoints.js';
+import { EditRequestModal, EditStatusBanner } from '../components/requests/EditRequest.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Badge, Avatar, Skeleton, Input, Textarea } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
@@ -544,6 +545,7 @@ export default function WorkflowDetail() {
   const [doneOpen, setDoneOpen] = useState(false);
   const [markPosted, setMarkPosted] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['workflow-item', id],
@@ -562,6 +564,7 @@ export default function WorkflowDetail() {
   };
   const fail = (e) => toast.error(e.response?.data?.message || 'That did not work');
 
+  const takeBackMut = useMutation({ mutationFn: () => workflowApi.withdrawEdit(id), onSuccess: () => done('Your change was taken back'), onError: fail });
   const ackMut = useMutation({ mutationFn: () => workflowApi.acknowledge(id), onSuccess: () => done('Acknowledged — it is yours now'), onError: fail });
   const submitMut = useMutation({ mutationFn: (payload) => workflowApi.submit(id, payload), onSuccess: () => done('Sent for approval'), onError: fail });
   const reviewMut = useMutation({ mutationFn: ({ action, feedbackPoints }) => workflowApi.review(id, action, feedbackPoints), onSuccess: () => done('Saved'), onError: fail });
@@ -615,6 +618,10 @@ export default function WorkflowDetail() {
 
         {/* Whatever this viewer's move is, at this stage. The server decides. */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* The coordinator who raised it can ask to change it, right here, until a designer takes it. */}
+          {can.requestEdit && (
+            <Button variant="outline" onClick={() => setEditOpen(true)}>Ask to change</Button>
+          )}
           {(can.acknowledgeDesign || can.acknowledgePost) && (
             <Button loading={ackMut.isPending} onClick={() => ackMut.mutate()}>
               <ThumbsUp className="h-4 w-4" /> Acknowledge
@@ -675,6 +682,22 @@ export default function WorkflowDetail() {
           )}
         </div>
       </div>
+
+      {editOpen && (
+        <EditRequestModal request={item} onClose={() => setEditOpen(false)}
+          onSent={() => { setEditOpen(false); done('Sent to the admin — nobody can pick this up until they decide'); }} />
+      )}
+
+      {/* The coordinator sees where their own change stands; everyone else sees that it is on hold. */}
+      {item.viewerRole?.amCoordinator && item.editRequest?.status && (
+        <div className="mb-5"><EditStatusBanner request={item} onTakeBack={() => takeBackMut.mutate()} taking={takeBackMut.isPending} /></div>
+      )}
+      {!item.viewerRole?.amCoordinator && item.editRequest?.status === 'PENDING' && (
+        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <p className="font-bold">The coordinator has asked to change this request</p>
+          <p className="mt-0.5">It can be picked up once an Admin approves or rejects the change.{item.editRequest.reason ? ` Reason given: ${item.editRequest.reason}` : ''}</p>
+        </div>
+      )}
 
       {/* The question the coordinator is actually being asked. */}
       {(can.acceptDesign || can.acceptPost) && (
@@ -745,11 +768,10 @@ export default function WorkflowDetail() {
                 {[item.workType === 'DIGITAL_MEDIA' ? 'Digital media' : 'Print media', item.workCategory, item.workItem].filter(Boolean).join(' · ') || '—'}
               </Detail>
               <Detail label="Department">{item.department || '—'}</Detail>
+              {item.designTier && <Detail label="Request class">{{ BASIC: 'Basic', MEDIUM: 'Medium', HEAVY: 'Heavy' }[item.designTier]}</Detail>}
               {item.designer?.name && <Detail label="Designer">{item.designer.name}</Detail>}
               {item.handler?.name && <Detail label="Social media handler">{item.handler.name}</Detail>}
               {item.neededBy && <Detail label="Needed by">{formatDate(item.neededBy)}</Detail>}
-              {item.designTier && <Detail label="Design class">{{ BASIC: 'Basic · 1–1.5 hrs', MEDIUM: 'Medium · 2–3 hrs', HEAVY: 'Heavy · 1–2 full working days' }[item.designTier]}</Detail>}
-              {item.earliestDeliveryAt && <Detail label="Earliest delivery">{formatDate(item.earliestDeliveryAt)}</Detail>}
               {/* Where the college said it goes — chosen when they accepted the design. */}
               {(item.postPlatforms?.length || 0) > 0 && (
                 <Detail label="Pages to post on">{item.postPlatforms.join(', ')}</Detail>

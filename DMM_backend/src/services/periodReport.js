@@ -10,7 +10,7 @@ import SocialPost from '../models/SocialPost.js';
 import LinkedInPost from '../models/LinkedInPost.js';
 import Goal from '../models/Goal.js';
 import User from '../models/User.js';
-import { APPROVAL_TYPES, PLATFORMS, ROLES } from '../config/constants.js';
+import { APPROVAL_TYPES, PLATFORMS, ROLES, USER_TYPES } from '../config/constants.js';
 
 /**
  * The Branding & Marketing period report, assembled from live data.
@@ -112,8 +112,11 @@ const designOutput = async (orgs, from, to) => {
     const turnarounds = done.map((r) => (finishedAt(r) ? (new Date(finishedAt(r)) - new Date(r.createdAt)) / DAY : null))
       .filter((n) => n != null);
 
+    // "What was designed" counts the same designs as "completed": the accepted ones
+    // and the ones waiting only on the coordinator's own accept.
+    const withCoordinatorRows = received.filter((r) => r.workflowStage === 'DESIGN_COORDINATOR_REVIEW');
     const ownMix = {};
-    for (const r of done) {
+    for (const r of [...done, ...withCoordinatorRows]) {
       const key = r.workItem || (r.workType === 'DIGITAL_MEDIA' ? 'Digital (unclassified)' : 'Print (unclassified)');
       mix[key] = (mix[key] || 0) + 1;
       ownMix[key] = (ownMix[key] || 0) + 1;
@@ -145,6 +148,7 @@ const designOutput = async (orgs, from, to) => {
     rows.push({
       organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
       requestsReceived,
+      requestsRaised: requestsReceived + cancelled.length,
       completed: done.length,
       // Designers have finished these too; they are only waiting on the coordinator.
       designsCompleted: done.length + withCoordinator,
@@ -159,12 +163,13 @@ const designOutput = async (orgs, from, to) => {
       avgRevisionRounds: done.length ? round(done.reduce((s, r) => s + resubmitsOf(r), 0) / done.length) : null,
       mix: Object.entries(ownMix)
         .sort((a, b) => b[1] - a[1])
-        .map(([label, count]) => ({ label, count, share: pct(count, done.length) })),
+        .map(([label, count]) => ({ label, count, share: pct(count, done.length + withCoordinatorRows.length) })),
     });
   }
 
   const totals = {
     requestsReceived: sum(rows, 'requestsReceived'),
+    requestsRaised: sum(rows, 'requestsRaised'),
     completed: sum(rows, 'completed'),
     designsCompleted: sum(rows, 'designsCompleted'),
     pending: sum(rows, 'pending'),
@@ -190,6 +195,47 @@ const designOutput = async (orgs, from, to) => {
     mix: Object.entries(mix)
       .sort((a, b) => b[1] - a[1])
       .map(([label, count]) => ({ label, count, share: pct(count, mixTotal) })),
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Coordinators — how many design requests each coordinator raised for their
+// college, and how many of those are completed. Counted with exactly the same
+// rules as designOutput (same window, postOnly asks excluded, "completed" =
+// accepted by the coordinator or waiting on the coordinator's own accept), so a
+// college's coordinators always add up to that college's design figures.
+// Requests raised by anyone who is not one of the college's own coordinators (an
+// admin, someone who has since left) are grouped as "other" rather than dropped.
+// ---------------------------------------------------------------------------
+const coordinatorOutput = async (orgs, from, to) => {
+  const rows = [];
+  for (const org of orgs) {
+    const requests = await InstitutionRequest.find({ organization: org._id, createdAt: inWindow(from, to), postOnly: { $ne: true } })
+      .select('raisedBy workflowStage designAcceptedAt').lean();
+    const owned = await User.find({ organization: org._id, role: ROLES.USER, userType: USER_TYPES.COORDINATOR, isActive: true })
+      .select('name').lean();
+    const blank = () => ({ requestsRaised: 0, designsCompleted: 0, cancelled: 0 });
+    const per = new Map(owned.map((u) => [String(u._id), { _id: u._id, name: u.name, ...blank() }]));
+    const other = blank();
+    for (const r of requests) {
+      const slot = per.get(String(r.raisedBy)) || other;
+      slot.requestsRaised += 1;
+      if (r.workflowStage === 'CANCELLED') { slot.cancelled += 1; continue; }
+      if (r.designAcceptedAt) slot.designsCompleted += 1;
+      if (r.workflowStage === 'DESIGN_COORDINATOR_REVIEW') slot.designsCompleted += 1;
+    }
+    const coordinators = [...per.values()].sort((a, b) => (b.requestsRaised - a.requestsRaised) || a.name.localeCompare(b.name));
+    rows.push({
+      organization: { _id: org._id, name: org.name, code: org.code || '', color: org.color || '' },
+      coordinators,
+      other: other.requestsRaised ? other : null,
+      requestsRaised: sum(coordinators, 'requestsRaised') + other.requestsRaised,
+      designsCompleted: sum(coordinators, 'designsCompleted') + other.designsCompleted,
+    });
+  }
+  return {
+    rows,
+    totals: { requestsRaised: sum(rows, 'requestsRaised'), designsCompleted: sum(rows, 'designsCompleted') },
   };
 };
 
@@ -774,9 +820,13 @@ const activityTimeline = async (orgs, from, to, platformFilter) => {
   }
   const includeLinkedIn = !platformFilter || platformFilter === 'LinkedIn';
 
-  const [requests, delivered, posts, liPosts] = await Promise.all([
-    InstitutionRequest.find({ organization: { $in: orgIds }, postOnly: { $ne: true }, createdAt: inWindow(from, to) }).select('organization createdAt').lean(),
-    InstitutionRequest.find({ organization: { $in: orgIds }, designAcceptedAt: inWindow(from, to) }).select('organization designAcceptedAt').lean(),
+  // Requests raised and designs completed are both counted in the week the request
+  // was RAISED, on the same rules as the design figures (postOnly asks excluded;
+  // completed = accepted by the coordinator or waiting on the coordinator), so the
+  // charts add up to the totals instead of drifting from them.
+  const [requests, posts, liPosts] = await Promise.all([
+    InstitutionRequest.find({ organization: { $in: orgIds }, postOnly: { $ne: true }, createdAt: inWindow(from, to) })
+      .select('organization createdAt workflowStage designAcceptedAt').lean(),
     SocialPost.find({ organization: { $in: orgIds }, publishedAt: inWindow(from, to), ...(platformFilter ? { platform: platformFilter } : {}) }).select('organization publishedAt').lean(),
     includeLinkedIn ? LinkedInPost.find({ organization: { $in: orgIds }, createdDate: inWindow(from, to) }).select('organization createdDate').lean() : [],
   ]);
@@ -795,7 +845,8 @@ const activityTimeline = async (orgs, from, to, platformFilter) => {
     }
   };
   tally(requests, (r) => r.createdAt, 'requests');
-  tally(delivered, (r) => r.designAcceptedAt, 'delivered');
+  const completedUnits = (r) => (r.workflowStage === 'CANCELLED' ? 0 : (r.designAcceptedAt ? 1 : 0) + (r.workflowStage === 'DESIGN_COORDINATOR_REVIEW' ? 1 : 0));
+  tally(requests.flatMap((r) => Array.from({ length: completedUnits(r) }, () => r)), (r) => r.createdAt, 'delivered');
   tally(posts, (p) => p.publishedAt, 'posts');
   tally(liPosts, (p) => p.createdDate, 'posts');
 
@@ -823,7 +874,7 @@ export const buildPeriodReport = async ({ from, to, orgIds, platform } = {}) => 
   }
   const orgs = await Organization.find(query).select('name code color').sort({ name: 1 }).lean();
 
-  const [design, web, social, ads, team, publishing, goals, timeline] = await Promise.all([
+  const [design, web, social, ads, team, publishing, goals, timeline, coordinators] = await Promise.all([
     designOutput(orgs, from, to),
     webDevelopment(orgs, from, to),
     socialOrganic(orgs, from, to, platform),
@@ -832,11 +883,13 @@ export const buildPeriodReport = async ({ from, to, orgIds, platform } = {}) => 
     publishingPipeline(orgs, from, to),
     goalAttainment(orgs, from, to),
     activityTimeline(orgs, from, to, platform),
+    coordinatorOutput(orgs, from, to),
   ]);
 
   // The headline tiles, taken straight off the five parts so they can never
   // disagree with the tables under them.
   const headline = {
+    requestsRaised: design.totals.requestsRaised,
     designsDelivered: { value: design.totals.completed, of: design.totals.requestsReceived },
     deliveredOnTimeRate: design.totals.onTimeRate,
     webTasksDone: { value: web.totals.completed, of: web.totals.tasksReceived },
@@ -880,6 +933,7 @@ export const buildPeriodReport = async ({ from, to, orgIds, platform } = {}) => 
     ads,
     team,
     publishing,
+    coordinators,
     goals,
     timeline,
     gaps,

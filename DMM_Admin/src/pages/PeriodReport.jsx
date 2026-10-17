@@ -293,7 +293,7 @@ export default function PeriodReport() {
         <div className="space-y-5">
           {/* Headline */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-            <Tile label="Designs delivered" value={formatNumber(h.designsDelivered.value)} sub={`/${h.designsDelivered.of}`} accent="text-brand-600 dark:text-brand-400" />
+            <Tile label="Requests raised" value={formatNumber(h.requestsRaised)} accent="text-brand-600 dark:text-brand-400" />
             <Tile label="Delivered on time" value={h.deliveredOnTimeRate == null ? '—' : `${h.deliveredOnTimeRate}%`} accent="text-emerald-600 dark:text-emerald-400" />
             <Tile label="Web tasks done" value={formatNumber(h.webTasksDone.value)} sub={`/${h.webTasksDone.of}`} accent="text-sky-600 dark:text-sky-400" />
             <Tile label="Posts published" value={formatNumber(h.postsPublished)} accent="text-rose-600 dark:text-rose-400" />

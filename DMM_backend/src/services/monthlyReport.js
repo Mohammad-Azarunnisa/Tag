@@ -35,7 +35,7 @@ const nf = (n) => Number(n || 0).toLocaleString('en-IN');
 const summarise = (r) => {
   const h = r.headline;
   const lines = [
-    `${h.designsDelivered.value} of ${h.designsDelivered.of} designs delivered`,
+    `${h.designsCompleted} of ${h.requestsRaised} designs completed`,
     h.deliveredOnTimeRate == null ? null : `${h.deliveredOnTimeRate}% on time`,
     `${h.webTasksDone.value} of ${h.webTasksDone.of} web tasks done`,
     `${nf(h.postsPublished)} posts published`,

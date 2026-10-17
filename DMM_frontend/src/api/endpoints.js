@@ -304,6 +304,9 @@ export const workflowApi = {
   list: (params) => api.get('/workflow', { params }).then((r) => r.data),
   get: (id) => api.get(`/workflow/${id}`).then((r) => r.data),
   acknowledge: (id) => api.put(`/workflow/${id}/acknowledge`).then((r) => r.data),
+  // A coordinator asking an Admin to let them change a request nobody has taken yet.
+  requestEdit: (id, { reason, changes }) => api.post(`/workflow/${id}/edit-request`, { reason, changes }).then((r) => r.data),
+  withdrawEdit: (id) => api.delete(`/workflow/${id}/edit-request`).then((r) => r.data),
   // Files are the finished design on the design half, extra media on the post half.
   submit: (id, { files = [], caption, description, hashtags, note } = {}) => {
     const fd = new FormData();

@@ -370,6 +370,8 @@ export const workflowApi = {
   // Pulling a request back before a designer or handler has acknowledged it —
   // the console's own intervention point, gone once someone has taken it on.
   cancel: (id, reason) => api.put(`/workflow/${id}/cancel`, { reason }).then((r) => r.data),
+  // Approve or reject a coordinator's request to change a request nobody has taken yet.
+  decideEdit: (id, action, note) => api.put(`/workflow/${id}/edit-request/decide`, { action, note }).then((r) => r.data),
 };
 
 // ---- People directory: student and faculty photos + details ----

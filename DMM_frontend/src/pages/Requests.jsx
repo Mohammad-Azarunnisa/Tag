@@ -7,10 +7,12 @@ import {
   IndianRupee, Users, FileImage, ShieldCheck, KeyRound, CircleHelp, CalendarClock,
   Paperclip, ExternalLink, List, LayoutGrid, Send, Palette, Sparkles, Download, AlertTriangle,
 } from 'lucide-react';
-import { institutionRequestApi, organizationApi, turnaroundApi } from '../api/endpoints.js';
+import { institutionRequestApi, organizationApi, turnaroundApi, holidayApi, workflowApi } from '../api/endpoints.js';
 import { useAuthStore } from '../store/authStore.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
+import DateCalendarPicker from '../components/ui/DateCalendarPicker.jsx';
+import { EditRequestModal, EditStatusBanner } from '../components/requests/EditRequest.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState, Avatar } from '../components/ui/primitives.jsx';
 import { cn, formatBytes, formatDate, formatDateTime, timeAgo, downloadAllAttachments, isCoordinatorUser } from '../lib/utils.js';
@@ -201,17 +203,16 @@ const TIER_STYLE = {
   MEDIUM: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
   HEAVY: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
 };
-const prettyDate = (key) => new Date(`${key}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+const isSundayKey = (key) => new Date(`${key}T00:00:00Z`).getUTCDay() === 0;
 
-// What the portal makes of the chosen design: how big a job it is, how long the
-// design itself takes, and the first day it can be delivered.
+// Tells the coordinator which class their request falls in. (The design time and
+// the delivery date are deliberately not shown.)
 function TurnaroundPanel({ plan }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-sm dark:border-slate-800 dark:bg-slate-900/50">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <span className="text-slate-600 dark:text-slate-300">This is a</span>
       <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', TIER_STYLE[plan.tier])}>{plan.tierLabel} request</span>
-      <span className="text-slate-600 dark:text-slate-300">Design time: <b>{plan.designTime}</b></span>
-      <span className="text-slate-600 dark:text-slate-300">Earliest delivery: <b>{prettyDate(plan.earliestDelivery)}</b></span>
-      <span className="basis-full text-xs text-slate-400">Minimum {plan.minWorkingDays} working days (Monday to Saturday) — Sundays and holidays are skipped.</span>
+      <span className="basis-full text-xs text-slate-400">Choose a "Needed by" date at least {plan.minWorkingDays} working days ahead — Sundays and holidays can't be selected.</span>
     </div>
   );
 }
@@ -231,6 +232,7 @@ export default function Requests() {
   // The card is a summary; this is the whole brief as it was sent, including the
   // reference files, which the list has no room for.
   const [viewing, setViewing] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['institution-requests', status],
@@ -454,6 +456,7 @@ export default function Requests() {
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <StatusChip status={r.status} />
+                          {r.editRequest?.status === 'PENDING' && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Change requested</span>}
                           {r.postOnly && <PostOnlyBadge />}
                         </div>
                       </td>
@@ -542,6 +545,7 @@ export default function Requests() {
                       </span>
                     )}
                     <StatusChip status={r.status} />
+                    {r.editRequest?.status === 'PENDING' && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Change requested</span>}
                     {r.postOnly && <PostOnlyBadge />}
                   </div>
                 </div>
@@ -599,6 +603,9 @@ export default function Requests() {
       {viewing && (
         <RequestDetailModal
           request={viewing}
+          canAskEdit={canRaise && stillOpen(viewing) && String(viewing.raisedBy?._id || viewing.raisedBy) === String(user?._id) && viewing.editRequest?.status !== 'PENDING'}
+          onAskEdit={() => setEditing(viewing)}
+          onTakeBack={async () => { try { await workflowApi.withdrawEdit(viewing._id); toast.success('Your change was taken back'); setViewing(null); refresh(); } catch (e) { toast.error(e.response?.data?.message || 'Could not take that back'); } }}
           canWithdraw={canRaise && stillOpen(viewing) && String(viewing.raisedBy?._id) === String(user?._id)}
           withdrawing={withdrawMut.isPending}
           onWithdraw={() => {
@@ -609,6 +616,8 @@ export default function Requests() {
           onClose={() => setViewing(null)}
         />
       )}
+
+      {editing && <EditRequestModal request={editing} onClose={() => setEditing(null)} onSent={() => { setEditing(null); setViewing(null); refresh(); }} />}
 
       {asking && <AskModal onClose={() => setAsking(false)} onSaved={() => { setAsking(false); refresh(); }} />}
     </div>
@@ -644,7 +653,7 @@ const Detail = ({ label, children }) => (
  * reply once it comes. Read-only apart from withdrawing, which is the only thing
  * the person who raised it can still change while it is open.
  */
-function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, onClose }) {
+function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, canAskEdit, onAskEdit, onTakeBack, onClose }) {
   const files = attachmentsOf(r);
   const images = files.filter(isImageAttachment);
   const others = files.filter((a) => !isImageAttachment(a));
@@ -667,6 +676,8 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
               quote when they ask why something took as long as it did. */}
           <span className="text-xs text-slate-400">Raised {formatDateTime(r.createdAt)} · {timeAgo(r.createdAt)}</span>
         </div>
+
+        <EditStatusBanner request={r} onTakeBack={onTakeBack} />
 
         <div className="grid gap-4 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/50 sm:grid-cols-2">
           <Detail label="Raised on">{formatDateTime(r.createdAt)}</Detail>
@@ -764,6 +775,9 @@ function RequestDetailModal({ request: r, canWithdraw, withdrawing, onWithdraw, 
         )}
 
         <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+          {canAskEdit && (
+            <Button type="button" variant="outline" onClick={onAskEdit}>Ask to change</Button>
+          )}
           {canWithdraw && (
             <Button type="button" variant="ghost" disabled={withdrawing} onClick={onWithdraw}>
               <Trash2 className="h-4 w-4 text-rose-500" /> Withdraw
@@ -908,7 +922,8 @@ function AskModal({ onClose, onSaved }) {
     onError: (e) => toast.error(e.response?.data?.message || 'Could not send that'),
   });
 
-  // The job's class, design time and earliest delivery date, as soon as a design type is picked.
+  // The job's class, as soon as a design type is picked. The earliest date it can be
+  // needed by is used to block earlier dates in the picker, without being displayed.
   const planWorkItem = !postOnly ? (form.workType === 'DIGITAL_MEDIA' ? selectedDigitalItem : form.workItem) : '';
   const { data: planData } = useQuery({
     queryKey: ['turnaround-plan', planWorkItem, form.workCategory],
@@ -917,6 +932,29 @@ function AskModal({ onClose, onSaved }) {
     staleTime: 60000,
   });
   const plan = planData?.plan;
+  // Holidays, so they can't be picked either.
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const holidayEnd = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+  const { data: holidayData } = useQuery({
+    queryKey: ['holidays-range', todayKey],
+    queryFn: () => holidayApi.list({ from: todayKey, to: holidayEnd }),
+    staleTime: 600000,
+  });
+  const holidayKeys = new Set((holidayData?.holidays || []).map((h) => h.date));
+  const holidayName = (key) => (holidayData?.holidays || []).find((h) => h.date === key)?.name;
+  // Why a day can't be chosen — shown when the coordinator hovers over it in the calendar.
+  const blockedReason = (key) => {
+    if (isSundayKey(key)) return 'Sunday';
+    if (holidayKeys.has(key)) return holidayName(key) || 'Holiday';
+    if (plan?.earliestDelivery && key < plan.earliestDelivery) return 'Too soon for this request';
+    return null;
+  };
+  const pickNeededBy = (value) => {
+    if (value && isSundayKey(value)) { toast.error('Sundays cannot be selected — please pick another day.'); return; }
+    if (value && holidayKeys.has(value)) { toast.error(`${holidayName(value) || 'That day'} is a holiday — please pick another day.`); return; }
+    if (value && plan?.earliestDelivery && value < plan.earliestDelivery) { toast.error('That date is too soon for this request — please pick a later date.'); return; }
+    setForm((f) => ({ ...f, neededBy: value }));
+  };
 
   const summary = postOnly
     ? `Social Media Posting · ${form.postItem}`
@@ -928,6 +966,8 @@ function AskModal({ onClose, onSaved }) {
     e.preventDefault();
     if (!form.title.trim()) { toast.error('Add a title for this request'); return; }
     if (!form.department.trim()) { toast.error('Add the department that needs this'); return; }
+    if (!form.neededBy) { toast.error('Choose the date you need this by'); return; }
+    if (isSundayKey(form.neededBy) || holidayKeys.has(form.neededBy)) { toast.error('That day is a Sunday or holiday — please pick another day.'); return; }
     if (form.event && (!form.eventName.trim() || !form.eventDate || !form.place.trim() || !form.eventCoordinatorName.trim())) {
       toast.error('Fill in the event details');
       return;
@@ -1081,10 +1121,8 @@ function AskModal({ onClose, onSaved }) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <Input label="Needed by (optional)" type="date" value={form.neededBy}
-              min={plan?.earliestDelivery || new Date().toISOString().slice(0, 10)}
-              onChange={(e) => setForm({ ...form, neededBy: e.target.value })} />
-            {plan && <p className="mt-1 text-xs text-slate-400">Earliest possible: <b className="text-slate-600 dark:text-slate-300">{prettyDate(plan.earliestDelivery)}</b></p>}
+            <DateCalendarPicker label="Needed by" value={form.neededBy} blockedReason={blockedReason}
+              onChange={(key) => pickNeededBy(key)} />
           </div>
           <div />
         </div>

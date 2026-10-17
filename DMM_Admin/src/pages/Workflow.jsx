@@ -11,7 +11,7 @@ import { Button } from '../components/ui/Button.jsx';
 import { useAuthStore } from '../store/authStore.js';
 import { CancelConfirmModal } from './WorkflowDetail.jsx';
 import { Card, EmptyState, Input, Select, Skeleton, Avatar } from '../components/ui/primitives.jsx';
-import { cn, formatDate, inDateRange, timeAgo, useSessionState } from '../lib/utils.js';
+import { cn, formatDate, inDateRange, timeAgo, useSessionState, lgCols } from '../lib/utils.js';
 
 // The console's job on these boards is oversight plus the two approval gates —
 // everything that moves the work is done by the people doing it.
@@ -147,7 +147,7 @@ export default function Workflow({ board = 'DESIGN' }) {
         </div>
       )}
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className={cn('mb-5 grid gap-3 sm:grid-cols-3', lgCols(cfg.stages.length))}>
         {cfg.stages.map((s) => {
           const meta = STAGE_META[s];
           const active = filters.stage === s;
@@ -221,6 +221,9 @@ export default function Workflow({ board = 'DESIGN' }) {
                         <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-400">
                           <Flame className="h-3 w-3" /> {i.priority === 'URGENT' ? 'Urgent' : 'High'}
                         </span>
+                      )}
+                      {i.editRequest?.status === 'PENDING' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Edit requested — decide</span>
                       )}
                       {/* The portal's class for this design — Basic / Medium / Heavy — and how long it takes. */}
                       {i.designTier && (

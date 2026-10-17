@@ -106,7 +106,8 @@ test('a design request cannot be needed earlier than its earliest delivery date'
   if (tomorrow < plan.earliestDelivery) {
     const early = await mk(tomorrow);
     assert.equal(early.status, 400);
-    assert.match(early.json.message, /earliest delivery date/i);
+    assert.match(early.json.message, /too soon|sunday or a holiday/i);
+    assert.doesNotMatch(early.json.message, /\d{4}-\d{2}-\d{2}|working days|hrs/i);
   }
   const fine = await mk(plan.earliestDelivery);
   assert.equal(fine.status, 201);
@@ -135,4 +136,44 @@ test('several holidays can be added in one go, all-or-nothing, and re-adding a d
   const nov = await call(coord, '/api/holidays?month=2026-11');
   assert.equal(nov.json.holidays.find((h) => h.date === '2026-11-01').name, 'Kannada Rajyotsava');
   assert.equal((await call(coord, '/api/holidays', { method: 'POST', body: { holidays: [{ date: '2026-12-05', name: 'x' }] } })).status, 403);
+});
+
+test('"Needed by" is required on every request', async () => {
+  const f = new FormData();
+  Object.entries({ workType: 'PRINT_MEDIA', workCategory: 'Print', workItem: 'Posters', title: 'No date', department: 'X' }).forEach(([k, v]) => f.append(k, v));
+  const r = await fetch(`${origin}/api/requests`, { method: 'POST', headers: { Authorization: `Bearer ${coord}` }, body: f });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).message, /date you need this by/i);
+});
+
+test('"Needed by" cannot be a Sunday or a holiday', async () => {
+  const mk = (neededBy) => {
+    const f = new FormData();
+    Object.entries({ workType: 'PRINT_MEDIA', workCategory: 'Print', workItem: 'Posters', title: 'Dates', department: 'X', neededBy }).forEach(([k, v]) => f.append(k, v));
+    return fetch(`${origin}/api/requests`, { method: 'POST', headers: { Authorization: `Bearer ${coord}` }, body: f }).then(async (r) => ({ status: r.status, json: await r.json() }));
+  };
+  // a Sunday well in the future (2030-01-06 is a Sunday)
+  const sunday = await mk('2030-01-06');
+  assert.equal(sunday.status, 400);
+  assert.match(sunday.json.message, /sunday or a holiday/i);
+  // a holiday set by the super admin
+  await call(su, '/api/holidays', { method: 'POST', body: { date: '2030-02-05', name: 'Test holiday' } });
+  const hol = await mk('2030-02-05');
+  assert.equal(hol.status, 400);
+  assert.match(hol.json.message, /sunday or a holiday/i);
+  // an ordinary working day is fine
+  const ok = await mk('2030-02-06');
+  assert.equal(ok.status, 201);
+});
+
+test('raised on a Sunday before a holiday run, the two design days only start on the next working day', () => {
+  // Sunday 18 Oct 2026, Dussehra 19–21: Thursday 22 is the first working day, so
+  // Thursday and Friday are the two days to design and Saturday 24 is the earliest.
+  const holidays = new Set(['2026-10-19', '2026-10-20', '2026-10-21']);
+  const plan = planDesign({ workItem: 'Banners (Indoor & Outdoor)', raisedAt: new Date('2026-10-18T05:00:00Z'), holidays });
+  assert.equal(plan.earliestDelivery, '2026-10-24');
+  // Raised on an ordinary Monday it is still Wednesday.
+  assert.equal(planDesign({ workItem: 'Posters', raisedAt: new Date('2026-10-05T06:00:00Z'), holidays: new Set() }).earliestDelivery, '2026-10-07');
+  // Raised on a plain Sunday with no holidays: Monday is day zero, Wednesday the earliest.
+  assert.equal(planDesign({ workItem: 'Posters', raisedAt: new Date('2026-10-11T06:00:00Z'), holidays: new Set() }).earliestDelivery, '2026-10-14');
 });

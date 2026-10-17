@@ -100,6 +100,20 @@ const institutionRequestSchema = new mongoose.Schema(
     // on, skipping Sundays and holidays. Fixed at raise time.
     designTier: { type: String, enum: ['BASIC', 'MEDIUM', 'HEAVY', ''], default: '' },
     earliestDeliveryAt: { type: Date },
+    // A coordinator's request to change this ask. Allowed only while nobody has
+    // acknowledged it, and only with an Admin's or the super admin's say-so: while one
+    // is PENDING a designer cannot take the work, and on APPROVED the proposed
+    // `changes` are applied to the request.
+    editRequest: {
+      status: { type: String, enum: ['', 'PENDING', 'APPROVED', 'REJECTED'], default: '' },
+      reason: { type: String, default: '' },
+      changes: { type: mongoose.Schema.Types.Mixed, default: undefined },
+      requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      requestedAt: { type: Date },
+      decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      decidedAt: { type: Date },
+      decisionNote: { type: String, default: '' },
+    },
     status: { type: String, enum: REQUEST_STATUS, default: 'OPEN', index: true },
     raisedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     linkedApproval: { type: mongoose.Schema.Types.ObjectId, ref: 'ApprovalRequest', default: null, index: true },

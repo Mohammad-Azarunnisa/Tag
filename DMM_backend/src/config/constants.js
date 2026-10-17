@@ -184,6 +184,9 @@ export const NOTIFICATION_TYPES = {
   // account failed — the request stays APPROVED rather than falsely showing
   // as posted, and this is the only signal anyone gets that it needs a look.
   PUBLISH_FAILED: 'PUBLISH_FAILED',
+  // A coordinator asks to change a request before a designer has picked it up, and the answer.
+  EDIT_REQUESTED: 'EDIT_REQUESTED',
+  EDIT_DECIDED: 'EDIT_DECIDED',
   // Someone booked a photographer's slot — sent to the photographer.
   PHOTOGRAPHER_BOOKED: 'PHOTOGRAPHER_BOOKED',
 };

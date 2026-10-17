@@ -113,6 +113,7 @@ const raiseRequest = async ({
   fd.append('workCategory', workCategory);
   fd.append('workItem', workItem);
   fd.append('department', 'CSE');
+  fd.append('neededBy', new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10)); // required on every request
   const isSocial = workType === 'DIGITAL_MEDIA' && (workCategory === 'Social Media' || workItem === 'Animated Social Media Posts');
   if (isSocial) platforms.forEach((p) => fd.append('platforms', p));
   const res = await fetch(`${origin}/api/requests`, {
@@ -184,6 +185,7 @@ test('a coordinator cannot raise another request while an earlier one awaits the
   fd.append('workCategory', 'Social Media');
   fd.append('workItem', 'Social Media Posts');
   fd.append('department', 'CSE');
+  fd.append('neededBy', new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10));
   fd.append('platforms', 'LinkedIn');
   const res = await fetch(`${origin}/api/requests`, { method: 'POST', headers: { Authorization: `Bearer ${tok.coordinator}` }, body: fd });
   assert.equal(res.status, 409);

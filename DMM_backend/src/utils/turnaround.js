@@ -94,7 +94,13 @@ export const workingDaysBetween = (fromKey, toKey, holidays = new Set()) => {
 export const planDesign = ({ workItem, workCategory, raisedAt = new Date(), holidays = new Set() }) => {
   const tier = classifyDesign({ workItem, workCategory });
   const raisedKey = istDateKey(raisedAt);
-  const earliestKey = addWorkingDays(raisedKey, MIN_WORKING_DAYS, holidays);
+  // The two working days of design start on the first working day. A request raised on a
+  // Sunday or a holiday does not start until the next working day, so that day is day zero
+  // (raised on Sunday with Mon–Wed off, the days to design are Thu and Fri, and the
+  // earliest delivery is the Saturday after) rather than being counted as day one.
+  let startKey = raisedKey;
+  while (!isWorkingDay(startKey, holidays)) startKey = addDaysKey(startKey, 1);
+  const earliestKey = addWorkingDays(startKey, MIN_WORKING_DAYS, holidays);
   return {
     tier: tier.key,
     tierLabel: tier.label,
