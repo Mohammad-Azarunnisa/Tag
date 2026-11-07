@@ -60,8 +60,9 @@ export const updatePurchase = asyncHandler(async (req, res) => {
 
 // @route DELETE /api/purchases/:id  (ADMIN)
 export const deletePurchase = asyncHandler(async (req, res) => {
-  const orgId = requireOrgId(req, res);
-  const doc = await Purchase.findOneAndDelete({ _id: req.params.id, organization: orgId });
+  // Super admin only (route), and the id alone identifies the item — which lets the
+  // all-organizations roll-up delete a row without first picking its college.
+  const doc = await Purchase.findByIdAndDelete(req.params.id);
   if (!doc) { res.status(404); throw new Error('Purchase not found'); }
   res.json({ success: true, id: req.params.id });
 });

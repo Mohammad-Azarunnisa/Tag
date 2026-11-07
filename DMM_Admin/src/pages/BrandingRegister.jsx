@@ -7,6 +7,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, EmptyState, Input, Select, Skeleton } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
+import ConfirmDelete from '../components/ui/ConfirmDelete.jsx';
 
 const CATEGORIES = [
   { value: 'FRAME', label: 'Frames' },
@@ -25,6 +26,7 @@ export default function BrandingRegister() {
   const [filters, setFilters] = useState({ category: 'FRAME', search: '' });
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['branding-register', filters],
@@ -44,6 +46,7 @@ export default function BrandingRegister() {
     mutationFn: (id) => brandingRegisterApi.remove(id),
     onSuccess: () => {
       toast.success('Item removed');
+      setToDelete(null);
       qc.invalidateQueries({ queryKey: ['branding-register'] });
     },
     onError: (e) => toast.error(e.response?.data?.message || 'Delete failed'),
@@ -129,7 +132,7 @@ export default function BrandingRegister() {
                         <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" onClick={() => setEditItem(r)}>
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button className="rounded-lg p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => removeMut.mutate(r._id)}>
+                        <button className="rounded-lg p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => setToDelete(r._id)}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -142,6 +145,7 @@ export default function BrandingRegister() {
         </Card>
       )}
 
+      <ConfirmDelete open={!!toDelete} loading={removeMut.isPending} onCancel={() => setToDelete(null)} onConfirm={() => removeMut.mutate(toDelete)} />
       {showAdd && <AddRegisterModal category={filters.category} signageLocations={signageLocations} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); qc.invalidateQueries({ queryKey: ['branding-register'] }); }} />}
       {editItem && <EditRegisterModal item={editItem} signageLocations={signageLocations} onClose={() => setEditItem(null)} onSaved={() => { setEditItem(null); qc.invalidateQueries({ queryKey: ['branding-register'] }); }} />}
     </div>

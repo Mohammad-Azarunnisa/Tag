@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Download, ArrowLeft, FileWarning } from 'lucide-react';
+import { Download, ArrowLeft, FileWarning, FolderOpen, Trash2, RefreshCw, History } from 'lucide-react';
 import { periodReportApi, organizationApi } from '../../api/endpoints.js';
 import { Modal } from '../ui/Modal.jsx';
 import { Button } from '../ui/Button.jsx';
 import { Input, Select } from '../ui/primitives.jsx';
+import ConfirmDelete from '../ui/ConfirmDelete.jsx';
+import { useAuthStore } from '../../store/authStore.js';
 
 // Same windows the report page itself offers, worded the way the export dialog
 // asks for them ("Previous" rather than "Last").
@@ -41,6 +43,9 @@ const readErrorMessage = async (err) => {
   return err?.response?.data?.message || 'Could not generate the PDF.';
 };
 
+const stampOf = (iso) => new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+const dayOf = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
 const initialState = {
   preset: 'this-month',
   from: '',
@@ -60,7 +65,12 @@ export function BmReportPdfModal({ open, onClose }) {
   const [filters, setFilters] = useState(initialState);
   const [generating, setGenerating] = useState(false);
   const [formError, setFormError] = useState('');
-  const [pdf, setPdf] = useState(null); // { url, filename }
+  const [pdf, setPdf] = useState(null); // { url, filename, reused, savedAt, partial }
+  const qc = useQueryClient();
+  const { user } = useAuthStore();
+  const isSuper = !!user?.isSuperAdmin; // only the super admin's reports are kept
+  const [openingId, setOpeningId] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
 
   const { data: orgData } = useQuery({
     queryKey: ['bm-pdf-orgs'],
@@ -69,6 +79,13 @@ export function BmReportPdfModal({ open, onClose }) {
     staleTime: 60_000,
   });
   const organizations = orgData?.organizations || [];
+
+  const { data: savedData } = useQuery({
+    queryKey: ['bm-saved-reports'],
+    queryFn: periodReportApi.savedList,
+    enabled: open && isSuper,
+  });
+  const savedReports = savedData?.reports || [];
 
   // Reset everything once the dialog is fully closed, so re-opening it never
   // shows a stale preview or a previous run's filters.
@@ -99,15 +116,16 @@ export function BmReportPdfModal({ open, onClose }) {
     return { query: q };
   };
 
-  const generate = async () => {
+  const generate = async ({ fresh = false } = {}) => {
     const { query, error } = buildQuery();
     if (error) { setFormError(error); return; }
     setFormError('');
     setGenerating(true);
     try {
-      const { blob, filename } = await periodReportApi.exportPdf(query);
+      const res = await periodReportApi.exportPdf(fresh ? { ...query, fresh: 1 } : query);
       if (pdf?.url) URL.revokeObjectURL(pdf.url);
-      setPdf({ url: URL.createObjectURL(blob), filename });
+      setPdf({ url: URL.createObjectURL(res.blob), filename: res.filename, reused: res.reused, savedAt: res.savedAt, partial: res.partial });
+      qc.invalidateQueries({ queryKey: ['bm-saved-reports'] });
       setStep('preview');
     } catch (err) {
       setFormError(await readErrorMessage(err));
@@ -127,7 +145,26 @@ export function BmReportPdfModal({ open, onClose }) {
 
   const editFilters = () => setStep('config');
 
+  // Open a report that was kept earlier, exactly as it was saved.
+  const openSaved = async (id) => {
+    setOpeningId(id);
+    try {
+      const res = await periodReportApi.savedOpen(id);
+      if (pdf?.url) URL.revokeObjectURL(pdf.url);
+      setPdf({ url: URL.createObjectURL(res.blob), filename: res.filename, reused: true, savedAt: res.savedAt, partial: res.partial });
+      setStep('preview');
+    } catch (err) { setFormError(await readErrorMessage(err)); }
+    finally { setOpeningId(null); }
+  };
+
+  const removeSaved = async () => {
+    const id = toDelete; setToDelete(null);
+    try { await periodReportApi.savedRemove(id); toast.success('Saved report removed'); qc.invalidateQueries({ queryKey: ['bm-saved-reports'] }); }
+    catch (err) { toast.error(err?.response?.data?.message || 'Could not remove it'); }
+  };
+
   return (
+    <>
     <Modal open={open} onClose={onClose} size="lg"
       title={step === 'config' ? 'Download B&M Report' : 'Preview — B&M Report'}>
       {step === 'config' ? (
@@ -174,15 +211,55 @@ export function BmReportPdfModal({ open, onClose }) {
             </div>
           )}
 
+          {isSuper && (
+            <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
+              <History className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
+              Reports you generate are saved. Asking for the same dates, organisation and social media again opens the saved copy instead of building a new one.
+            </p>
+          )}
+
           <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button loading={generating} disabled={generating} onClick={generate}>
+            <Button loading={generating} disabled={generating} onClick={() => generate()}>
               {generating ? 'Generating PDF…' : 'Generate PDF'}
             </Button>
           </div>
+
+          {isSuper && savedReports.length > 0 && (
+            <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Saved reports ({savedReports.length})</p>
+              <ul className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                {savedReports.map((s) => (
+                  <li key={s._id} className="flex items-center gap-2 rounded-xl border border-slate-100 px-3 py-2 text-sm dark:border-slate-800">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-slate-700 dark:text-slate-200">{dayOf(s.from)} – {dayOf(s.to)}</p>
+                      <p className="truncate text-xs text-slate-400">
+                        {s.organizationLabel} · {s.platform || 'All social media'} · saved {stampOf(s.updatedAt)}{s.generatedByName ? ` by ${s.generatedByName}` : ''}
+                      </p>
+                    </div>
+                    <Button size="sm" variant="outline" loading={openingId === s._id} onClick={() => openSaved(s._id)}><FolderOpen className="h-3.5 w-3.5" /> Open</Button>
+                    <button type="button" onClick={() => setToDelete(s._id)} aria-label="Remove saved report" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
+          {pdf?.savedAt && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-800 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-200">
+              <History className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1">
+                {pdf.reused ? 'Opened from the saved copy' : 'Saved —'} made {stampOf(pdf.savedAt)}.
+                {pdf.partial ? ' The period was still running then, so the figures may have moved since.' : ''}
+                {!pdf.reused ? ' Asking for the same report again will open this copy.' : ''}
+              </span>
+              {isSuper && (
+                <Button size="sm" variant="outline" loading={generating} onClick={() => generate({ fresh: true })}><RefreshCw className="h-3.5 w-3.5" /> Generate a new copy</Button>
+              )}
+            </div>
+          )}
           {pdf?.url && (
             <iframe title="B&M Report PDF preview" src={pdf.url} className="h-[70vh] w-full rounded-xl border border-slate-200 dark:border-slate-700" />
           )}
@@ -193,5 +270,8 @@ export function BmReportPdfModal({ open, onClose }) {
         </div>
       )}
     </Modal>
+    <ConfirmDelete open={!!toDelete} onCancel={() => setToDelete(null)} onConfirm={removeSaved}
+      message="Are you sure you want to delete this item? The saved report will be removed; asking for the same report again will build a new one." />
+    </>
   );
 }

@@ -8,7 +8,9 @@ import OrgPicker, { ALL_ORGS } from '../components/OrgPicker.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
+import ConfirmDelete from '../components/ui/ConfirmDelete.jsx';
 import { formatDate } from '../lib/utils.js';
+import { useAuthStore } from '../store/authStore.js';
 
 const CATEGORIES = ['Design', 'Stock', 'Video', 'Font', 'Tool', 'Other'];
 const blank = { name: '', vendor: '', category: 'Design', seats: 1, cost: '', currency: 'INR', purchaseDate: '', expiryDate: '', notes: '' };
@@ -47,10 +49,13 @@ function Inner({ orgId }) {
   });
   const purchases = data?.purchases || [];
   const [modal, setModal] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
+  const { user } = useAuthStore();
+  const canDelete = Boolean(user?.isSuperAdmin) && !user?.viewOnly; // the server only lets a super admin delete
 
   const removeMut = useMutation({
     mutationFn: (id) => purchaseApi.remove(id),
-    onSuccess: () => { toast.success('Removed'); qc.invalidateQueries({ queryKey: key }); },
+    onSuccess: () => { toast.success('Removed'); setToDelete(null); qc.invalidateQueries({ queryKey: key }); },
     onError: (e) => toast.error(e.response?.data?.message || 'Failed'),
   });
 
@@ -80,7 +85,7 @@ function Inner({ orgId }) {
                 <th className="px-5 py-3 font-semibold">Cost</th>
                 <th className="px-5 py-3 font-semibold">Purchased</th>
                 <th className="px-5 py-3 font-semibold">Expires</th>
-                {!allOrgs && <th className="px-5 py-3 font-semibold text-right">Actions</th>}
+                {(!allOrgs || canDelete) && <th className="px-5 py-3 font-semibold text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
@@ -112,11 +117,11 @@ function Inner({ orgId }) {
                         </span>
                       ) : '—'}
                     </td>
-                    {!allOrgs && (
+                    {(!allOrgs || canDelete) && (
                       <td className="px-5 py-3 text-right">
                         <div className="inline-flex gap-1">
-                          <button onClick={() => setModal({ type: 'edit', item: p })} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
-                          <button onClick={() => window.confirm(`Remove "${p.name}"?`) && removeMut.mutate(p._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
+                          {!allOrgs && <button onClick={() => setModal({ type: 'edit', item: p })} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>}
+                          {canDelete && <button onClick={() => setToDelete(p._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>}
                         </div>
                       </td>
                     )}
@@ -128,6 +133,7 @@ function Inner({ orgId }) {
         </Card>
       )}
 
+      <ConfirmDelete open={!!toDelete} loading={removeMut.isPending} onCancel={() => setToDelete(null)} onConfirm={() => removeMut.mutate(toDelete)} />
       {modal && <PurchaseModal item={modal.item} onClose={() => setModal(null)} onSaved={() => { setModal(null); qc.invalidateQueries({ queryKey: key }); }} />}
     </div>
   );

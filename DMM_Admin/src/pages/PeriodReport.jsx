@@ -10,6 +10,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { BmReportPdfModal } from '../components/reports/BmReportPdfModal.jsx';
+import MonthlyReportsArchive from '../components/reports/MonthlyReportsArchive.jsx';
 import { cn, formatNumber } from '../lib/utils.js';
 import { useAuthStore } from '../store/authStore.js';
 
@@ -216,7 +217,7 @@ export default function PeriodReport() {
     <div>
       <PageHeader
         title="Branding & Marketing Report"
-        subtitle="Design output, web development, organic social, paid ads and team output for any period — computed from live data. The super admin also gets this by email and notification every month."
+        subtitle="Design output, web development, organic social, paid ads and team output for any period — computed from live data. The finished months are stored below for anyone to download, and the super admin also gets each month by email and notification."
         actions={data && (
           <div className="flex gap-2">
             <Button variant="outline" loading={isFetching} onClick={() => refetch()}>
@@ -233,6 +234,8 @@ export default function PeriodReport() {
       />
 
       <BmReportPdfModal open={pdfModalOpen} onClose={() => setPdfModalOpen(false)} />
+
+      <MonthlyReportsArchive />
 
       {/* Window picker */}
       <Card className="mb-5 space-y-3 p-4">

@@ -212,7 +212,7 @@ function TurnaroundPanel({ plan }) {
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-sm dark:border-slate-800 dark:bg-slate-900/50">
       <span className="text-slate-600 dark:text-slate-300">This is a</span>
       <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', TIER_STYLE[plan.tier])}>{plan.tierLabel} request</span>
-      <span className="basis-full text-xs text-slate-400">Choose a "Needed by" date at least {plan.minWorkingDays} working days ahead — Sundays and holidays can't be selected.</span>
+      <span className="basis-full text-xs text-slate-400">Raise a request at least one month before the date it is needed — pick a "Needed by" date one month or more ahead. Sundays and holidays can't be selected.</span>
     </div>
   );
 }
@@ -942,17 +942,26 @@ function AskModal({ onClose, onSaved }) {
   });
   const holidayKeys = new Set((holidayData?.holidays || []).map((h) => h.date));
   const holidayName = (key) => (holidayData?.holidays || []).find((h) => h.date === key)?.name;
+  // A coordinator can only pick a date at least one calendar month after today, with or
+  // without a design type chosen yet (the design's own earliest date can only push it later).
+  const monthAhead = (() => {
+    const [y, m, d] = todayKey.split('-').map(Number);
+    const t = new Date(Date.UTC(y, m, 1));
+    t.setUTCDate(Math.min(d, new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate()));
+    return t.toISOString().slice(0, 10);
+  })();
+  const earliestAllowed = [plan?.earliestDelivery, coordinatorOnlyDesign ? monthAhead : null].filter(Boolean).sort().pop() || null;
   // Why a day can't be chosen — shown when the coordinator hovers over it in the calendar.
   const blockedReason = (key) => {
     if (isSundayKey(key)) return 'Sunday';
     if (holidayKeys.has(key)) return holidayName(key) || 'Holiday';
-    if (plan?.earliestDelivery && key < plan.earliestDelivery) return 'Too soon for this request';
+    if (earliestAllowed && key < earliestAllowed) return 'Needs at least one month\'s notice';
     return null;
   };
   const pickNeededBy = (value) => {
     if (value && isSundayKey(value)) { toast.error('Sundays cannot be selected — please pick another day.'); return; }
     if (value && holidayKeys.has(value)) { toast.error(`${holidayName(value) || 'That day'} is a holiday — please pick another day.`); return; }
-    if (value && plan?.earliestDelivery && value < plan.earliestDelivery) { toast.error('That date is too soon for this request — please pick a later date.'); return; }
+    if (value && earliestAllowed && value < earliestAllowed) { toast.error('Raise a request at least one month before the date it is needed — please pick a later date.'); return; }
     setForm((f) => ({ ...f, neededBy: value }));
   };
 

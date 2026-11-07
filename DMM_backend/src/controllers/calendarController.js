@@ -1,12 +1,13 @@
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
-import ApprovalRequest from '../models/ApprovalRequest.js';
 import ApprovalImage from '../models/ApprovalImage.js';
 import InstitutionRequest from '../models/InstitutionRequest.js';
 import DesignerNote from '../models/DesignerNote.js';
 import Organization from '../models/Organization.js';
+import SocialPost from '../models/SocialPost.js';
+import LinkedInPost from '../models/LinkedInPost.js';
 import { requireOrgId } from '../utils/org.js';
-import { ROLES, USER_TYPES, APPROVAL_STATUS } from '../config/constants.js';
+import { ROLES, USER_TYPES } from '../config/constants.js';
 
 // A designer's calendar is their finished work, not the posting schedule: every
 // design of theirs that has been approved (accepted by the coordinator) sits on the
@@ -66,68 +67,106 @@ const designerDay = async (req, res, dateStr) => {
   });
 };
 
-// CEO/ADMIN see the whole org's posting calendar; a USER sees only their own posts.
-const calendarScope = (req, orgId) => {
-  const privileged = [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
-  const scope = { organization: new mongoose.Types.ObjectId(orgId), status: APPROVAL_STATUS.POSTED };
-  if (!privileged) scope.createdBy = new mongoose.Types.ObjectId(req.user._id);
-  return scope;
+// The posting calendar is built from what the platforms themselves report: every post
+// the Instagram, Facebook and YouTube APIs have synced (SocialPost) and every post in the
+// LinkedIn export (LinkedInPost), on the day it was published. It is the same data that
+// feeds Social Analytics and the B&M report, so the three can never disagree about what
+// went out. A post made through t@g that reached a platform shows up here the same way
+// as one made on the platform itself, once that platform has reported it.
+// Days are IST days.
+const orgObjectId = (orgId) => new mongoose.Types.ObjectId(orgId);
+const dayWindow = (dateStr) => {
+  const start = new Date(new Date(`${dateStr}T00:00:00.000Z`).getTime() - IST_OFFSET_MS);
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
 };
+const monthWindow = (y, m) => ({
+  start: new Date(Date.UTC(y, m - 1, 1) - IST_OFFSET_MS),
+  end: new Date(Date.UTC(y, m, 1) - IST_OFFSET_MS),
+});
+const clip = (t, n = 160) => Array.from(String(t || '').replace(/\s+/g, ' ').trim()).slice(0, n).join('');
 
-// @route GET /api/calendar?month=YYYY-MM  — posted-content counts per day for the month
+// @route GET /api/calendar?month=YYYY-MM  — posts per day for the month, from the platform metrics
 export const getCalendarMonth = asyncHandler(async (req, res) => {
   const monthStr = req.query.month || new Date().toISOString().slice(0, 7);
   const [y, m] = monthStr.split('-').map(Number);
   if (!y || !m || m < 1 || m > 12) { res.status(400); throw new Error('Invalid month (expected YYYY-MM)'); }
   if (isDesignerUser(req.user)) return designerMonth(req, res, y, m, monthStr);
   const orgId = requireOrgId(req, res);
+  const org = orgObjectId(orgId);
+  const { start, end } = monthWindow(y, m);
 
-  const start = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 1));
-
-  const agg = await ApprovalRequest.aggregate([
-    { $match: { ...calendarScope(req, orgId), postedAt: { $gte: start, $lt: end } } },
-    {
-      $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$postedAt', timezone: 'UTC' } },
-        count: { $sum: 1 },
-        platforms: { $addToSet: '$platform' },
-      },
-    },
-    { $sort: { _id: 1 } },
+  const [social, linkedin, synced] = await Promise.all([
+    SocialPost.aggregate([
+      { $match: { organization: org, publishedAt: { $gte: start, $lt: end } } },
+      { $group: {
+        _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$publishedAt', timezone: IST } }, platform: '$platform' },
+        count: { $sum: 1 }, likes: { $sum: '$likes' }, reach: { $sum: '$reach' }, impressions: { $sum: '$impressions' },
+      } },
+    ]),
+    LinkedInPost.aggregate([
+      { $match: { organization: org, createdDate: { $gte: start, $lt: end } } },
+      { $group: {
+        _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$createdDate', timezone: IST } }, platform: 'LinkedIn' },
+        count: { $sum: 1 }, likes: { $sum: '$reactions' }, reach: { $sum: 0 }, impressions: { $sum: '$impressions' },
+      } },
+    ]),
+    SocialPost.findOne({ organization: org }).sort({ lastSyncedAt: -1 }).select('lastSyncedAt').lean(),
   ]);
 
-  const days = agg.map((d) => ({ date: d._id, count: d.count, platforms: d.platforms }));
-  const total = days.reduce((a, d) => a + d.count, 0);
-  res.json({ success: true, month: monthStr, total, days });
+  const byDate = new Map();
+  const byPlatform = {};
+  for (const row of [...social, ...linkedin]) {
+    const { day, platform } = row._id;
+    const d = byDate.get(day) || { date: day, count: 0, likes: 0, platforms: [], byPlatform: {} };
+    d.count += row.count; d.likes += row.likes || 0;
+    d.byPlatform[platform] = (d.byPlatform[platform] || 0) + row.count;
+    if (!d.platforms.includes(platform)) d.platforms.push(platform);
+    byDate.set(day, d);
+    byPlatform[platform] = (byPlatform[platform] || 0) + row.count;
+  }
+  const days = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  res.json({
+    success: true, kind: 'platform', month: monthStr,
+    total: days.reduce((a, d) => a + d.count, 0),
+    totalLikes: days.reduce((a, d) => a + d.likes, 0),
+    byPlatform, days,
+    lastSyncedAt: synced?.lastSyncedAt || null,
+  });
 });
 
-// @route GET /api/calendar/day?date=YYYY-MM-DD  — the posts published on a specific day
+// @route GET /api/calendar/day?date=YYYY-MM-DD  — the posts the platforms report for that day
 export const getCalendarDay = asyncHandler(async (req, res) => {
   const dateStr = req.query.date;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) { res.status(400); throw new Error('Invalid date (expected YYYY-MM-DD)'); }
   if (isDesignerUser(req.user)) return designerDay(req, res, dateStr);
   const orgId = requireOrgId(req, res);
-  const start = new Date(`${dateStr}T00:00:00.000Z`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const org = orgObjectId(orgId);
+  const { start, end } = dayWindow(dateStr);
 
-  const privileged = [ROLES.ADMIN, ROLES.CEO].includes(req.user.role);
-  const query = { organization: orgId, status: APPROVAL_STATUS.POSTED, postedAt: { $gte: start, $lt: end } };
-  if (!privileged) query.createdBy = req.user._id;
+  const [social, linkedin] = await Promise.all([
+    SocialPost.find({ organization: org, publishedAt: { $gte: start, $lt: end } }).lean(),
+    LinkedInPost.find({ organization: org, createdDate: { $gte: start, $lt: end } }).lean(),
+  ]);
 
-  const posts = await ApprovalRequest.find(query)
-    .populate('createdBy', 'name avatar')
-    .populate('postedBy', 'name avatar')
-    .sort({ postedAt: 1 })
-    .lean();
+  const posts = [
+    ...social.map((p) => ({
+      id: String(p._id), platform: p.platform, title: clip(p.caption) || `${p.platform} post`,
+      url: p.url || '', thumbnail: p.thumbnail || '', mediaType: p.mediaType || '', publishedAt: p.publishedAt, timeKnown: true,
+      metrics: { impressions: p.impressions || 0, reach: p.reach || 0, views: p.views || 0, likes: p.likes || 0, comments: p.comments || 0, shares: p.shares || 0, saved: p.saved || 0 },
+    })),
+    ...linkedin.map((p) => ({
+      id: String(p._id), platform: 'LinkedIn', title: clip(p.title) || 'LinkedIn post',
+      // LinkedIn's export only carries the date, never the time of day
+      url: p.url || '', thumbnail: '', mediaType: p.contentType || '', publishedAt: p.createdDate, timeKnown: false,
+      metrics: { impressions: p.impressions || 0, reach: 0, views: p.views || 0, likes: p.reactions || 0, comments: p.comments || 0, shares: p.reposts || 0, clicks: p.clicks || 0 },
+    })),
+  ].sort((a, b) => (a.timeKnown === b.timeKnown ? new Date(a.publishedAt) - new Date(b.publishedAt) : (a.timeKnown ? -1 : 1)));
 
-  // Attach a cover image for each post
-  const ids = posts.map((p) => p._id);
-  const covers = await ApprovalImage.find({ request: { $in: ids } }).sort({ order: 1 }).lean();
-  const coverByReq = covers.reduce((acc, img) => { if (!acc[img.request]) acc[img.request] = img.url; return acc; }, {});
-  const withCover = posts.map((p) => ({ ...p, cover: coverByReq[p._id] || null }));
-
-  res.json({ success: true, date: dateStr, count: withCover.length, posts: withCover });
+  const sum = (key) => posts.reduce((t, p) => t + (p.metrics[key] || 0), 0);
+  res.json({
+    success: true, kind: 'platform', date: dateStr, count: posts.length, posts,
+    totals: { likes: sum('likes'), comments: sum('comments'), reach: sum('reach'), impressions: sum('impressions') },
+  });
 });
 
 // ---------------------------------------------------------------------------

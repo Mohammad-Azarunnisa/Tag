@@ -7,7 +7,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.STORAGE_DRIVER = 'local';
 process.env.LOCAL_STORAGE_ROOT = '';
 
-const { classifyDesign, addWorkingDays, planDesign, workingDaysBetween } = await import('./turnaround.js');
+const { classifyDesign, addWorkingDays, planDesign, workingDaysBetween, addMonthsKey } = await import('./turnaround.js');
 
 // 2026-10-05 is a Monday.
 test('two working days from a Monday is Wednesday', () => {
@@ -45,7 +45,7 @@ test('design types are classified Basic, Medium and Heavy', () => {
 test('a plan carries the class, design time and earliest delivery date', () => {
   const plan = planDesign({ workItem: 'Brochures', raisedAt: new Date('2026-10-05T06:00:00Z'), holidays: new Set() });
   assert.equal(plan.tier, 'HEAVY');
-  assert.equal(plan.earliestDelivery, '2026-10-07');
+  assert.equal(plan.earliestDelivery, '2026-11-05', 'one calendar month after the raise date');
 });
 
 // ---- through the API ----
@@ -166,14 +166,22 @@ test('"Needed by" cannot be a Sunday or a holiday', async () => {
   assert.equal(ok.status, 201);
 });
 
-test('raised on a Sunday before a holiday run, the two design days only start on the next working day', () => {
-  // Sunday 18 Oct 2026, Dussehra 19–21: Thursday 22 is the first working day, so
-  // Thursday and Friday are the two days to design and Saturday 24 is the earliest.
+test('the needed-by date must be one calendar month after the day the request is raised', () => {
   const holidays = new Set(['2026-10-19', '2026-10-20', '2026-10-21']);
-  const plan = planDesign({ workItem: 'Banners (Indoor & Outdoor)', raisedAt: new Date('2026-10-18T05:00:00Z'), holidays });
-  assert.equal(plan.earliestDelivery, '2026-10-24');
-  // Raised on an ordinary Monday it is still Wednesday.
-  assert.equal(planDesign({ workItem: 'Posters', raisedAt: new Date('2026-10-05T06:00:00Z'), holidays: new Set() }).earliestDelivery, '2026-10-07');
-  // Raised on a plain Sunday with no holidays: Monday is day zero, Wednesday the earliest.
-  assert.equal(planDesign({ workItem: 'Posters', raisedAt: new Date('2026-10-11T06:00:00Z'), holidays: new Set() }).earliestDelivery, '2026-10-14');
+  // Sunday 18 Oct 2026 with Dussehra after it: one month on is Wednesday 18 Nov, whatever the days in between
+  assert.equal(planDesign({ workItem: 'Banners (Indoor & Outdoor)', raisedAt: new Date('2026-10-18T05:00:00Z'), holidays }).earliestDelivery, '2026-11-18');
+  // a plain Monday
+  assert.equal(planDesign({ workItem: 'Posters', raisedAt: new Date('2026-10-05T06:00:00Z'), holidays: new Set() }).earliestDelivery, '2026-11-05');
+  // a month-end clamps: 31 Jan -> 28 Feb 2027
+  assert.equal(addMonthsKey('2027-01-31', 1), '2027-02-28');
+  assert.equal(addMonthsKey('2026-12-15', 1), '2027-01-15');
+});
+
+test('a coordinator cannot choose a date inside the one-month notice', async () => {
+  const f = new FormData();
+  const soon = new Date(Date.now() + 8 * 86400000); if (soon.getUTCDay() === 0) soon.setUTCDate(soon.getUTCDate() + 1);
+  Object.entries({ workType: 'PRINT_MEDIA', workCategory: 'Print', workItem: 'Posters', title: 'Soon', department: 'X', neededBy: soon.toISOString().slice(0, 10) }).forEach(([k, v]) => f.append(k, v));
+  const r = await fetch(`${origin}/api/requests`, { method: 'POST', headers: { Authorization: `Bearer ${coord}` }, body: f });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).message, /one month/i);
 });

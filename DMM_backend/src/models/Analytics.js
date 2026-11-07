@@ -53,6 +53,10 @@ const analyticsSchema = new mongoose.Schema(
     leads: { type: Number, default: 0 }, // LinkedIn: leads generated
     leadFormViews: { type: Number, default: 0 }, // LinkedIn: lead form opens
     leadConversionRate: { type: Number, default: 0 }, // percentage
+
+    // When someone last checked this total against the live page (LinkedIn has no API here).
+    confirmedAt: { type: Date },
+    confirmedBy: { type: String },
   },
   { timestamps: true }
 );

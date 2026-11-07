@@ -88,6 +88,21 @@ export const workingDaysBetween = (fromKey, toKey, holidays = new Set()) => {
 };
 
 /**
+ * The same calendar day one month later (31 Jan -> 28/29 Feb). Plain calendar days:
+ * Sundays and holidays are not skipped, they simply cannot be picked as the date itself.
+ */
+export const addMonthsKey = (fromKey, months = 1) => {
+  const [y, m, d] = fromKey.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, lastDay));
+  return target.toISOString().slice(0, 10);
+};
+
+// A request has to be raised at least this long before the date it is needed by.
+export const MIN_NOTICE_MONTHS = 1;
+
+/**
  * Everything the portal tells someone about a design: its class, how long the
  * design itself takes, and the earliest date it can be expected.
  */
@@ -100,12 +115,17 @@ export const planDesign = ({ workItem, workCategory, raisedAt = new Date(), holi
   // earliest delivery is the Saturday after) rather than being counted as day one.
   let startKey = raisedKey;
   while (!isWorkingDay(startKey, holidays)) startKey = addDaysKey(startKey, 1);
-  const earliestKey = addWorkingDays(startKey, MIN_WORKING_DAYS, holidays);
+  const designDoneKey = addWorkingDays(startKey, MIN_WORKING_DAYS, holidays);
+  // The date it is needed by must be at least one calendar month after it is raised — never
+  // earlier than the design time either, though a month always covers it.
+  const noticeKey = addMonthsKey(raisedKey, MIN_NOTICE_MONTHS);
+  const earliestKey = noticeKey > designDoneKey ? noticeKey : designDoneKey;
   return {
     tier: tier.key,
     tierLabel: tier.label,
     designTime: tier.time,
     minWorkingDays: MIN_WORKING_DAYS,
+    minNoticeMonths: MIN_NOTICE_MONTHS,
     raisedOn: raisedKey,
     earliestDelivery: earliestKey,
   };

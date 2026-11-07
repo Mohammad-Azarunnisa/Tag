@@ -7,6 +7,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Skeleton } from '../components/ui/primitives.jsx';
 import { cn } from '../lib/utils.js';
+import { cleanMath, FORMULA_MARK } from '../lib/mathText.js';
 
 const SUGGESTIONS = [
   'Which organization has the most followers overall?',
@@ -181,7 +182,7 @@ function Bubble({ msg }) {
 // lists, headings and pipe tables. Everything else renders as plain text.
 // Exported so the floating TagoWidget renders replies identically.
 export function Markdown({ text }) {
-  const lines = String(text || '').split('\n');
+  const lines = cleanMath(text).split('\n');
   const blocks = [];
   let i = 0;
   while (i < lines.length) {
@@ -209,6 +210,7 @@ export function Markdown({ text }) {
       blocks.push({ type: 'ol', items });
       continue;
     }
+    if (line.startsWith(FORMULA_MARK)) { blocks.push({ type: 'formula', text: line.slice(FORMULA_MARK.length) }); i++; continue; }
     blocks.push({ type: 'p', text: line });
     i++;
   }
@@ -234,6 +236,7 @@ export function Markdown({ text }) {
             </div>
           );
         }
+        if (b.type === 'formula') return <p key={k} className="rounded-lg bg-slate-100 px-3 py-2 text-center font-mono text-[13px] font-semibold dark:bg-slate-800">{b.text}</p>;
         if (b.type === 'ul') return <ul key={k} className="list-disc space-y-1 pl-5">{b.items.map((it, j) => <li key={j}><Inline text={it} /></li>)}</ul>;
         if (b.type === 'ol') return <ol key={k} className="list-decimal space-y-1 pl-5">{b.items.map((it, j) => <li key={j}><Inline text={it} /></li>)}</ol>;
         if (/^#{1,4}\s+/.test(b.text)) return <p key={k} className="pt-1 font-bold"><Inline text={b.text.replace(/^#{1,4}\s+/, '')} /></p>;

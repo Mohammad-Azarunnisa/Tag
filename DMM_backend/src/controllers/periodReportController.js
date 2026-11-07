@@ -8,6 +8,7 @@ import { buildPeriodReport, lastCompleteMonth } from '../services/periodReport.j
 import { accessibleOrgIds, canAccessOrg } from '../utils/org.js';
 import { PLATFORMS } from '../config/constants.js';
 import Organization from '../models/Organization.js';
+import SavedReport, { reportKey } from '../models/SavedReport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -2213,6 +2214,17 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   }
   const platformLabel = requestedPlatform || 'All Social Media Accounts';
 
+  // The super admin's reports are kept. Asking again for the same window, college and platform
+  // opens the saved copy instead of building a new one; ?fresh=1 replaces it deliberately.
+  const isSuper = Boolean(req.user.isSuperAdmin) && allowed === null;
+  const fromDay = from.toISOString().slice(0, 10);
+  const toDay = to.toISOString().slice(0, 10);
+  const key = reportKey({ from: fromDay, to: toDay, orgId: requestedOrgId, platform: requestedPlatform });
+  if (isSuper && req.query.fresh !== '1') {
+    const saved = await SavedReport.findOne({ key }).select('+pdf');
+    if (saved) return sendSavedReport(res, saved, true);
+  }
+
   const r = await buildPeriodReport({ from, to, orgIds, platform: requestedPlatform || undefined });
   // A report for one chosen institution always keeps it; otherwise empty ones go.
   if (!requestedOrgId) dropEmptyOrganizations(r);
@@ -2232,8 +2244,32 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
     throw new Error('No B&M report data is available for the selected filters.');
   }
 
+  const filename = reportFilename(r, orgLabel, platformLabel);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  // Scoped to this endpoint only — lets the frontend read the exact generated
+  // filename off the response instead of re-deriving the date window itself.
+  res.setHeader('Access-Control-Expose-Headers', EXPOSED_HEADERS);
+  const pdf = await renderReportPdf({ r, orgLabel, platformLabel, to });
+
+  const saved = isSuper
+    ? await storeReport({ key, from: fromDay, to: toDay, orgId: requestedOrgId, orgLabel, platform: requestedPlatform, filename, pdf, user: req.user })
+    : null;
+  res.setHeader('X-Report-Reused', '0');
+  if (saved) {
+    res.setHeader('X-Report-Saved-At', saved.updatedAt.toISOString());
+    res.setHeader('X-Report-Partial', saved.partialPeriod ? '1' : '0');
+  }
+  res.setHeader('Content-Length', pdf.length);
+  res.end(pdf);
+});
+
+const reportFilename = (r, orgLabel, platformLabel) => `B&M_Report_${sanitizeForFilename(orgLabel)}_${sanitizeForFilename(platformLabel === 'All Social Media Accounts' ? 'All Social Media' : platformLabel)}_${ddmmyyyy(r.period.from)}_to_${ddmmyyyy(r.period.to)}.pdf`;
+
+// The B&M report as a PDF, built in memory. Pulled out of the request so the monthly schedule
+// can build and keep a report with nobody signed in.
+async function renderReportPdf({ r, orgLabel, platformLabel, to }) {
   const periodLabel = `${ddmmyyyy(r.period.from)} to ${ddmmyyyy(r.period.to)}`;
-  const filename = `B&M_Report_${sanitizeForFilename(orgLabel)}_${sanitizeForFilename(platformLabel === 'All Social Media Accounts' ? 'All Social Media' : platformLabel)}_${ddmmyyyy(r.period.from)}_to_${ddmmyyyy(r.period.to)}.pdf`;
 
   const drawHeader = makeHeaderDrawer(formatGeneratedDate());
   const doc = new PDFDocument({ margin: PAGE_MARGIN, size: 'A4', bufferPages: true });
@@ -2243,12 +2279,10 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
     drawHeader(doc);
     if (continuingOrg) drawOrgBanner(doc, continuingOrg, null, { continued: true });
   });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-  // Scoped to this endpoint only — lets the frontend read the exact generated
-  // filename off the response instead of re-deriving the date window itself.
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-  doc.pipe(res);
+  // Built in memory so the finished file can be kept before it is sent.
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const finished = new Promise((resolve, reject) => { doc.on('end', resolve); doc.on('error', reject); });
 
   // Cover first; the next page picks up the letterhead through 'pageAdded'.
   drawCoverPage(doc, { r, platformLabel });
@@ -2421,4 +2455,162 @@ export const exportPeriodReportPdf = asyncHandler(async (req, res) => {
   });
 
   doc.end();
+  await finished;
+  return Buffer.concat(chunks);
+}
+
+const dayKey = (d) => d.toISOString().slice(0, 10);
+
+// 'YYYY-MM' when the window is exactly one whole calendar month, else null.
+const wholeMonthOf = (fromDay, toDay) => {
+  if (!fromDay.endsWith('-01') || fromDay.slice(0, 7) !== toDay.slice(0, 7)) return null;
+  const [y, m] = fromDay.split('-').map(Number);
+  return dayKey(new Date(Date.UTC(y, m, 0))) === toDay ? fromDay.slice(0, 7) : null;
+};
+
+// Keep a finished report. The same key is the same report, so a later request for it opens this copy.
+const storeReport = ({ key, from, to, orgId, orgLabel, platform, filename, pdf, user = null }) => SavedReport.findOneAndUpdate(
+  { key },
+  { $set: {
+    key, from, to,
+    organization: orgId || null, organizationLabel: orgLabel, platform: platform || '',
+    month: wholeMonthOf(from, to), automatic: !user,
+    filename, size: pdf.length, pdf,
+    // The window ran up to the day it was made, so the figures can still move.
+    partialPeriod: to >= dayKey(new Date()),
+    generatedBy: user?._id || null, generatedByName: user ? (user.name || '') : 'Automatic',
+  } },
+  { upsert: true, new: true, setDefaultsOnInsert: true }
+).select('-pdf');
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const monthWindow = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  return { from: new Date(Date.UTC(y, m - 1, 1)), to: new Date(Date.UTC(y, m, 0, 23, 59, 59, 999)) };
+};
+const monthLabel = (month) => monthWindow(month).from.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+// The most recent calendar month that has fully ended.
+const latestFinishedMonth = (now = new Date()) => {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+};
+const shiftMonth = (month, by) => {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + by, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+};
+export const MONTHLY_ARCHIVE_MONTHS = 12; // how far back the archive lists
+
+// Two people opening the same month at once must not build it twice.
+const inFlight = new Map();
+
+/**
+ * The stored report for a finished month, building and keeping it first if it is not there yet.
+ * Everyone who opens that month afterwards gets this same file. Returns null when that month had
+ * nothing to report.
+ */
+export const ensureMonthlyReport = async (month, { fresh = false } = {}) => {
+  const { from, to } = monthWindow(month);
+  const key = reportKey({ from: dayKey(from), to: dayKey(to), orgId: null, platform: null });
+  if (!fresh) {
+    const have = await SavedReport.findOne({ key }).select('+pdf');
+    if (have) return have;
+  }
+  if (inFlight.has(key)) return inFlight.get(key);
+  const work = (async () => {
+    const r = await buildPeriodReport({ from, to });
+    dropEmptyOrganizations(r);
+    const hasData = r.design.totals.requestsReceived > 0 || r.web.totals.tasksReceived > 0 || r.social.totals.posts > 0
+      || r.ads.totals.spend > 0 || r.ads.totals.reach > 0 || r.ads.totals.leads > 0 || r.team.rows.length > 0;
+    if (!hasData) return null;
+    const orgLabel = 'All Organisations';
+    const platformLabel = 'All Social Media Accounts';
+    const pdf = await renderReportPdf({ r, orgLabel, platformLabel, to });
+    await storeReport({ key, from: dayKey(from), to: dayKey(to), orgId: null, orgLabel, platform: null, filename: reportFilename(r, orgLabel, platformLabel), pdf });
+    return SavedReport.findOne({ key }).select('+pdf');
+  })().finally(() => inFlight.delete(key));
+  inFlight.set(key, work);
+  return work;
+};
+
+// Make sure the last few finished months are all stored (a server that was off on the 1st catches up).
+export const ensureRecentMonthlyReports = async (count = 3, now = new Date()) => {
+  const latest = latestFinishedMonth(now);
+  const made = [];
+  for (let i = 0; i < count; i++) {
+    const month = shiftMonth(latest, -i);
+    const exists = await SavedReport.exists({ key: reportKey({ from: dayKey(monthWindow(month).from), to: dayKey(monthWindow(month).to), orgId: null, platform: null }) });
+    if (exists) continue;
+    const got = await ensureMonthlyReport(month);
+    if (got) made.push(month);
+  }
+  return made;
+};
+
+// @route GET /api/reports/monthly  (Admin) — the finished months, newest first, each flagged stored or not.
+export const listMonthlyReports = asyncHandler(async (req, res) => {
+  const latest = latestFinishedMonth();
+  const months = Array.from({ length: MONTHLY_ARCHIVE_MONTHS }, (_, i) => shiftMonth(latest, -i));
+  const stored = await SavedReport.find({ month: { $in: months }, organization: null, platform: '' })
+    .select('month size updatedAt automatic filename').lean();
+  const byMonth = new Map(stored.map((x) => [x.month, x]));
+  res.json({
+    success: true,
+    months: months.map((m) => {
+      const x = byMonth.get(m);
+      return { month: m, label: monthLabel(m), stored: !!x, size: x?.size || 0, generatedAt: x?.updatedAt || null, automatic: x?.automatic ?? null, filename: x?.filename || null };
+    }),
+  });
+});
+
+// @route GET /api/reports/monthly/:month  (Admin) — one finished month's stored report.
+// ?download=1 asks for it as a file. A month nobody has opened yet is built once, then shared.
+export const downloadMonthlyReport = asyncHandler(async (req, res) => {
+  const { month } = req.params;
+  const latest = latestFinishedMonth();
+  if (!MONTH_RE.test(month) || month > latest || month < shiftMonth(latest, -(MONTHLY_ARCHIVE_MONTHS * 2 - 1))) {
+    res.status(400);
+    throw new Error('Pick a finished month within the last two years (YYYY-MM).');
+  }
+  const saved = await ensureMonthlyReport(month);
+  if (!saved) { res.status(404); throw new Error(`There is nothing to report for ${monthLabel(month)}.`); }
+  sendSavedReport(res, saved, true, req.query.download === '1' ? 'attachment' : 'inline');
+});
+
+// What the browser may read off a PDF response (it cannot see custom headers otherwise).
+const EXPOSED_HEADERS = 'Content-Disposition, X-Report-Reused, X-Report-Saved-At, X-Report-Partial, X-Report-Id';
+
+const sendSavedReport = (res, saved, reused, disposition = 'inline') => {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${saved.filename}"`);
+  res.setHeader('Access-Control-Expose-Headers', EXPOSED_HEADERS);
+  res.setHeader('X-Report-Reused', reused ? '1' : '0');
+  res.setHeader('X-Report-Saved-At', saved.updatedAt.toISOString());
+  res.setHeader('X-Report-Partial', saved.partialPeriod ? '1' : '0');
+  res.setHeader('X-Report-Id', String(saved._id));
+  res.setHeader('Content-Length', saved.pdf.length);
+  res.end(saved.pdf);
+};
+
+// @route GET /api/reports/period/saved  (super admin) — every report kept so far, newest first.
+export const listSavedReports = asyncHandler(async (req, res) => {
+  const reports = await SavedReport.find().sort({ updatedAt: -1 }).limit(200)
+    .select('from to organization organizationLabel platform filename size partialPeriod generatedByName updatedAt').lean();
+  res.json({ success: true, reports });
+});
+
+// @route GET /api/reports/period/saved/:id  (super admin) — open one kept report.
+export const openSavedReport = asyncHandler(async (req, res) => {
+  if (!/^[a-f0-9]{24}$/i.test(req.params.id)) { res.status(404); throw new Error('Saved report not found'); }
+  const saved = await SavedReport.findById(req.params.id).select('+pdf');
+  if (!saved) { res.status(404); throw new Error('Saved report not found'); }
+  sendSavedReport(res, saved, true);
+});
+
+// @route DELETE /api/reports/period/saved/:id  (super admin) — forget a kept report.
+export const deleteSavedReport = asyncHandler(async (req, res) => {
+  if (!/^[a-f0-9]{24}$/i.test(req.params.id)) { res.status(404); throw new Error('Saved report not found'); }
+  const gone = await SavedReport.findByIdAndDelete(req.params.id).select('_id');
+  if (!gone) { res.status(404); throw new Error('Saved report not found'); }
+  res.json({ success: true });
 });

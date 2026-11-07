@@ -9,6 +9,7 @@ import { seedSuperAdmin } from './config/seedSuperAdmin.js';
 import { ensureStorageReady } from './config/storage.js';
 import { startDailyAnalyticsScheduler, catchUpIfMissed } from './services/dailyAnalyticsRefresh.js';
 import { startScheduledPostWatcher } from './services/scheduledPosts.js';
+import { startAutoAcceptWatcher, AUTO_ACCEPT_WORKING_DAYS } from './services/autoAcceptDesigns.js';
 import { provider as aiProvider, modelName as aiModel } from './services/aiService.js';
 import { startMonthlyReportScheduler } from './services/monthlyReport.js';
 
@@ -29,6 +30,10 @@ const start = async () => {
   });
   startScheduledPostWatcher();
   console.log('   Scheduled posts: sweeping for content due to go live');
+  if (process.env.DISABLE_AUTO_ACCEPT !== 'true') {
+    startAutoAcceptWatcher();
+    console.log(`   Auto-accept: designs left with a coordinator for ${AUTO_ACCEPT_WORKING_DAYS} working days are accepted for them`);
+  }
   if (process.env.DISABLE_MONTHLY_REPORT !== 'true') {
     const when = startMonthlyReportScheduler();
     console.log(`   Monthly report: day ${when.day} at ${when.time} UTC, to every super admin`);

@@ -322,6 +322,7 @@ export const setFollowersBaseline = asyncHandler(async (req, res) => {
     running -= snaps[i].newFollowers || 0;
   }
   await Analytics.bulkWrite(ops);
+  await Analytics.updateOne({ _id: snaps[snaps.length - 1]._id }, { $set: { confirmedAt: new Date(), confirmedBy: req.user.name || '' } });
 
   logActivity({
     user: req.user._id, organization: orgId, action: ACTIVITY_ACTIONS.ANALYTICS_UPDATED,

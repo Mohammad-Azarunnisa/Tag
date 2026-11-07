@@ -24,6 +24,8 @@ const apply = (doc, body) => {
   if (body.organization !== undefined) doc.organization = body.organization || null;
   const expiry = readExpiry(body.expiryDate);
   if (expiry !== undefined) doc.expiryDate = expiry;
+  const start = readExpiry(body.startDate);
+  if (start !== undefined) doc.startDate = start;
 };
 
 // @route GET /api/websites — ADMIN sees all (or one org via filter); CEO sees the
@@ -63,6 +65,7 @@ export const listWebsites = asyncHandler(async (req, res) => {
 export const createWebsite = asyncHandler(async (req, res) => {
   if (!String(req.body.institution || '').trim()) { res.status(400); throw new Error('Institution name is required'); }
   if (readExpiry(req.body.expiryDate) === false) { res.status(400); throw new Error('Expiry date is not a valid date'); }
+  if (readExpiry(req.body.startDate) === false) { res.status(400); throw new Error('Start date is not a valid date'); }
   const doc = new Website();
   apply(doc, req.body);
   await doc.save();
@@ -75,6 +78,7 @@ export const updateWebsite = asyncHandler(async (req, res) => {
   const doc = await Website.findById(req.params.id);
   if (!doc) { res.status(404); throw new Error('Website not found'); }
   if (readExpiry(req.body.expiryDate) === false) { res.status(400); throw new Error('Expiry date is not a valid date'); }
+  if (readExpiry(req.body.startDate) === false) { res.status(400); throw new Error('Start date is not a valid date'); }
   apply(doc, req.body);
   await doc.save();
   logActivity({ user: req.user._id, organization: doc.organization, action: ACTIVITY_ACTIONS.WEBSITE_UPDATED, description: `Updated website ${doc.institution}`, entityType: 'Website', entityId: doc._id });
@@ -106,6 +110,7 @@ export const importWebsites = asyncHandler(async (req, res) => {
     { field: 'siteType', test: (h) => /sitetype|type/.test(h) },
     { field: 'hosting', test: (h) => /hosting|host|provider|server$/.test(h) },
     { field: 'builtWith', test: (h) => /builtwith|built|stack|framework|technolog|tech|cms/.test(h) },
+    { field: 'startDate', test: (h) => /start|registered|registration|purchased|since|createdon/.test(h) },
     { field: 'expiryDate', test: (h) => /expiry|expires|expiration|renewal|validtill|validupto|duedate/.test(h) },
     { field: 'notes', test: (h) => /note|remark|comment|description/.test(h) },
   ];
@@ -137,6 +142,7 @@ export const importWebsites = asyncHandler(async (req, res) => {
     // Only written when the sheet actually has an expiry column, so importing a
     // sheet without one never wipes dates entered by hand.
     if (map.expiryDate != null) record.expiryDate = cellDate(row[map.expiryDate]);
+    if (map.startDate != null) record.startDate = cellDate(row[map.startDate]);
 
     const resolved = await resolveOrganization(institution, { create: false, cache: orgCache });
     const organization = resolved ? resolved.org._id : null;
@@ -172,14 +178,15 @@ export const websiteTemplate = asyncHandler(async (req, res) => {
     { header: 'Site Type', key: 'siteType', width: 16 },
     { header: 'Hosting', key: 'hosting', width: 16 },
     { header: 'Built With', key: 'builtWith', width: 28 },
+    { header: 'Start Date', key: 'startDate', width: 16, style: { numFmt: 'dd-mm-yyyy' } },
     { header: 'Expiry Date', key: 'expiryDate', width: 16, style: { numFmt: 'dd-mm-yyyy' } },
   ];
   const head = ws.getRow(1);
   head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B2350' } };
   head.height = 22;
-  ws.addRow({ institution: 'NCET', domain: 'https://ncet.co.in', siteType: 'Hybrid', hosting: 'CloudFlare', builtWith: 'AstroJS', expiryDate: new Date(Date.UTC(2027, 2, 31)) });
-  ws.addRow({ institution: 'NCMS', domain: 'https://ncms.co.in/', siteType: 'Server', hosting: 'AWS', builtWith: 'NextJS With Strapi CMS', expiryDate: new Date(Date.UTC(2026, 10, 12)) });
+  ws.addRow({ institution: 'NCET', domain: 'https://ncet.co.in', siteType: 'Hybrid', hosting: 'CloudFlare', builtWith: 'AstroJS', startDate: new Date(Date.UTC(2024, 2, 31)), expiryDate: new Date(Date.UTC(2027, 2, 31)) });
+  ws.addRow({ institution: 'NCMS', domain: 'https://ncms.co.in/', siteType: 'Server', hosting: 'AWS', builtWith: 'NextJS With Strapi CMS', startDate: new Date(Date.UTC(2025, 10, 12)), expiryDate: new Date(Date.UTC(2026, 10, 12)) });
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="websites-template.xlsx"');

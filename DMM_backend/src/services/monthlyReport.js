@@ -3,6 +3,7 @@ import { createNotification } from '../utils/notify.js';
 import { logActivity } from '../utils/logActivity.js';
 import { sendEmail } from '../utils/email.js';
 import { buildPeriodReport, lastCompleteMonth } from './periodReport.js';
+import { ensureMonthlyReport, ensureRecentMonthlyReports } from '../controllers/periodReportController.js';
 import { ACTIVITY_ACTIONS, NOTIFICATION_TYPES } from '../config/constants.js';
 
 // Which day of the month the run goes out on, and at what UTC time. The 1st is
@@ -49,13 +50,20 @@ const summarise = (r) => {
 /**
  * Build last month's report and put it in front of the super admins.
  *
- * The report itself is always recomputed from live data rather than stored, so
- * this run is a delivery mechanism, not a snapshot — opening the same period in
- * the console later shows the same figures, including any corrections made since.
+ * The finished month's PDF is built here and stored (see SavedReport), so everyone who
+ * opens that month afterwards gets this same file instead of building it again. The
+ * figures in the notification and email come from the same moment.
  */
 export const sendMonthlyReport = async ({ now = new Date() } = {}) => {
   const { from, to } = lastCompleteMonth(now);
   const report = await buildPeriodReport({ from, to });
+
+  // Keep the finished month's PDF. A failure here must not stop the notification going out.
+  try {
+    await ensureMonthlyReport(from.toISOString().slice(0, 7), { fresh: true });
+  } catch (err) {
+    console.error('Could not store the monthly report PDF:', err.message);
+  }
 
   const recipients = await User.find({ isActive: true, isSuperAdmin: true }).select('_id name email').lean();
   if (!recipients.length) return { sent: 0, period: report.period };
@@ -68,7 +76,7 @@ export const sendMonthlyReport = async ({ now = new Date() } = {}) => {
     recipient: u._id,
     type: NOTIFICATION_TYPES.MONTHLY_REPORT,
     title: `${monthName} report is ready`,
-    message: summary,
+    message: `${summary} — stored under Reports › Monthly reports, ready to download.`,
     link,
   })));
 
@@ -127,6 +135,15 @@ export const startMonthlyReportScheduler = () => {
     })();
   };
   tick();
+
+  // A server that was off on the 1st missed the run. A little after starting, make sure the last
+  // three finished months are stored, so they are always there to download.
+  setTimeout(() => {
+    ensureRecentMonthlyReports(3)
+      .then((made) => { if (made.length) console.log(`📊 Stored the monthly report for ${made.join(', ')}`); })
+      .catch((err) => console.error('Monthly report catch-up failed:', err.message));
+  }, Number(process.env.MONTHLY_CATCHUP_DELAY_MS || 90_000)).unref?.();
+
   const { hour, minute } = parseTime(DEFAULT_TIME);
   return { day: DEFAULT_DAY, time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
 };

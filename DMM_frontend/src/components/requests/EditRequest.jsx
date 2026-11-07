@@ -11,6 +11,14 @@ import { cn, formatDate, timeAgo } from '../../lib/utils.js';
 
 const PRIORITIES = [['LOW', 'Low'], ['NORMAL', 'Normal'], ['HIGH', 'High'], ['URGENT', 'Urgent']];
 const dayKey = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+// The same calendar day one month later — the earliest a request can be needed by.
+const addMonthKey = (key) => {
+  const [y, m, d] = key.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, last));
+  return t.toISOString().slice(0, 10);
+};
 const isSunday = (key) => new Date(`${key}T00:00:00Z`).getUTCDay() === 0;
 const FIELD_LABELS = {
   title: 'Title', details: 'Notes', department: 'Department', priority: 'Priority', neededBy: 'Needed by',
@@ -41,12 +49,14 @@ export function EditRequestModal({ request: r, onClose, onSent }) {
     staleTime: 600000,
   });
   const holidays = holidayData?.holidays || [];
-  const earliest = r.earliestDeliveryAt ? dayKey(r.earliestDeliveryAt) : null;
+  const noticeKey = r.createdAt ? addMonthKey(dayKey(r.createdAt)) : null;
+  const storedKey = r.earliestDeliveryAt ? dayKey(r.earliestDeliveryAt) : null;
+  const earliest = [noticeKey, storedKey].filter(Boolean).sort().pop() || null;
   const blockedReason = (key) => {
     if (isSunday(key)) return 'Sunday';
     const h = holidays.find((x) => x.date === key);
     if (h) return h.name || 'Holiday';
-    if (earliest && key < earliest) return 'Too soon for this request';
+    if (earliest && key < earliest) return 'Needs at least one month\'s notice';
     return null;
   };
 

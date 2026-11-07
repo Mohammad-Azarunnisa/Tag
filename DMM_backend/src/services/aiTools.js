@@ -68,6 +68,7 @@ export const TOOL_DEFINITIONS = [
         organization: { type: 'string', description: 'Organization name, e.g. "NCET"' },
         platform: { type: 'string', enum: PLATFORMS },
         days: { type: 'number', description: 'Window length in days (default 28, max 365)' },
+        from: { type: 'string', description: 'Optional start date YYYY-MM-DD to measure growth from (instead of `days`), e.g. to compare against a specific past date' },
       },
       required: ['organization', 'platform'],
     },
@@ -214,12 +215,15 @@ const handlers = {
       }));
   },
 
-  async platform_metrics({ organization, platform, days = 28 }) {
+  async platform_metrics({ organization, platform, days = 28, from }) {
     const org = await resolveOrg(organization);
     if (!org) return { error: `No organization matching "${organization}" — call list_organizations for valid names.` };
     if (!PLATFORMS.includes(platform)) return { error: `platform must be one of ${PLATFORMS.join(', ')}` };
-    const windowDays = Math.min(Math.max(Number(days) || 28, 1), 365);
-    const since = new Date(Date.now() - windowDays * 86400000);
+    const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(String(from || '')) ? new Date(`${from}T00:00:00.000Z`) : null;
+    const windowDays = fromDate
+      ? Math.max(1, Math.ceil((Date.now() - fromDate.getTime()) / 86400000))
+      : Math.min(Math.max(Number(days) || 28, 1), 365);
+    const since = fromDate || new Date(Date.now() - windowDays * 86400000);
 
     const [latest, baseline, snaps] = await Promise.all([
       Analytics.findOne({ organization: org._id, platform }).sort({ date: -1 }).lean(),
@@ -247,7 +251,20 @@ const handlers = {
       windowDays,
       dataPointsInWindow: snaps.length,
       latestEntry: iso(latest.date),
-      audience: { field: audienceField, current: latest[audienceField] || 0, atWindowStart: baseline?.[audienceField] ?? null, gained: baseline ? (latest[audienceField] || 0) - (baseline[audienceField] || 0) : null },
+      // Growth is worked out here, once, so the answer, the figures and the percentage can never
+      // disagree. Quote `period` and `growthPct` as given rather than recalculating.
+      period: baseline ? `${iso(baseline.date)} to ${iso(latest.date)}` : undefined,
+      audience: {
+        field: audienceField,
+        current: latest[audienceField] || 0,
+        atWindowStart: baseline?.[audienceField] ?? null,
+        windowStartDate: baseline ? iso(baseline.date) : null,
+        gained: baseline ? (latest[audienceField] || 0) - (baseline[audienceField] || 0) : null,
+        growthPct: baseline?.[audienceField] ? Math.round((((latest[audienceField] || 0) - baseline[audienceField]) / baseline[audienceField]) * 1000) / 10 : null,
+      },
+      dataNote: platform === 'LinkedIn'
+        ? `LinkedIn has no live feed: the total is the figure last checked against the live page${latest.confirmedAt ? ` (${iso(latest.confirmedAt)})` : ''} plus new followers from uploaded exports, so it is only as current as ${iso(latest.date)}.`
+        : `Refreshed automatically once a day; the latest reading is from ${iso(latest.date)}.`,
       engagementRatePct: latest.engagementRate || 0,
       periodTotals: totals,
       lifetimeTotals: Object.keys(stocks).length ? stocks : undefined,
@@ -269,8 +286,11 @@ const handlers = {
         period: `${iso(g.startDate)} to ${iso(g.endDate)}`,
         daysLeft,
         targetFollowers: g.targetFollowers || undefined,
+        startedOn: iso(g.startDate),
         startedAt: p.baselineFollowers || undefined,
         currentFollowers: p.currentFollowers,
+        asOf: iso(p.lastEntry),
+        growthSinceStartPct: p.baselineFollowers ? Math.round(((p.currentFollowers - p.baselineFollowers) / p.baselineFollowers) * 1000) / 10 : undefined,
         gainedSinceStart: p.gainedFollowers,
         stillNeeded: g.targetFollowers ? Math.max(0, g.targetFollowers - p.currentFollowers) : undefined,
         progressPct: g.targetFollowers ? (needed > 0 ? Math.min(100, Math.round((p.gainedFollowers / needed) * 100)) : 100) : undefined,
@@ -459,6 +479,7 @@ const handlers = {
     return { total: sites.length, websites: sites.map((w) => ({
       institution: w.institution, domain: w.domain || undefined, type: w.siteType || undefined,
       hosting: w.hosting || undefined, builtWith: w.builtWith || undefined,
+      startDate: w.startDate ? new Date(w.startDate).toISOString().slice(0, 10) : undefined,
       expiryDate: w.expiryDate ? new Date(w.expiryDate).toISOString().slice(0, 10) : undefined,
       organization: w.organization?.name || undefined,
     })) };

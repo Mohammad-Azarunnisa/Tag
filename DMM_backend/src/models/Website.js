@@ -12,6 +12,8 @@ const websiteSchema = new mongoose.Schema(
     siteType: { type: String, default: '' }, // Static | Server | Hybrid | Dynamic
     hosting: { type: String, default: '' }, // CloudFlare | AWS | …
     builtWith: { type: String, default: '' }, // AstroJS | NextJS with Strapi CMS | …
+    // When the domain was registered / this term began.
+    startDate: { type: Date, default: null },
     // When the domain / hosting lapses. Optional — plenty of rows are sub-apps
     // on someone else's domain, with nothing of their own to renew.
     expiryDate: { type: Date, default: null },

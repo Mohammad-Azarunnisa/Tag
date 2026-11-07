@@ -5,6 +5,7 @@ import Organization from '../models/Organization.js';
 import SocialAccount from '../models/SocialAccount.js';
 import SocialPost from '../models/SocialPost.js';
 import Website from '../models/Website.js';
+import SyncRun from '../models/SyncRun.js';
 import { logActivity } from '../utils/logActivity.js';
 import { requireOrgId, resolveSharedViewOrgId } from '../utils/org.js';
 import { cellText, cellNumber, normHeader, loadGrid } from '../utils/sheet.js';
@@ -146,7 +147,7 @@ export const getAnalyticsOverview = asyncHandler(async (req, res) => {
   // Latest analytics snapshot per (org, platform).
   const latest = await Analytics.aggregate([
     { $sort: { date: -1 } },
-    { $group: { _id: { org: '$organization', platform: '$platform' }, followers: { $first: '$followers' }, subscribers: { $first: '$subscribers' }, date: { $first: '$date' } } },
+    { $group: { _id: { org: '$organization', platform: '$platform' }, followers: { $first: '$followers' }, subscribers: { $first: '$subscribers' }, date: { $first: '$date' }, refreshedAt: { $first: '$updatedAt' }, confirmedAt: { $max: '$confirmedAt' }, confirmedBy: { $first: '$confirmedBy' } } },
   ]);
   const anaMap = new Map();
   for (const a of latest) anaMap.set(`${a._id.org}|${a._id.platform}`, a);
@@ -175,7 +176,7 @@ export const getAnalyticsOverview = asyncHandler(async (req, res) => {
       const s = socMap.get(`${o._id}|${p.key}`);
       const metric = a ? (p.metric === 'subscribers' ? a.subscribers : a.followers) : null;
       cells[p.key] = (a || s)
-        ? { exists: true, metric: metric != null ? metric : null, label: p.label, username: s?.accountName || '', url: s?.profileUrl || '', lastUpdated: a?.date || s?.updatedAt || null }
+        ? { exists: true, metric: metric != null ? metric : null, label: p.label, username: s?.accountName || '', url: s?.profileUrl || '', lastUpdated: a?.date || s?.updatedAt || null, refreshedAt: a?.refreshedAt || null, confirmedAt: a?.confirmedAt || null, confirmedBy: a?.confirmedBy || '' }
         : { exists: false };
     }
     const x = socMap.get(`${o._id}|X (Twitter)`);
@@ -190,7 +191,9 @@ export const getAnalyticsOverview = asyncHandler(async (req, res) => {
     { key: 'X (Twitter)', kind: 'social' },
     { key: 'Website', kind: 'website' },
   ];
-  res.json({ success: true, platforms, organizations });
+  const run = await SyncRun.findOne().sort({ startedAt: -1 }).select('day status startedAt finishedAt errorMessages').lean();
+  const sync = run ? { day: run.day, status: run.status, at: run.finishedAt || run.startedAt, errors: (run.errorMessages || []).slice(0, 10) } : null;
+  res.json({ success: true, platforms, organizations, sync });
 });
 
 // Each platform counts "reach", "engagement" and "audience" out of different

@@ -158,6 +158,10 @@ const institutionRequestSchema = new mongoose.Schema(
     // When the coordinator accepted each half, so the trail shows who released it.
     designAcceptedAt: { type: Date },
     designAcceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // True when nobody at the college answered in time and the system accepted the
+    // design on their behalf (see services/autoAcceptDesigns.js); designAcceptedBy is
+    // then left empty.
+    designAutoAccepted: { type: Boolean, default: false },
     postAcceptedAt: { type: Date },
     postAcceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     // Where the college wants it published, chosen by the coordinator at the moment

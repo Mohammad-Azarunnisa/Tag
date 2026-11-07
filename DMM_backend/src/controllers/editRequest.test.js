@@ -146,3 +146,14 @@ test('the coordinator can take a pending change back, which frees the request', 
   const ack = await api(tok.designer, `/api/workflow/${r._id}/acknowledge`, { method: 'PUT' });
   assert.equal(ack.status, 200);
 });
+
+test('a date inside the one-month notice is refused, and an unchanged date is not re-checked', async () => {
+  const r = await raise('Notice');
+  const soon = new Date(Date.now() + 10 * 86400000); if (soon.getUTCDay() === 0) soon.setUTCDate(soon.getUTCDate() + 1);
+  const bad = await api(tok.coord, `/api/workflow/${r._id}/edit-request`, { method: 'POST', body: { reason: 'Sooner', changes: { neededBy: soon.toISOString().slice(0, 10) } } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.message, /one month/i);
+  // leaving the date as it is while changing something else is fine
+  const keep = await api(tok.coord, `/api/workflow/${r._id}/edit-request`, { method: 'POST', body: { reason: 'Title only', changes: { title: 'New title', neededBy: new Date(r.neededBy).toISOString().slice(0, 10) } } });
+  assert.equal(keep.status, 201);
+});

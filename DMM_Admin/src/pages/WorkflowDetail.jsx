@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/authStore.js';
 import { Button } from '../components/ui/Button.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 import { Card, Badge, Avatar, Skeleton, Input } from '../components/ui/primitives.jsx';
+import FilePreview, { previewKind } from '../components/FilePreview.jsx';
 import { cn, formatDate, formatDateTime, timeAgo, isVideo, downloadAllAttachments, canNavigateBack } from '../lib/utils.js';
 
 /**
@@ -30,7 +31,7 @@ const progressSteps = (item) => [
   { at: item.designerAcknowledgedAt, label: 'Design work accepted', who: item.designer?.name, icon: ThumbsUp, tone: 'text-slate-400' },
   { at: item.designSubmittedAt, label: 'Design completed and sent for approval', who: item.designer?.name, icon: Upload, tone: 'text-sky-500' },
   { at: item.designApprovedAt, label: 'Design approved by the Admin', who: item.designApprovedBy?.name, icon: CheckCircle2, tone: 'text-emerald-500' },
-  { at: item.designAcceptedAt, label: 'Design confirmed by the college', who: item.designAcceptedBy?.name, icon: Check, tone: 'text-emerald-500' },
+  { at: item.designAcceptedAt, label: item.designAutoAccepted ? 'Design accepted automatically (no response from the college)' : 'Design confirmed by the college', who: item.designAutoAccepted ? 'the system' : item.designAcceptedBy?.name, icon: Check, tone: 'text-emerald-500' },
   { at: item.handlerAcknowledgedAt, label: 'Posting work accepted', who: item.handler?.name, icon: ThumbsUp, tone: 'text-slate-400' },
   { at: item.postSubmittedAt, label: 'Post content completed and sent for approval', who: item.handler?.name, icon: Upload, tone: 'text-sky-500' },
   { at: item.postApprovedAt, label: 'Post content approved by the Admin', who: item.postApprovedBy?.name, icon: CheckCircle2, tone: 'text-emerald-500' },
@@ -116,6 +117,7 @@ function Media({ items = [], onOpen }) {
             ) : m.mediaType === 'document' ? (
               <span className="flex h-32 w-full flex-col items-center justify-center gap-1 text-slate-400">
                 <FileText className="h-8 w-8" />
+                <span className="rounded bg-slate-200 px-1.5 text-[10px] font-bold uppercase text-slate-600 dark:bg-slate-700 dark:text-slate-300">{previewKind(m)}</span>
                 <span className="max-w-full truncate px-2 text-[11px] font-semibold">{m.name || 'Document'}</span>
               </span>
             ) : (
@@ -816,10 +818,8 @@ export default function WorkflowDetail() {
       )}
 
       {lightbox && (
-        <Modal open onClose={() => setLightbox(null)} title={lightbox.name || 'Preview'} size="lg">
-          {isVideo(lightbox)
-            ? <video src={lightbox.url} controls className="max-h-[70vh] w-full rounded-xl" />
-            : <img src={lightbox.url} alt={lightbox.name || ''} className="max-h-[70vh] w-full rounded-xl object-contain" />}
+        <Modal open onClose={() => setLightbox(null)} title={lightbox.name || 'Preview'} size="lg" className="max-w-5xl">
+          <FilePreview item={lightbox} />
           <div className="mt-3 flex justify-end">
             <a href={lightbox.url} target="_blank" rel="noreferrer" download
               className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-400">Open the original</a>

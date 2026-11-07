@@ -32,7 +32,7 @@ const progressSteps = (item) => [
   { at: item.designerAcknowledgedAt, label: 'Design work accepted', who: item.designer?.name, icon: ThumbsUp, tone: 'text-slate-400' },
   { at: item.designSubmittedAt, label: 'Design completed and sent for approval', who: item.designer?.name, icon: Upload, tone: 'text-sky-500' },
   { at: item.designApprovedAt, label: 'Design approved by the Admin', who: item.designApprovedBy?.name, icon: CheckCircle2, tone: 'text-emerald-500' },
-  { at: item.designAcceptedAt, label: 'Design confirmed by the college', who: item.designAcceptedBy?.name, icon: Check, tone: 'text-emerald-500' },
+  { at: item.designAcceptedAt, label: item.designAutoAccepted ? 'Design accepted automatically (no response from the college)' : 'Design confirmed by the college', who: item.designAutoAccepted ? 'the system' : item.designAcceptedBy?.name, icon: Check, tone: 'text-emerald-500' },
   { at: item.handlerAcknowledgedAt, label: 'Posting work accepted', who: item.handler?.name, icon: ThumbsUp, tone: 'text-slate-400' },
   { at: item.postSubmittedAt, label: 'Post content completed and sent for approval', who: item.handler?.name, icon: Upload, tone: 'text-sky-500' },
   { at: item.postApprovedAt, label: 'Post content approved by the Admin', who: item.postApprovedBy?.name, icon: CheckCircle2, tone: 'text-emerald-500' },

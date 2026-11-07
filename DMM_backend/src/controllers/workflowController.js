@@ -11,7 +11,7 @@ import { logActivity } from '../utils/logActivity.js';
 import { resolvePostedAt } from '../utils/postedAt.js';
 import { canAccessOrg, accessibleOrgIds } from '../utils/org.js';
 import { platformsForOrganization } from '../utils/platforms.js';
-import { istDateKey, isWorkingDay } from '../utils/turnaround.js';
+import { istDateKey, isWorkingDay, addMonthsKey, MIN_NOTICE_MONTHS } from '../utils/turnaround.js';
 import { holidaySet } from './holidayController.js';
 import {
   ROLES, USER_TYPES, APPROVAL_STATUS, APPROVAL_TYPES,
@@ -1130,14 +1130,20 @@ const readEditChanges = async (item, raw, res) => {
     const due = new Date(src.neededBy);
     if (!src.neededBy || Number.isNaN(due.getTime())) { res.status(400); throw new Error('Choose a valid "Needed by" date'); }
     const dueKey = istDateKey(due);
-    if (!isWorkingDay(dueKey, await holidaySet())) {
-      res.status(400); throw new Error('The "Needed by" date cannot be a Sunday or a holiday. Please pick a working day.');
+    // A date left as it already is is not being changed, so it is not re-checked.
+    if (dueKey !== (item.neededBy ? istDateKey(item.neededBy) : '')) {
+      if (!isWorkingDay(dueKey, await holidaySet())) {
+        res.status(400); throw new Error('The "Needed by" date cannot be a Sunday or a holiday. Please pick a working day.');
+      }
+      // One month after the day the request was raised, however the month falls.
+      const noticeKey = addMonthsKey(istDateKey(item.createdAt), MIN_NOTICE_MONTHS);
+      const stored = item.earliestDeliveryAt ? istDateKey(item.earliestDeliveryAt) : '';
+      const earliest = stored > noticeKey ? stored : noticeKey;
+      if (dueKey < earliest) {
+        res.status(400); throw new Error('That "Needed by" date is too soon — a request has to be raised at least one month before the date it is needed. Please choose a later date.');
+      }
+      changes.neededBy = due.toISOString();
     }
-    const earliest = item.earliestDeliveryAt ? istDateKey(item.earliestDeliveryAt) : null;
-    if (earliest && dueKey < earliest) {
-      res.status(400); throw new Error('That "Needed by" date is too soon for this kind of request. Please choose a later date.');
-    }
-    if (dueKey !== (item.neededBy ? istDateKey(item.neededBy) : '')) changes.neededBy = due.toISOString();
   }
   return changes;
 };
@@ -1258,6 +1264,86 @@ export const withdrawEditToItem = asyncHandler(async (req, res) => {
   const fresh = await populateRequest(InstitutionRequest.findById(done._id)).lean();
   res.json({ success: true, item: fresh });
 });
+
+/**
+ * Accept a design on the coordinator's behalf because they did not respond in time.
+ *
+ * It does exactly what the coordinator's "Done" does — both gates are then behind it,
+ * social work goes on to the handlers of the chosen pages, everything else is
+ * finished — except nobody is recorded as having clicked (designAcceptedBy stays
+ * empty, designAutoAccepted is set). The stage in the filter is the lock, so a
+ * coordinator answering at the same moment wins and nothing is applied twice.
+ *
+ * Returns the updated request, or null when it was no longer waiting or could not be
+ * accepted (a social request with no page to go on).
+ */
+export const autoAcceptDesign = async (item, { waitedLabel = '2 working days' } = {}) => {
+  if (item.workflowStage !== 'DESIGN_COORDINATOR_REVIEW') return null;
+  const social = needsPosting(item);
+  let pages = [];
+  if (social) {
+    const available = await availablePlatformsFor(item.organization);
+    // The pages the coordinator named when raising it, if any; otherwise every page the
+    // college runs — a design with nowhere to go would otherwise be stuck for good.
+    pages = (item.postPlatforms || []).filter((p) => available.includes(p));
+    if (!pages.length) pages = available;
+    if (!pages.length) return null;
+  }
+  const now = new Date();
+  const won = await InstitutionRequest.findOneAndUpdate(
+    { _id: item._id, workflowStage: 'DESIGN_COORDINATOR_REVIEW' },
+    { $set: {
+      designAcceptedAt: now,
+      designAutoAccepted: true,
+      workflowStage: social ? 'POST_OPEN' : 'COMPLETED',
+      status: social ? 'WITH_SOCIAL_HANDLER' : 'APPROVED',
+      reviewedAt: now,
+      ...(social ? { postPlatforms: pages } : {}),
+    } },
+    { new: true }
+  );
+  if (!won) return null;
+
+  if (won.designApproval) {
+    await ApprovalComment.create({
+      request: won.designApproval, kind: 'event', author: won.raisedBy,
+      text: `design accepted automatically — no response from the college in ${waitedLabel}`,
+    });
+  }
+  await logActivity({
+    user: won.raisedBy, organization: idOf(won.organization), action: ACTIVITY_ACTIONS.REQUEST_REVIEWED,
+    description: `Design for "${won.title}" was accepted automatically — no response in ${waitedLabel}`,
+    entityType: 'InstitutionRequest', entityId: won._id,
+  });
+  if (social) {
+    const handlers = await User.find({
+      isActive: true, role: ROLES.USER, userType: USER_TYPES.SOCIAL_HANDLER,
+      handles: { $elemMatch: { organization: won.organization, platforms: { $in: won.postPlatforms } } },
+    }).select('_id');
+    const list = won.postPlatforms.join(', ');
+    await Promise.all(handlers.map((h) => notifyUser(h._id, won, {
+      type: NOTIFICATION_TYPES.WORK_ASSIGNED,
+      title: `New work to post on ${list}`,
+      message: `"${won.title}" is approved and waiting on your ${list} page(s)`,
+    })));
+  }
+  await notifyUser(won.raisedBy, won, {
+    type: NOTIFICATION_TYPES.CONTENT_APPROVED,
+    title: 'Your design was approved automatically',
+    message: `"${won.title}" was waiting on you for ${waitedLabel}, so it has been accepted${social ? ` and sent on to be posted on ${won.postPlatforms.join(', ')}` : ''}.`,
+  });
+  await notifyUser(won.designer, won, {
+    type: NOTIFICATION_TYPES.CONTENT_APPROVED,
+    title: 'Your design was accepted',
+    message: `"${won.title}" was accepted automatically — the college did not respond in ${waitedLabel}`,
+  });
+  await notifyAdmins(won, {
+    type: NOTIFICATION_TYPES.CONTENT_APPROVED,
+    title: 'Design accepted automatically',
+    message: `"${won.title}" had no response from the coordinator in ${waitedLabel}, so it was accepted`,
+  });
+  return won;
+};
 
 export const cancelWorkflowItem = asyncHandler(async (req, res) => {
   const item = await loadItem(req, res, { populate: false });

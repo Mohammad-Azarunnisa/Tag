@@ -14,6 +14,8 @@ import { orgRank } from '../lib/organizations.js';
 const ICON = { LinkedIn: Linkedin, Instagram: Instagram, YouTube: Youtube, Facebook: Facebook, 'X (Twitter)': Twitter, Website: Globe };
 const COLOR = { LinkedIn: '#0A66C2', Instagram: '#E1306C', YouTube: '#FF0000', Facebook: '#1877F2', 'X (Twitter)': '#0f172a', Website: '#0ea5e9' };
 const PAGE = 12;
+const stamp = (d) => new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) + ' IST';
+const daysOld = (d) => Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
 
 
 
@@ -97,6 +99,14 @@ export default function AnalyticsOverview({ onOpen }) {
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-slate-500">
+        {data?.sync
+          ? <>Last automatic refresh: <b>{stamp(data.sync.at)}</b> ({data.sync.status}{data.sync.errors?.length ? `, ${data.sync.errors.length} issue${data.sync.errors.length > 1 ? 's' : ''}` : ''}). </>
+          : null}
+        Hover a count to see when it was last refreshed. LinkedIn totals only change when an export is uploaded and the total is checked against the live page.
+        {data?.sync?.errors?.length ? <span className="mt-1 block text-amber-600">Needs attention: {data.sync.errors.slice(0, 3).join(' · ')}</span> : null}
+      </p>
+
       {/* Headline: what the whole group adds up to */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <HeadTile delay={0} icon={Users} label="Total audience"
@@ -254,7 +264,10 @@ function OverviewCell({ org, platform, onOpen, colMax = 0, leader = false }) {
   const tip = [
     c.username && (platform.key === 'Website' ? c.username : `@${c.username}`),
     c.metric != null && `${formatNumber(c.metric)} ${c.label}`,
-    c.lastUpdated && `Updated ${formatDate(c.lastUpdated)}`,
+    c.lastUpdated && `Latest reading ${formatDate(c.lastUpdated)}`,
+    c.refreshedAt && `Refreshed ${stamp(c.refreshedAt)}`,
+    c.confirmedAt && `Total checked against live page ${stamp(c.confirmedAt)}${c.confirmedBy ? ` by ${c.confirmedBy}` : ''}`,
+    c.lastUpdated && daysOld(c.lastUpdated) > 3 && `⚠ ${daysOld(c.lastUpdated)} days old`,
     leader && 'Leads this platform',
   ].filter(Boolean).join(' · ');
   const big = c.metric != null ? formatNumber(c.metric) : 'Yes';

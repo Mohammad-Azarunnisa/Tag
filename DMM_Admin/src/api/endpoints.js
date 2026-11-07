@@ -90,6 +90,17 @@ export const institutionRequestApi = {
 
 // The Branding & Marketing period report: five parts, computed live for any
 // window. `export` returns an .xlsx blob.
+const pdfResult = (r) => {
+  const match = /filename="?([^"]+)"?/i.exec(r.headers?.['content-disposition'] || '');
+  return {
+    blob: r.data,
+    filename: match ? match[1] : 'B&M_Report.pdf',
+    reused: r.headers?.['x-report-reused'] === '1',
+    savedAt: r.headers?.['x-report-saved-at'] || null,
+    partial: r.headers?.['x-report-partial'] === '1',
+  };
+};
+
 export const periodReportApi = {
   get: (params) => api.get('/reports/period', { params }).then((r) => r.data),
   export: (params) => api.get('/reports/period/export', { params, responseType: 'blob' }).then((r) => r.data),
@@ -97,10 +108,15 @@ export const periodReportApi = {
   // of either) — independent of whatever the main report page currently shows.
   // The filename comes off the response header so the UI never has to
   // re-derive the resolved date window itself.
-  exportPdf: (params) => api.get('/reports/period/export-pdf', { params, responseType: 'blob' }).then((r) => {
-    const match = /filename="?([^"]+)"?/i.exec(r.headers?.['content-disposition'] || '');
-    return { blob: r.data, filename: match ? match[1] : 'B&M_Report.pdf' };
-  }),
+  // The super admin's reports are kept: asking again for the same window/college/platform comes
+  // back as the saved copy (`reused`), and { fresh: 1 } builds a new one in its place.
+  exportPdf: (params) => api.get('/reports/period/export-pdf', { params, responseType: 'blob' }).then(pdfResult),
+  // The finished months' stored reports — built once, then the same file for every Admin.
+  monthlyList: () => api.get('/reports/monthly').then((r) => r.data),
+  monthlyFile: (month, download = false) => api.get(`/reports/monthly/${month}`, { params: download ? { download: 1 } : undefined, responseType: 'blob' }).then(pdfResult),
+  savedList: () => api.get('/reports/period/saved').then((r) => r.data),
+  savedOpen: (id) => api.get(`/reports/period/saved/${id}`, { responseType: 'blob' }).then(pdfResult),
+  savedRemove: (id) => api.delete(`/reports/period/saved/${id}`).then((r) => r.data),
   exportPlatformAnalytics: (params) => api.get('/reports/platform-export', { params, responseType: 'blob' }).then((r) => r.data),
 };
 

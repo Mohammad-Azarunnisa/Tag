@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Globe, Plus, Pencil, Trash2, Upload, Download, FileSpreadsheet, ExternalLink } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Globe, Plus, Pencil, Trash2, Upload, Download, FileSpreadsheet, ExternalLink } from 'lucide-react';
 import { websiteApi, organizationApi } from '../api/endpoints.js';
 import { cn, downloadBlob, formatDate } from '../lib/utils.js';
 import PageHeader from '../components/layout/PageHeader.jsx';
@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Select, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
 
-const blank = { institution: '', organization: '', domain: '', siteType: '', hosting: '', builtWith: '', expiryDate: '', notes: '' };
+const blank = { institution: '', organization: '', domain: '', siteType: '', hosting: '', builtWith: '', startDate: '', expiryDate: '', notes: '' };
 
 // Subtle, consistent badge tones (kept in the brand/slate family — no rainbow).
 const Badge = ({ children }) =>
@@ -35,6 +35,19 @@ const expiryTone = (v) => {
   return { cls: 'text-slate-600 dark:text-slate-300', note: null };
 };
 
+// Renewals that need action now: anything already lapsed, and anything lapsing
+// later this calendar month. The two read differently, so they are told apart.
+const renewalState = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const sameMonth = d.getUTCFullYear() === now.getFullYear() && d.getUTCMonth() === now.getMonth();
+  const lapsed = d.getTime() < Date.now() - DAY;
+  if (lapsed) return 'expired';
+  return sameMonth ? 'due' : null;
+};
+
 export default function Websites() {
   const qc = useQueryClient();
   const [filters, setFilters] = useState({ organizationId: 'all', search: '' });
@@ -48,6 +61,11 @@ export default function Websites() {
   if (filters.organizationId !== 'all') params.organizationId = filters.organizationId;
   const { data, isLoading } = useQuery({ queryKey: ['websites', filters], queryFn: () => websiteApi.list(params) });
   const websites = data?.websites || [];
+  const [onlyRenewals, setOnlyRenewals] = useState(false);
+  const expiredSites = websites.filter((w) => renewalState(w.expiryDate) === 'expired');
+  const dueSites = websites.filter((w) => renewalState(w.expiryDate) === 'due');
+  const monthName = new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+  const shown = onlyRenewals ? websites.filter((w) => renewalState(w.expiryDate)) : websites;
 
   const removeMut = useMutation({
     mutationFn: (id) => websiteApi.remove(id),
@@ -87,6 +105,29 @@ export default function Websites() {
         </span>
       </div>
 
+      {(expiredSites.length > 0 || dueSites.length > 0) && (
+        <div role="alert" className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-500/30 dark:bg-rose-500/10">
+          <div className="flex flex-wrap items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-rose-600" />
+            <p className="text-sm font-bold text-rose-700 dark:text-rose-300">
+              Domain renewals need attention — {monthName}: {expiredSites.length} expired, {dueSites.length} due this month
+            </p>
+            <button type="button" onClick={() => setOnlyRenewals((v) => !v)} className="ml-auto rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:bg-transparent dark:text-rose-300">
+              {onlyRenewals ? 'Show all websites' : 'Show only these'}
+            </button>
+          </div>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {[...expiredSites.map((w) => ['Expired', w]), ...dueSites.map((w) => ['Due this month', w])].map(([label, w]) => (
+              <li key={w._id} className="flex items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-sm dark:bg-slate-900/60">
+                <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase text-white', label === 'Expired' ? 'bg-rose-600' : 'bg-amber-500')}>{label}</span>
+                <span className="truncate font-semibold text-slate-700 dark:text-slate-200">{w.institution}</span>
+                <span className="ml-auto whitespace-nowrap text-xs text-slate-500">{formatDate(w.expiryDate)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <Select value={filters.organizationId} onChange={(e) => setFilters({ ...filters, organizationId: e.target.value })}>
           <option value="all">All colleges</option>
@@ -97,7 +138,7 @@ export default function Websites() {
 
       {isLoading ? (
         <Skeleton className="h-80" />
-      ) : websites.length === 0 ? (
+      ) : shown.length === 0 ? (
         <EmptyState icon={Globe} title="No websites yet" description="Add a website or import your domains spreadsheet."
           action={<Button onClick={() => setModal({ type: 'create' })}><Plus className="h-4 w-4" /> Add website</Button>} />
       ) : (
@@ -110,13 +151,16 @@ export default function Websites() {
                 <th className="px-5 py-3 font-semibold">Site Type</th>
                 <th className="px-5 py-3 font-semibold">Hosting</th>
                 <th className="px-5 py-3 font-semibold">Built With</th>
+                <th className="px-5 py-3 font-semibold">Start</th>
                 <th className="px-5 py-3 font-semibold">Expiry</th>
                 <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
-              {websites.map((w) => (
-                <tr key={w._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+              {shown.map((w) => {
+                const rs = renewalState(w.expiryDate);
+                return (
+                <tr key={w._id} className={cn('hover:bg-slate-50/50 dark:hover:bg-slate-800/30', rs === 'expired' && 'bg-rose-50/70 dark:bg-rose-500/10', rs === 'due' && 'bg-amber-50/80 dark:bg-amber-500/10')}>
                   <td className="px-5 py-3 font-semibold text-slate-700 dark:text-slate-200">{w.institution}</td>
                   <td className="px-5 py-3">
                     {w.domain ? (
@@ -128,6 +172,7 @@ export default function Websites() {
                   <td className="px-5 py-3"><Badge>{w.siteType}</Badge></td>
                   <td className="px-5 py-3"><Badge>{w.hosting}</Badge></td>
                   <td className="px-5 py-3 text-slate-600 dark:text-slate-300">{w.builtWith || <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
+                  <td className="px-5 py-3 whitespace-nowrap text-slate-600 dark:text-slate-300">{w.startDate ? formatDate(w.startDate) : <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
                   <td className="px-5 py-3 whitespace-nowrap">
                     {w.expiryDate ? (() => {
                       const tone = expiryTone(w.expiryDate);
@@ -135,6 +180,7 @@ export default function Websites() {
                         <span className={cn('block', tone?.cls)}>
                           {formatDate(w.expiryDate)}
                           {tone?.note && <span className="block text-[11px] font-medium">{tone.note}</span>}
+                          {rs && <span className={cn('mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase text-white', rs === 'due' ? 'bg-amber-500' : 'bg-rose-600')}><CalendarClock className="h-3 w-3" />{rs === 'due' ? 'Renew this month' : 'Expired — renew now'}</span>}
                         </span>
                       );
                     })() : <span className="text-slate-300 dark:text-slate-600">—</span>}
@@ -146,7 +192,8 @@ export default function Websites() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>
@@ -159,7 +206,7 @@ export default function Websites() {
 
 function WebsiteModal({ item, orgs, onClose, onSaved }) {
   const [form, setForm] = useState(item
-    ? { ...blank, ...item, organization: item.organization?._id || item.organization || '', expiryDate: toDateInput(item.expiryDate) }
+    ? { ...blank, ...item, organization: item.organization?._id || item.organization || '', startDate: toDateInput(item.startDate), expiryDate: toDateInput(item.expiryDate) }
     : blank);
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm({ ...form, [k]: v });
@@ -190,9 +237,8 @@ function WebsiteModal({ item, orgs, onClose, onSaved }) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {/* The span sits on the wrapper — Input puts className on the field
               itself, not on the grid item. */}
-          <div className="sm:col-span-2">
-            <Input label="Domain" value={form.domain} onChange={(e) => set('domain', e.target.value)} placeholder="https://example.co.in" />
-          </div>
+          <Input label="Domain" value={form.domain} onChange={(e) => set('domain', e.target.value)} placeholder="https://example.co.in" />
+          <Input label="Start date (optional)" type="date" value={form.startDate} onChange={(e) => set('startDate', e.target.value)} />
           <Input label="Expiry date (optional)" type="date" value={form.expiryDate} onChange={(e) => set('expiryDate', e.target.value)} />
         </div>
         {expiry?.note && <p className={cn('-mt-1 text-xs', expiry.cls)}>{expiry.note} — as of today.</p>}

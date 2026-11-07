@@ -16,7 +16,7 @@ import { accessibleOrgIds, canAccessOrg, resolveOrgId } from '../utils/org.js';
 import { ROLES, USER_TYPES, ACTIVITY_ACTIONS, NOTIFICATION_TYPES, SOCIAL_POST_WORK_CATEGORIES, SOCIAL_POST_WORK_ITEMS } from '../config/constants.js';
 import { uploadBuffer, deleteFile } from '../config/storage.js';
 import { platformsForOrganization } from '../utils/platforms.js';
-import { planDesign, istDateKey, isWorkingDay } from '../utils/turnaround.js';
+import { planDesign, istDateKey, isWorkingDay, addMonthsKey, MIN_NOTICE_MONTHS } from '../utils/turnaround.js';
 import { holidaySet } from './holidayController.js';
 
 const isCoordinator = (user) => user?.role === ROLES.USER && user?.userType === USER_TYPES.COORDINATOR;
@@ -304,6 +304,13 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     if (Number.isNaN(due.getTime())) { res.status(400); throw new Error('That "needed by" date is not valid'); }
   }
 
+  // A coordinator must raise every request at least one calendar month before the date it
+  // is needed — whatever the kind of request, and whether or not a design type is involved.
+  if (isCoordinator(req.user) && istDateKey(due) < addMonthsKey(istDateKey(new Date()), MIN_NOTICE_MONTHS)) {
+    res.status(400);
+    throw new Error('That "Needed by" date is too soon — a request has to be raised at least one month before the date it is needed. Please choose a later date.');
+  }
+
   // Every design request carries a minimum of 2 working days (Mon–Sat, holidays
   // skipped). Ready-made creatives (postOnly) have no design to wait for.
   let plan = null;
@@ -318,7 +325,7 @@ export const createInstitutionRequest = asyncHandler(async (req, res) => {
     if (due && dueKey < plan.earliestDelivery) {
       res.status(400);
       // Coordinators are not told the delivery date or design time, so the message stays general.
-      throw new Error('That "Needed by" date is too soon for this kind of request. Please choose a later date.');
+      throw new Error('That "Needed by" date is too soon — a request has to be raised at least one month before the date it is needed. Please choose a later date.');
     }
   }
 

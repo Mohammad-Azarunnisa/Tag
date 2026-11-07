@@ -12,6 +12,7 @@ import PageHeader from '../components/layout/PageHeader.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, Input, Skeleton, EmptyState } from '../components/ui/primitives.jsx';
 import { Modal } from '../components/ui/Modal.jsx';
+import ConfirmDelete from '../components/ui/ConfirmDelete.jsx';
 import { formatDate } from '../lib/utils.js';
 import { sortOrganizations } from '../lib/organizations.js';
 
@@ -21,6 +22,7 @@ export default function Organizations() {
   const canManage = !!me?.isSuperAdmin; // only the super admin manages organizations
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
   const [menuFor, setMenuFor] = useState(null);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
@@ -41,8 +43,8 @@ export default function Organizations() {
 
   const removeMut = useMutation({
     mutationFn: (id) => organizationApi.remove(id),
-    onSuccess: () => { toast.success('Organization deleted'); qc.invalidateQueries({ queryKey: ['organizations'] }); },
-    onError: (e) => toast.error(e.response?.data?.message || 'Delete failed'),
+    onSuccess: () => { toast.success('Organization deleted'); setToDelete(null); qc.invalidateQueries({ queryKey: ['organizations'] }); },
+    onError: (e) => { setToDelete(null); toast.error(e.response?.data?.message || 'Delete failed'); },
   });
   // Disabling is not a label change: the server stops serving that college's
   // data to its own people on the very next request (middleware/auth.js), so the
@@ -121,7 +123,8 @@ export default function Organizations() {
                     </div>
                   </div>
                   {canManage && (
-                  <div className="relative">
+                  <div className="relative flex items-center gap-0.5">
+                    <button onClick={() => setToDelete(o._id)} aria-label={`Delete ${o.name}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button>
                     <button onClick={() => setMenuFor(menuFor === o._id ? null : o._id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
                     {menuFor === o._id && (
                       <>
@@ -134,7 +137,7 @@ export default function Organizations() {
                             danger={o.isActive}
                             onClick={() => { setMenuFor(null); confirmToggle(o); }}
                           />
-                          <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenuFor(null); window.confirm(`Delete ${o.name}? This is only allowed if it has no members.`) && removeMut.mutate(o._id); }} />
+                          <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenuFor(null); setToDelete(o._id); }} />
                         </div>
                       </>
                     )}
@@ -173,6 +176,8 @@ export default function Organizations() {
         </div>
       )}
 
+      <ConfirmDelete open={!!toDelete} loading={removeMut.isPending} onCancel={() => setToDelete(null)} onConfirm={() => removeMut.mutate(toDelete)}
+        message="Are you sure you want to delete this item? An organisation can only be deleted once it has no members." />
       {modal && <OrgFormModal org={modal.type === 'edit' ? modal.org : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); qc.invalidateQueries({ queryKey: ['organizations'] }); }} />}
     </div>
   );
